@@ -1,55 +1,242 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Image, TouchableOpacity, ScrollView,
-  StyleSheet, Dimensions, Modal, FlatList
+  StyleSheet, Dimensions, Modal, ActivityIndicator, Alert,
+  TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ProfilePostsSkeleton } from '../components/Skeleton';
+import { SettingsScreen } from './SettingsScreen';
 import { Ionicons } from '@expo/vector-icons';
-import { CURRENT_USER, MOCK_POSTS, MOCK_USERS } from '../data/mockData';
-import { User } from '../data/types';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { getProfile, getFollowers, getFollowing, isFollowing, followUser, unfollowUser, uploadAvatar, updateProfile } from '../services/profiles';
+import { getUserPosts, getSavedPosts } from '../services/posts';
+import { getUserReels } from '../services/reels';
+import { createDirectConversation } from '../services/messages';
+import { supabase } from '../lib/supabase';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 2) / 3;
 
-const HIGHLIGHTS = [
-  { id: 'h1', title: 'Campus', cover: 'https://picsum.photos/seed/hl1/200' },
-  { id: 'h2', title: 'Hackathon', cover: 'https://picsum.photos/seed/hl2/200' },
-  { id: 'h3', title: 'Code', cover: 'https://picsum.photos/seed/hl3/200' },
-  { id: 'h4', title: 'Travel', cover: 'https://picsum.photos/seed/hl4/200' },
-];
+const verificationLabel: Record<string, string> = {
+  student: 'Verified Student', professor: 'Verified Faculty',
+  club: 'Verified Org', influencer: 'Notable Account', staff: 'Verified Staff',
+};
 
 interface Props {
-  user?: User;
+  userId?: string;
   isOwn?: boolean;
   onVerifyPress?: () => void;
   onBack?: () => void;
 }
 
-export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = true, onVerifyPress, onBack }) => {
+export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: propIsOwn, onVerifyPress, onBack }) => {
+  const insets = useSafeAreaInsets();
+  const [profile, setProfile] = useState<any>(null);
+  const [posts, setPosts] = useState<any[]>([]);
+  const [reels, setReels] = useState<any[]>([]);
+  const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [followers, setFollowers] = useState<any[]>([]);
+  const [following, setFollowing] = useState<any[]>([]);
+  const [isFollowingUser, setIsFollowingUser] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'saved'>('posts');
-  const [following, setFollowing] = useState(false);
-  const [followers, setFollowers] = useState(user.followers);
   const [followModal, setFollowModal] = useState<'followers' | 'following' | null>(null);
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [isOwn, setIsOwn] = useState(propIsOwn ?? false);
 
-  const posts = MOCK_POSTS.filter(p => p.mediaUrl);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editPronouns, setEditPronouns] = useState('');
+  const [editWebsite, setEditWebsite] = useState('');
+  const [editMajor, setEditMajor] = useState('');
+  const [editYear, setEditYear] = useState('');
 
-  const verificationLabel: Record<string, string> = {
-    student: 'Verified Student',
-    professor: 'Verified Faculty',
-    club: 'Verified Org',
-    influencer: 'Notable Account',
-    staff: 'Verified Staff',
+  const load = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setCurrentUserId(user.id);
+
+      const targetId = propUserId ?? user.id;
+      const own = propIsOwn ?? targetId === user.id;
+      setIsOwn(own);
+
+      const [prof, userPosts, userReels, followersList, followingList] = await Promise.all([
+        getProfile(targetId),
+        getUserPosts(targetId),
+        getUserReels(targetId),
+        getFollowers(targetId),
+        getFollowing(targetId),
+      ]);
+
+      setProfile(prof);
+      setPosts(userPosts);
+      setReels(userReels);
+      setFollowers(followersList);
+      setFollowing(followingList);
+
+      if (!own) {
+        const following = await isFollowing(user.id, targetId);
+        setIsFollowingUser(following);
+      }
+
+      if (own) {
+        const saved = await getSavedPosts(user.id);
+        setSavedPosts(saved);
+      }
+    } catch (e) {
+      console.error('Profile load error', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [propUserId, propIsOwn]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleFollow = async () => {
+    if (!profile) return;
+    const next = !isFollowingUser;
+    setIsFollowingUser(next);
+    setProfile((p: any) => ({ ...p, followers_count: next ? p.followers_count + 1 : p.followers_count - 1 }));
+    try {
+      if (next) await followUser(currentUserId, profile.id);
+      else await unfollowUser(currentUserId, profile.id);
+    } catch {
+      setIsFollowingUser(!next);
+      setProfile((p: any) => ({ ...p, followers_count: !next ? p.followers_count + 1 : p.followers_count - 1 }));
+    }
   };
+
+  const handleMessage = async () => {
+    if (!profile) return;
+    try {
+      await createDirectConversation(currentUserId, profile.id);
+      Alert.alert('Message started', 'Go to Messages to chat.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const openEdit = () => {
+    setEditName(profile?.full_name ?? '');
+    setEditBio(profile?.bio ?? '');
+    setEditPronouns(profile?.pronouns ?? '');
+    setEditWebsite(profile?.website ?? '');
+    setEditMajor(profile?.major ?? '');
+    setEditYear(profile?.year ?? '');
+    setShowEdit(true);
+  };
+
+  const saveEdit = async () => {
+    if (!profile) return;
+    setSaving(true);
+    try {
+      await updateProfile(profile.id, {
+        full_name: editName.trim(),
+        bio: editBio.trim(),
+        pronouns: editPronouns.trim(),
+        website: editWebsite.trim(),
+        major: editMajor.trim(),
+        year: editYear.trim(),
+      });
+      setProfile((p: any) => ({
+        ...p,
+        full_name: editName.trim(),
+        bio: editBio.trim(),
+        pronouns: editPronouns.trim(),
+        website: editWebsite.trim(),
+        major: editMajor.trim(),
+        year: editYear.trim(),
+      }));
+      setShowEdit(false);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Could not save changes.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAvatarUpload = async () => {
+    if (!profile) return;
+    try {
+      const url = await uploadAvatar(profile.id);
+      if (url) setProfile((p: any) => ({ ...p, avatar_url: url }));
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <View style={{ height: 120, backgroundColor: '#111' }} />
+        <View style={{ paddingHorizontal: 14, marginTop: -44 }}>
+          <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: '#252525', borderWidth: 4, borderColor: '#000', marginBottom: 10 }} />
+          <View style={{ height: 16, width: '40%', backgroundColor: '#252525', borderRadius: 8, marginBottom: 8 }} />
+          <View style={{ height: 12, width: '25%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 16 }} />
+          <View style={{ height: 12, width: '80%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 8 }} />
+          <View style={{ height: 12, width: '60%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 20 }} />
+        </View>
+        <ProfilePostsSkeleton colSize={COL} />
+      </View>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={{ color: '#555' }}>Profile not found</Text>
+      </View>
+    );
+  }
+
+  const FollowListModal = () => (
+    <Modal visible={!!followModal} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setFollowModal(null)} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>{followModal === 'followers' ? 'Followers' : 'Following'}</Text>
+          <ScrollView>
+            {(followModal === 'followers' ? followers : following).map((u: any) => (
+              <View key={u.id} style={styles.followListItem}>
+                {u.avatar_url
+                  ? <Image source={{ uri: u.avatar_url }} style={styles.followListAvatar} />
+                  : <View style={[styles.followListAvatar, { backgroundColor: '#222' }]} />
+                }
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={styles.followListName}>{u.username}</Text>
+                    {u.is_verified && <VerifiedBadge type={u.verification_type} size="sm" />}
+                  </View>
+                  <Text style={styles.followListMeta}>{u.full_name}</Text>
+                </View>
+              </View>
+            ))}
+            {(followModal === 'followers' ? followers : following).length === 0 && (
+              <Text style={{ color: '#555', textAlign: 'center', padding: 20 }}>
+                No {followModal} yet
+              </Text>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
         {/* Cover */}
         <View style={styles.coverContainer}>
-          <Image
-            source={{ uri: user.coverImage || 'https://picsum.photos/seed/defaultcover/800/300' }}
-            style={styles.cover}
-          />
+          {profile.cover_url
+            ? <Image source={{ uri: profile.cover_url }} style={styles.cover} />
+            : <View style={[styles.cover, { backgroundColor: '#1a1a2e' }]} />
+          }
           <View style={styles.coverOverlay} />
           {onBack && (
             <TouchableOpacity style={styles.backBtn} onPress={onBack}>
@@ -57,7 +244,7 @@ export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = tr
             </TouchableOpacity>
           )}
           {isOwn && (
-            <TouchableOpacity style={styles.settingsBtn}>
+            <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
               <Ionicons name="settings-outline" size={22} color="#fff" />
             </TouchableOpacity>
           )}
@@ -65,22 +252,32 @@ export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = tr
 
         {/* Avatar row */}
         <View style={styles.avatarRow}>
-          <View style={styles.avatarContainer}>
-            <Image source={{ uri: user.avatar }} style={styles.avatar} />
-            {user.verified && (
+          <TouchableOpacity onPress={isOwn ? handleAvatarUpload : undefined} style={styles.avatarContainer}>
+            {profile.avatar_url
+              ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+              : <View style={[styles.avatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={36} color="#555" />
+                </View>
+            }
+            {profile.is_verified && (
               <View style={styles.verifiedOverlay}>
-                <VerifiedBadge type={user.verificationType} size="md" />
+                <VerifiedBadge type={profile.verification_type} size="md" />
               </View>
             )}
-          </View>
+            {isOwn && (
+              <View style={styles.editAvatarBtn}>
+                <Ionicons name="camera" size={10} color="#fff" />
+              </View>
+            )}
+          </TouchableOpacity>
           <View style={styles.actionsRow}>
             {isOwn ? (
               <>
-                <TouchableOpacity style={styles.editBtn}>
+                <TouchableOpacity style={styles.editBtn} onPress={openEdit}>
                   <Ionicons name="pencil" size={14} color="#fff" />
                   <Text style={styles.editBtnText}>Edit Profile</Text>
                 </TouchableOpacity>
-                {!user.verified && (
+                {!profile.is_verified && (
                   <TouchableOpacity style={styles.verifyBtn} onPress={onVerifyPress}>
                     <Ionicons name="shield-checkmark-outline" size={14} color="#818cf8" />
                     <Text style={styles.verifyBtnText}>Get Verified</Text>
@@ -89,15 +286,12 @@ export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = tr
               </>
             ) : (
               <>
-                <TouchableOpacity
-                  onPress={() => { setFollowing(p => !p); setFollowers(p => following ? p - 1 : p + 1); }}
-                  style={[styles.followBtn, following && styles.followingBtn]}
-                >
-                  <Text style={[styles.followBtnText, following && { color: 'rgba(255,255,255,0.5)' }]}>
-                    {following ? 'Following' : 'Follow'}
+                <TouchableOpacity onPress={toggleFollow} style={[styles.followBtn, isFollowingUser && styles.followingBtn]}>
+                  <Text style={[styles.followBtnText, isFollowingUser && { color: 'rgba(255,255,255,0.5)' }]}>
+                    {isFollowingUser ? 'Following' : 'Follow'}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.messageBtn}>
+                <TouchableOpacity style={styles.messageBtn} onPress={handleMessage}>
                   <Ionicons name="chatbubble-outline" size={18} color="#fff" />
                 </TouchableOpacity>
               </>
@@ -108,67 +302,50 @@ export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = tr
         {/* Info */}
         <View style={styles.infoSection}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <Text style={styles.fullName}>{user.fullName}</Text>
-            {user.verified && (
+            <Text style={styles.fullName}>{profile.full_name}</Text>
+            {profile.is_verified && (
               <View style={styles.verifiedPill}>
-                <VerifiedBadge type={user.verificationType} size="sm" />
-                <Text style={styles.verifiedPillText}>{verificationLabel[user.verificationType || 'student']}</Text>
+                <VerifiedBadge type={profile.verification_type} size="sm" />
+                <Text style={styles.verifiedPillText}>{verificationLabel[profile.verification_type ?? 'student']}</Text>
               </View>
             )}
           </View>
-          <Text style={styles.username}>@{user.username}</Text>
-          {user.pronouns ? <Text style={styles.pronouns}>{user.pronouns}</Text> : null}
-          <Text style={styles.bio}>{user.bio}</Text>
-          <View style={styles.metaRow}>
-            <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.4)" />
-            <Text style={styles.metaText}>{user.university} · Class of {user.year}</Text>
-          </View>
-          {user.website && (
+          <Text style={styles.username}>@{profile.username}</Text>
+          {profile.pronouns ? <Text style={styles.pronouns}>{profile.pronouns}</Text> : null}
+          {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+          {profile.university ? (
+            <View style={styles.metaRow}>
+              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.4)" />
+              <Text style={styles.metaText}>{profile.university}{profile.year ? ` · Class of ${profile.year}` : ''}</Text>
+            </View>
+          ) : null}
+          {profile.website ? (
             <View style={styles.metaRow}>
               <Ionicons name="link-outline" size={13} color="#818cf8" />
-              <Text style={[styles.metaText, { color: '#818cf8' }]}>{user.website}</Text>
+              <Text style={[styles.metaText, { color: '#818cf8' }]}>{profile.website}</Text>
             </View>
-          )}
-          <View style={styles.majorPill}>
-            <Text style={styles.majorPillText}>{user.major}</Text>
-          </View>
+          ) : null}
+          {profile.major ? (
+            <View style={styles.majorPill}>
+              <Text style={styles.majorPillText}>{profile.major}</Text>
+            </View>
+          ) : null}
 
-          {/* Stats */}
           <View style={styles.stats}>
             <View style={styles.statItem}>
-              <Text style={styles.statNum}>{user.posts}</Text>
+              <Text style={styles.statNum}>{profile.posts_count ?? posts.length}</Text>
               <Text style={styles.statLabel}>Posts</Text>
             </View>
             <TouchableOpacity style={styles.statItem} onPress={() => setFollowModal('followers')}>
-              <Text style={styles.statNum}>{followers.toLocaleString()}</Text>
+              <Text style={styles.statNum}>{(profile.followers_count ?? 0).toLocaleString()}</Text>
               <Text style={styles.statLabel}>Followers</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.statItem} onPress={() => setFollowModal('following')}>
-              <Text style={styles.statNum}>{user.following.toLocaleString()}</Text>
+              <Text style={styles.statNum}>{(profile.following_count ?? 0).toLocaleString()}</Text>
               <Text style={styles.statLabel}>Following</Text>
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Highlights */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ paddingHorizontal: 14, gap: 12 }}>
-          {isOwn && (
-            <View style={styles.highlightItem}>
-              <View style={styles.highlightNewRing}>
-                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 22 }}>+</Text>
-              </View>
-              <Text style={styles.highlightLabel}>New</Text>
-            </View>
-          )}
-          {HIGHLIGHTS.map(h => (
-            <View key={h.id} style={styles.highlightItem}>
-              <View style={styles.highlightRing}>
-                <Image source={{ uri: h.cover }} style={styles.highlightImg} />
-              </View>
-              <Text style={styles.highlightLabel}>{h.title}</Text>
-            </View>
-          ))}
-        </ScrollView>
 
         {/* Tab bar */}
         <View style={styles.tabBar}>
@@ -187,69 +364,121 @@ export const ProfileScreen: React.FC<Props> = ({ user = CURRENT_USER, isOwn = tr
           ))}
         </View>
 
-        {/* Grid */}
         {activeTab === 'posts' && (
-          <View style={styles.grid}>
-            {posts.map((post, i) => (
-              <TouchableOpacity key={`${post.id}-${i}`} style={[styles.gridItem, { width: COL, height: COL }]}>
-                <Image source={{ uri: post.mediaUrl }} style={{ width: '100%', height: '100%' }} />
-              </TouchableOpacity>
-            ))}
-            {/* Fill with placeholders */}
-            {[1,2,3,4,5,6,7,8].map(i => (
-              <TouchableOpacity key={`ph-${i}`} style={[styles.gridItem, { width: COL, height: COL }]}>
-                <Image source={{ uri: `https://picsum.photos/seed/prof${i}/300` }} style={{ width: '100%', height: '100%' }} />
-              </TouchableOpacity>
-            ))}
-          </View>
+          posts.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="camera-outline" size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No posts yet</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {posts.filter(p => p.media_url).map(post => (
+                <TouchableOpacity key={post.id} style={[styles.gridItem, { width: COL, height: COL }]}>
+                  <Image source={{ uri: post.media_url }} style={{ width: '100%', height: '100%' }} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
         )}
 
         {activeTab === 'reels' && (
-          <View style={styles.grid}>
-            {[1,2,3,4,5,6].map(i => (
-              <TouchableOpacity key={i} style={[styles.gridItem, { width: COL, height: COL * 1.5 }]}>
-                <Image source={{ uri: `https://picsum.photos/seed/reel${i}prof/300/450` }} style={{ width: '100%', height: '100%' }} />
-                <View style={{ position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                  <Ionicons name="play" size={11} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>{(Math.random() * 50 + 1).toFixed(0)}K</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
+          reels.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No reels yet</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {reels.map(reel => (
+                <TouchableOpacity key={reel.id} style={[styles.gridItem, { width: COL, height: COL * 1.5 }]}>
+                  {reel.thumbnail_url
+                    ? <Image source={{ uri: reel.thumbnail_url }} style={{ width: '100%', height: '100%' }} />
+                    : <View style={{ width: '100%', height: '100%', backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="film-outline" size={24} color="#333" />
+                      </View>
+                  }
+                  <View style={{ position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                    <Ionicons name="play" size={11} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>{reel.views_count ?? 0}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
         )}
 
-        {activeTab === 'saved' && (
-          <View style={styles.emptyState}>
-            <Ionicons name="bookmark-outline" size={48} color="rgba(255,255,255,0.15)" />
-            <Text style={styles.emptyText}>No saved posts</Text>
-          </View>
+        {activeTab === 'saved' && isOwn && (
+          savedPosts.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="bookmark-outline" size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No saved posts</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {savedPosts.filter(p => p?.media_url).map((post: any) => (
+                <TouchableOpacity key={post.id} style={[styles.gridItem, { width: COL, height: COL }]}>
+                  <Image source={{ uri: post.media_url }} style={{ width: '100%', height: '100%' }} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
         )}
       </ScrollView>
 
-      {/* Followers Modal */}
-      <Modal visible={!!followModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setFollowModal(null)} />
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>{followModal === 'followers' ? 'Followers' : 'Following'}</Text>
-            {[CURRENT_USER, ...MOCK_USERS.slice(0, 4)].map(u => (
-              <View key={u.id} style={styles.followListItem}>
-                <Image source={{ uri: u.avatar }} style={styles.followListAvatar} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={styles.followListName}>{u.username}</Text>
-                    {u.verified && <VerifiedBadge type={u.verificationType} size="sm" />}
-                  </View>
-                  <Text style={styles.followListMeta}>{u.fullName}</Text>
-                </View>
-                <TouchableOpacity style={styles.followListBtn}>
-                  <Text style={styles.followListBtnText}>Follow</Text>
-                </TouchableOpacity>
+      <FollowListModal />
+
+      {/* ── Settings ─────────────────────────────────────────────── */}
+      <SettingsScreen
+        visible={showSettings}
+        profile={profile}
+        onClose={() => setShowSettings(false)}
+        onProfileUpdated={updated => { setProfile(updated); setShowSettings(false); }}
+      />
+
+      {/* ── Edit Profile Modal ─────────────────────────────────────── */}
+      <Modal visible={showEdit} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEdit(false)}>
+        <KeyboardAvoidingView
+          style={[editStyles.container, { paddingTop: insets.top || 16 }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={editStyles.header}>
+            <TouchableOpacity onPress={() => setShowEdit(false)}>
+              <Text style={editStyles.cancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={editStyles.title}>Edit Profile</Text>
+            <TouchableOpacity onPress={saveEdit} disabled={saving}>
+              {saving
+                ? <ActivityIndicator color="#818cf8" size="small" />
+                : <Text style={editStyles.save}>Save</Text>
+              }
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 20, gap: 4 }} keyboardShouldPersistTaps="handled">
+            {[
+              { label: 'Name', value: editName, onChange: setEditName, placeholder: 'Full name' },
+              { label: 'Bio', value: editBio, onChange: setEditBio, placeholder: 'Write a bio...', multi: true },
+              { label: 'Pronouns', value: editPronouns, onChange: setEditPronouns, placeholder: 'e.g. they/them' },
+              { label: 'Website', value: editWebsite, onChange: setEditWebsite, placeholder: 'https://...', keyboard: 'url' as any },
+              { label: 'Major', value: editMajor, onChange: setEditMajor, placeholder: 'Your major' },
+              { label: 'Year', value: editYear, onChange: setEditYear, placeholder: 'e.g. 2026', keyboard: 'numeric' as any },
+            ].map(({ label, value, onChange, placeholder, multi, keyboard }) => (
+              <View key={label} style={editStyles.field}>
+                <Text style={editStyles.label}>{label}</Text>
+                <TextInput
+                  style={[editStyles.input, multi && { height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+                  value={value}
+                  onChangeText={onChange}
+                  placeholder={placeholder}
+                  placeholderTextColor="rgba(255,255,255,0.25)"
+                  multiline={multi}
+                  keyboardType={keyboard}
+                  autoCapitalize="none"
+                />
               </View>
             ))}
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -266,6 +495,7 @@ const styles = StyleSheet.create({
   avatarRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: 14, marginTop: -48 },
   avatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 4, borderColor: '#000' },
   verifiedOverlay: { position: 'absolute', bottom: 2, right: 2, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#000', overflow: 'hidden' },
+  editAvatarBtn: { position: 'absolute', bottom: 4, right: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#000' },
   actionsRow: { flexDirection: 'row', gap: 8, paddingBottom: 6 },
   editBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 },
   editBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
@@ -290,11 +520,6 @@ const styles = StyleSheet.create({
   statItem: { alignItems: 'center' },
   statNum: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   statLabel: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 },
-  highlightItem: { alignItems: 'center', gap: 4, width: 68 },
-  highlightRing: { width: 64, height: 64, borderRadius: 32, borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden' },
-  highlightNewRing: { width: 64, height: 64, borderRadius: 32, borderWidth: 2, borderColor: 'rgba(255,255,255,0.15)', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
-  highlightImg: { width: '100%', height: '100%' },
-  highlightLabel: { fontSize: 10, color: 'rgba(255,255,255,0.6)', textAlign: 'center' },
   tabBar: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'transparent' },
   activeTab: { borderBottomColor: '#fff' },
@@ -302,7 +527,6 @@ const styles = StyleSheet.create({
   gridItem: { overflow: 'hidden' },
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 48 },
   emptyText: { color: 'rgba(255,255,255,0.3)', marginTop: 8, fontSize: 13 },
-  // Modal
   modalOverlay: { flex: 1, justifyContent: 'flex-end' },
   modalSheet: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '60%' },
   modalHandle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
@@ -313,4 +537,24 @@ const styles = StyleSheet.create({
   followListMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)' },
   followListBtn: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
   followListBtnText: { color: '#fff', fontSize: 12 },
+});
+
+const editStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0a0a0a' },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  title: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  cancel: { fontSize: 15, color: 'rgba(255,255,255,0.5)' },
+  save: { fontSize: 15, fontWeight: '700', color: '#818cf8' },
+  field: { marginBottom: 16 },
+  label: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    color: '#fff', fontSize: 15,
+  },
 });

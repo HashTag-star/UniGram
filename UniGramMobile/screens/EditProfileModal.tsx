@@ -1,0 +1,138 @@
+import React, { useEffect, useState } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  ScrollView, ActivityIndicator, Alert, Modal,
+  KeyboardAvoidingView, Platform,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { updateProfile } from '../services/profiles';
+
+interface Props {
+  visible: boolean;
+  profile: any;
+  onClose: () => void;
+  onSaved: (updated: any) => void;
+}
+
+export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, onSaved }) => {
+  const insets = useSafeAreaInsets();
+  const [saving, setSaving] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editPronouns, setEditPronouns] = useState('');
+  const [editWebsite, setEditWebsite] = useState('');
+  const [editMajor, setEditMajor] = useState('');
+  const [editYear, setEditYear] = useState('');
+
+  useEffect(() => {
+    if (visible && profile) {
+      setEditName(profile.full_name ?? '');
+      setEditBio(profile.bio ?? '');
+      setEditPronouns(profile.pronouns ?? '');
+      setEditWebsite(profile.website ?? '');
+      setEditMajor(profile.major ?? '');
+      setEditYear(profile.year ?? '');
+    }
+  }, [visible, profile]);
+
+  const handleSave = async () => {
+    if (!profile) return;
+    setSaving(true);
+    try {
+      await updateProfile(profile.id, {
+        full_name: editName.trim(),
+        bio: editBio.trim(),
+        pronouns: editPronouns.trim(),
+        website: editWebsite.trim(),
+        major: editMajor.trim(),
+        year: editYear.trim(),
+      });
+      onSaved({
+        ...profile,
+        full_name: editName.trim(),
+        bio: editBio.trim(),
+        pronouns: editPronouns.trim(),
+        website: editWebsite.trim(),
+        major: editMajor.trim(),
+        year: editYear.trim(),
+      });
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Could not save changes.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fields = [
+    { label: 'Name', value: editName, onChange: setEditName, placeholder: 'Full name' },
+    { label: 'Bio', value: editBio, onChange: setEditBio, placeholder: 'Write a bio...', multi: true },
+    { label: 'Pronouns', value: editPronouns, onChange: setEditPronouns, placeholder: 'e.g. they/them' },
+    { label: 'Website', value: editWebsite, onChange: setEditWebsite, placeholder: 'https://...', keyboard: 'url' as any },
+    { label: 'Major', value: editMajor, onChange: setEditMajor, placeholder: 'Your major' },
+    { label: 'Year', value: editYear, onChange: setEditYear, placeholder: 'e.g. 2026', keyboard: 'numeric' as any },
+  ];
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={[styles.container, { paddingTop: insets.top || 16 }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={styles.cancel}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Edit Profile</Text>
+          <TouchableOpacity onPress={handleSave} disabled={saving}>
+            {saving
+              ? <ActivityIndicator color="#818cf8" size="small" />
+              : <Text style={styles.save}>Save</Text>
+            }
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+          {fields.map(({ label, value, onChange, placeholder, multi, keyboard }) => (
+            <View key={label} style={styles.field}>
+              <Text style={styles.label}>{label}</Text>
+              <TextInput
+                style={[styles.input, multi && { height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+                value={value}
+                onChangeText={onChange}
+                placeholder={placeholder}
+                placeholderTextColor="rgba(255,255,255,0.25)"
+                multiline={multi}
+                keyboardType={keyboard}
+                autoCapitalize="none"
+              />
+            </View>
+          ))}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0a0a0a' },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  title: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  cancel: { fontSize: 15, color: 'rgba(255,255,255,0.5)' },
+  save: { fontSize: 15, fontWeight: '700', color: '#818cf8' },
+  body: { padding: 20, gap: 4 },
+  field: { marginBottom: 16 },
+  label: {
+    fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)',
+    letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6,
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    color: '#fff', fontSize: 15,
+  },
+});

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, Modal
+  StyleSheet, Modal, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { VerificationType } from '../data/types';
+import { submitVerificationRequest } from '../services/verification';
+import { supabase } from '../lib/supabase';
+type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff';
 
 interface Props {
   visible: boolean;
@@ -68,10 +70,18 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   const handleClose = () => { reset(); onClose(); };
 
   const submit = async () => {
+    if (!selected) return;
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setLoading(false);
-    setStep('success');
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      await submitVerificationRequest(user.id, selected.type);
+      setStep('success');
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to submit request.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

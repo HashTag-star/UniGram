@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(npm install:*)",
+      "Bash(grep -r \"\\\\.ilike\\\\|\\\\.like\\\\|sql\\\\|query\\\\|execute\" /c/Users/USER/Desktop/UniGram/UniGramMobile --include=\"*.ts\" --include=\"*.tsx\" ! -path \"*/node_modules/*\")",
+      "Bash(grep:*)",
+      "Bash(npx expo:*)",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "mcp__claude_ai_Supabase__list_tables"
+    ]
+  }
+}

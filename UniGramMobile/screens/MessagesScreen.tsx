@@ -1,123 +1,200 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  Image, StyleSheet, KeyboardAvoidingView, Platform, ScrollView
+  Image, StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ConvSkeleton } from '../components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
-import { CURRENT_USER, MOCK_CONVERSATIONS } from '../data/mockData';
-import { Conversation, Message } from '../data/types';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import {
+  getConversations, getMessages, sendMessage,
+  markMessagesRead, subscribeToMessages,
+} from '../services/messages';
+import { supabase } from '../lib/supabase';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
-const MOCK_THREAD: Message[] = [
-  { id: 'm1', senderId: 'u2', text: 'Hey!! 👋', timestamp: '2:45 PM', read: true },
-  { id: 'm2', senderId: 'u1', text: 'Hey Sarah! What\'s up?', timestamp: '2:46 PM', read: true },
-  { id: 'm3', senderId: 'u2', text: 'Did you see the hackathon results? 🎉', timestamp: '2:47 PM', read: true },
-  { id: 'm4', senderId: 'u2', text: 'Team Apollo won!!', timestamp: '2:47 PM', read: true },
-  { id: 'm5', senderId: 'u1', text: 'WAIT no way!! That\'s insane 🔥', timestamp: '2:48 PM', read: true },
-  { id: 'm6', senderId: 'u2', text: 'Are you free tonight to celebrate? 😊', timestamp: '2m ago', read: false },
-];
+function timeAgo(ts: string) {
+  const d = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (d < 60) return 'now';
+  if (d < 3600) return `${Math.floor(d / 60)}m`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h`;
+  return `${Math.floor(d / 86400)}d`;
+}
 
-const ConversationList: React.FC<{ onPress: (conv: Conversation) => void }> = ({ onPress }) => (
-  <View style={styles.container}>
-    <View style={styles.listHeader}>
-      <Text style={styles.listTitle}>{CURRENT_USER.username}</Text>
-      <TouchableOpacity style={styles.composeBtn}>
-        <Ionicons name="create-outline" size={22} color="#fff" />
-      </TouchableOpacity>
-    </View>
+// ─── Conversation List ──────────────────────────────────────────────────────
+const ConversationList: React.FC<{
+  currentUserId: string;
+  currentUsername: string;
+  onPress: (conv: any) => void;
+}> = ({ currentUserId, currentUsername, onPress }) => {
+  const insets = useSafeAreaInsets();
+  const [convs, setConvs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
-      {/* Active friends */}
-      <View style={styles.activeFriends}>
-        <Text style={styles.sectionLabel}>ACTIVE NOW</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingVertical: 8 }}>
-          {MOCK_CONVERSATIONS.map(conv => {
-            const user = conv.participants[0];
+  useEffect(() => {
+    getConversations(currentUserId)
+      .then(setConvs)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [currentUserId]);
+
+  const getOtherParticipants = (conv: any) => {
+    const participants = conv.conversations?.conversation_participants ?? [];
+    return participants.filter((p: any) => p.user_id !== currentUserId);
+  };
+
+  const totalUnread = convs.reduce((sum: number, c: any) => sum + (c.unread_count ?? 0), 0);
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {loading ? (
+        <ConvSkeleton />
+      ) : convs.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Ionicons name="chatbubbles-outline" size={52} color="#333" />
+          <Text style={{ color: '#555', marginTop: 14, fontSize: 15 }}>No messages yet</Text>
+          <Text style={{ color: '#444', marginTop: 6, fontSize: 13 }}>Start a conversation from someone's profile</Text>
+        </View>
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
+          {/* Active bar */}
+          <View style={styles.activeFriends}>
+            <Text style={styles.sectionLabel}>ACTIVE NOW</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingVertical: 8 }}>
+              {convs.map(c => {
+                const others = getOtherParticipants(c);
+                const other = others[0]?.profiles;
+                if (!other) return null;
+                return (
+                  <TouchableOpacity key={c.conversations?.id} style={styles.activeItem} onPress={() => onPress(c)}>
+                    <View style={styles.activeAvatarWrap}>
+                      {other.avatar_url
+                        ? <Image source={{ uri: other.avatar_url }} style={styles.activeAvatar} />
+                        : <View style={[styles.activeAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
+                            <Ionicons name="person" size={18} color="#555" />
+                          </View>
+                      }
+                      <View style={styles.onlineDot} />
+                    </View>
+                    <Text style={styles.activeUsername} numberOfLines={1}>{other.username}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          <Text style={[styles.sectionLabel, { paddingHorizontal: 14, marginBottom: 4 }]}>
+            MESSAGES{totalUnread > 0 && <Text style={{ color: '#818cf8' }}> ({totalUnread} new)</Text>}
+          </Text>
+
+          {convs.map(c => {
+            const conv = c.conversations;
+            const others = getOtherParticipants(c);
+            const other = others[0]?.profiles;
+            if (!conv || !other) return null;
             return (
-              <TouchableOpacity key={conv.id} style={styles.activeItem} onPress={() => onPress(conv)}>
-                <View style={styles.activeAvatarWrap}>
-                  <Image source={{ uri: user.avatar }} style={styles.activeAvatar} />
-                  <View style={styles.onlineDot} />
+              <TouchableOpacity key={conv.id} style={styles.convItem} onPress={() => onPress(c)}>
+                <View style={styles.convAvatarWrap}>
+                  {other.avatar_url
+                    ? <Image source={{ uri: other.avatar_url }} style={styles.convAvatar} />
+                    : <View style={[styles.convAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
+                        <Ionicons name="person" size={20} color="#555" />
+                      </View>
+                  }
+                  {c.unread_count > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadText}>{c.unread_count}</Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.activeUsername} numberOfLines={1}>{user.username}</Text>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={styles.convHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={[styles.convName, c.unread_count > 0 && { fontWeight: 'bold' }]}>
+                        {conv.is_group ? conv.group_name : other.full_name}
+                      </Text>
+                      {other.is_verified && <VerifiedBadge type={other.verification_type} size="sm" />}
+                    </View>
+                    {conv.last_message_at && <Text style={styles.convTime}>{timeAgo(conv.last_message_at)}</Text>}
+                  </View>
+                  <Text style={[styles.convPreview, c.unread_count > 0 && { color: '#fff' }]} numberOfLines={1}>
+                    {conv.last_message ?? 'Start a conversation'}
+                  </Text>
+                </View>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
-      </View>
+      )}
+    </View>
+  );
+};
 
-      {/* Conversations */}
-      <Text style={[styles.sectionLabel, { paddingHorizontal: 14, marginBottom: 4 }]}>
-        MESSAGES <Text style={{ color: '#818cf8' }}>({MOCK_CONVERSATIONS.reduce((a, c) => a + c.unreadCount, 0)} new)</Text>
-      </Text>
-      {MOCK_CONVERSATIONS.map(conv => {
-        const user = conv.participants[0];
-        return (
-          <TouchableOpacity key={conv.id} style={styles.convItem} onPress={() => onPress(conv)}>
-            <View style={styles.convAvatarWrap}>
-              <Image source={{ uri: user.avatar }} style={styles.convAvatar} />
-              {conv.unreadCount > 0 && (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadText}>{conv.unreadCount}</Text>
-                </View>
-              )}
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <View style={styles.convHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Text style={[styles.convName, conv.unreadCount > 0 && { fontWeight: 'bold' }]}>
-                    {conv.isGroup ? conv.groupName : user.fullName}
-                  </Text>
-                  {user.verified && <VerifiedBadge type={user.verificationType} size="sm" />}
-                </View>
-                <Text style={styles.convTime}>{conv.lastMessage.timestamp}</Text>
-              </View>
-              <Text style={[styles.convPreview, conv.unreadCount > 0 && { color: '#fff' }]} numberOfLines={1}>
-                {conv.lastMessage.senderId === CURRENT_USER.id ? 'You: ' : ''}{conv.lastMessage.text}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  </View>
-);
-
-const ChatView: React.FC<{ conv: Conversation; onBack: () => void }> = ({ conv, onBack }) => {
-  const [messages, setMessages] = useState<Message[]>(MOCK_THREAD);
+// ─── Chat View ───────────────────────────────────────────────────────────────
+const ChatView: React.FC<{
+  convData: any;
+  currentUserId: string;
+  onBack: () => void;
+}> = ({ convData, currentUserId, onBack }) => {
+  const insets = useSafeAreaInsets();
+  const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
+  const [loading, setLoading] = useState(true);
   const scrollRef = useRef<ScrollView>(null);
-  const user = conv.participants[0];
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const send = () => {
-    if (!text.trim()) return;
-    setMessages(prev => [...prev, {
-      id: `m_${Date.now()}`,
-      senderId: CURRENT_USER.id,
-      text: text.trim(),
-      timestamp: 'Just now',
-      read: false,
-    }]);
+  const conv = convData.conversations;
+  const participants = conv?.conversation_participants ?? [];
+  const other = participants.find((p: any) => p.user_id !== currentUserId)?.profiles;
+
+  useEffect(() => {
+    if (!conv?.id) return;
+    getMessages(conv.id)
+      .then(msgs => { setMessages(msgs); setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 100); })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+    markMessagesRead(conv.id, currentUserId).catch(() => {});
+
+    channelRef.current = subscribeToMessages(conv.id, (msg) => {
+      setMessages(prev => [...prev, msg]);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    return () => { channelRef.current?.unsubscribe(); };
+  }, [conv?.id, currentUserId]);
+
+  const send = async () => {
+    if (!text.trim() || !conv?.id) return;
+    const t = text.trim();
     setText('');
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    try {
+      await sendMessage(conv.id, currentUserId, t);
+    } catch (e) {
+      setText(t);
+    }
   };
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      {/* Header */}
-      <View style={styles.chatHeader}>
+      <View style={[styles.chatHeader, { paddingTop: insets.top + 14 }]}>
         <TouchableOpacity onPress={onBack} style={styles.chatBack}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.chatHeaderUser}>
           <View style={{ position: 'relative' }}>
-            <Image source={{ uri: user.avatar }} style={styles.chatAvatar} />
+            {other?.avatar_url
+              ? <Image source={{ uri: other.avatar_url }} style={styles.chatAvatar} />
+              : <View style={[styles.chatAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={16} color="#555" />
+                </View>
+            }
             <View style={styles.chatOnlineDot} />
           </View>
           <View style={{ marginLeft: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={styles.chatName}>{user.fullName}</Text>
-              {user.verified && <VerifiedBadge type={user.verificationType} size="sm" />}
+              <Text style={styles.chatName}>{other?.full_name ?? other?.username ?? 'Chat'}</Text>
+              {other?.is_verified && <VerifiedBadge type={other.verification_type} size="sm" />}
             </View>
             <Text style={styles.chatStatus}>Active now</Text>
           </View>
@@ -128,37 +205,49 @@ const ChatView: React.FC<{ conv: Conversation; onBack: () => void }> = ({ conv, 
         </View>
       </View>
 
-      {/* Messages */}
-      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 14, paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={{ alignItems: 'center', marginBottom: 20 }}>
-          <Image source={{ uri: user.avatar }} style={{ width: 64, height: 64, borderRadius: 32 }} />
-          <Text style={styles.chatIntroName}>{user.fullName}</Text>
-          {user.verified && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-              <VerifiedBadge type={user.verificationType} size="sm" />
-              <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>Verified</Text>
-            </View>
-          )}
-          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginTop: 2 }}>{user.university}</Text>
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color="#4f46e5" />
         </View>
-
-        {messages.map((msg, i) => {
-          const isMe = msg.senderId === CURRENT_USER.id;
-          return (
-            <View key={msg.id} style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
-              {!isMe && (
-                <Image source={{ uri: user.avatar }} style={styles.msgAvatar} />
-              )}
-              <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
-                <Text style={[styles.bubbleText, isMe && { color: '#fff' }]}>{msg.text}</Text>
+      ) : (
+        <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 14, paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            {other?.avatar_url
+              ? <Image source={{ uri: other.avatar_url }} style={{ width: 64, height: 64, borderRadius: 32 }} />
+              : <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="person" size={28} color="#555" />
+                </View>
+            }
+            <Text style={styles.chatIntroName}>{other?.full_name ?? other?.username}</Text>
+            {other?.is_verified && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                <VerifiedBadge type={other.verification_type} size="sm" />
+                <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>Verified</Text>
               </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+            )}
+            {other?.university && (
+              <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginTop: 2 }}>{other.university}</Text>
+            )}
+          </View>
 
-      {/* Input */}
+          {messages.map(msg => {
+            const isMe = msg.sender_id === currentUserId;
+            return (
+              <View key={msg.id} style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
+                {!isMe && (
+                  msg.profiles?.avatar_url
+                    ? <Image source={{ uri: msg.profiles.avatar_url }} style={styles.msgAvatar} />
+                    : <View style={[styles.msgAvatar, { backgroundColor: '#222' }]} />
+                )}
+                <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
+                  <Text style={[styles.bubbleText, isMe && { color: '#fff' }]}>{msg.text}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
+
       <View style={styles.inputRow}>
         <TouchableOpacity style={styles.inputIcon}><Ionicons name="image-outline" size={22} color="rgba(255,255,255,0.4)" /></TouchableOpacity>
         <View style={styles.inputWrap}>
@@ -173,10 +262,7 @@ const ChatView: React.FC<{ conv: Conversation; onBack: () => void }> = ({ conv, 
           />
           <TouchableOpacity><Ionicons name="happy-outline" size={18} color="rgba(255,255,255,0.3)" /></TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={send}
-          style={[styles.sendBtn, text.trim() && styles.sendBtnActive]}
-        >
+        <TouchableOpacity onPress={send} style={[styles.sendBtn, text.trim() && styles.sendBtnActive]}>
           <Ionicons name="send" size={18} color={text.trim() ? '#fff' : 'rgba(255,255,255,0.2)'} />
         </TouchableOpacity>
       </View>
@@ -184,15 +270,36 @@ const ChatView: React.FC<{ conv: Conversation; onBack: () => void }> = ({ conv, 
   );
 };
 
-export const MessagesScreen: React.FC = () => {
-  const [activeConv, setActiveConv] = useState<Conversation | null>(null);
-  if (activeConv) return <ChatView conv={activeConv} onBack={() => setActiveConv(null)} />;
-  return <ConversationList onPress={setActiveConv} />;
+// ─── Messages Screen ─────────────────────────────────────────────────────────
+export const MessagesScreen: React.FC<{ onChatStateChange?: (inChat: boolean) => void }> = ({ onChatStateChange }) => {
+  const insets = useSafeAreaInsets();
+  const [activeConv, setActiveConv] = useState<any | null>(null);
+  const [currentUserId, setCurrentUserId] = useState('');
+
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (data.user) setCurrentUserId(data.user.id);
+    });
+  }, []);
+
+  const openChat = (conv: any) => {
+    setActiveConv(conv);
+    onChatStateChange?.(true);
+  };
+
+  const closeChat = () => {
+    setActiveConv(null);
+    onChatStateChange?.(false);
+  };
+
+  if (!currentUserId) return <View style={styles.container}><ConvSkeleton /></View>;
+  if (activeConv) return <ChatView convData={activeConv} currentUserId={currentUserId} onBack={closeChat} />;
+  return <ConversationList currentUserId={currentUserId} currentUsername="" onPress={openChat} />;
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 },
   listTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
   composeBtn: { padding: 4 },
   sectionLabel: { fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 8 },
@@ -211,8 +318,7 @@ const styles = StyleSheet.create({
   convName: { fontSize: 14, fontWeight: '600', color: '#fff' },
   convTime: { fontSize: 10, color: 'rgba(255,255,255,0.3)' },
   convPreview: { fontSize: 12, color: 'rgba(255,255,255,0.4)' },
-  // Chat
-  chatHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  chatHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
   chatBack: { padding: 4, marginRight: 6 },
   chatHeaderUser: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   chatAvatar: { width: 36, height: 36, borderRadius: 18 },

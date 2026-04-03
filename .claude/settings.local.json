@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Supabase__get_project_url",
+      "mcp__claude_ai_Supabase__get_publishable_keys",
+      "mcp__claude_ai_Supabase__get_project",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Bash(npm install:*)",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(npx expo:*)"
+    ]
+  }
+}
