@@ -14,7 +14,7 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
-import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers } from '../services/stories';
+import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
@@ -179,7 +179,8 @@ const StoryViewer: React.FC<{
   currentUserId: string;
   onClose: () => void;
   onViewed: (id: string) => void;
-}> = ({ visible, groupIndex, storyGroups, currentUserId, onClose, onViewed }) => {
+  onDeleted?: (id: string) => void;
+}> = ({ visible, groupIndex, storyGroups, currentUserId, onClose, onViewed, onDeleted }) => {
   const [gi, setGi] = useState(groupIndex);
   const [si, setSi] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -254,6 +255,35 @@ const StoryViewer: React.FC<{
     if (gi > 0) { setGi(g => g - 1); setSi(0); return; }
   };
 
+  const showStoryOptions = () => {
+    setPaused(true);
+    Alert.alert('Story Options', undefined, [
+      {
+        text: 'Delete story',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert('Delete story?', 'This will permanently remove this story.', [
+            { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+            { 
+              text: 'Delete', 
+              style: 'destructive', 
+              onPress: async () => {
+                try {
+                  await deleteStory(story.id, currentUserId);
+                  onDeleted?.(story.id);
+                } catch {
+                  Alert.alert('Error', 'Could not delete story.');
+                  setPaused(false);
+                }
+              }
+            },
+          ]);
+        },
+      },
+      { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+    ]);
+  };
+
   if (!visible || !group || !story) return null;
 
   const isOwner = group.profile.id === currentUserId;
@@ -295,6 +325,11 @@ const StoryViewer: React.FC<{
             </View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            {isOwner && (
+              <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn}>
+                <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={() => setPaused(p => !p)} style={sv.iconBtn}>
               <Ionicons name={paused ? 'play' : 'pause'} size={20} color="#fff" />
             </TouchableOpacity>
@@ -711,7 +746,7 @@ export const FeedPost: React.FC<{
               if (post.type === 'video') {
                 setFullVideoUri(post.media_url);
               } else {
-                setIsMuted(prev => !prev);
+                setIsMuted(!isMuted);
               }
             }}
             isMuted={isMuted}
@@ -721,7 +756,7 @@ export const FeedPost: React.FC<{
           {(post.type === 'video' || post.song) && (
             <TouchableOpacity 
               style={styles.muteOverlayBtn} 
-              onPress={() => setIsMuted(prev => !prev)}
+              onPress={() => setIsMuted(!isMuted)}
               activeOpacity={0.8}
             >
               <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={16} color="#fff" />
@@ -968,7 +1003,16 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
           storyGroups={storyGroups}
           currentUserId={currentUserId}
           onClose={() => setStoryIdx(null)}
-          onViewed={id => setViewedIds(prev => [...prev, id])}
+          onViewed={id => setViewedIds(prev => {
+            if (!prev.includes(id)) return [...prev, id];
+            return prev;
+          })}
+          onDeleted={id => {
+            setStoryGroups(prev => prev.map(g => ({
+              ...g,
+              stories: g.stories.filter((s: any) => s.id !== id)
+            })).filter(g => g.stories.length > 0));
+          }}
         />
       )}
     </View>

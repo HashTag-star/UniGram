@@ -262,6 +262,8 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress }) => {
             currentUserId={currentUserId}
             isLiked={likedIds.has(detailPost.id)}
             isSaved={savedIds.has(detailPost.id)}
+            isMuted={isMuted}
+            setIsMuted={setIsMuted}
             onClose={() => setDetailPost(null)}
           />
         )}

@@ -95,3 +95,8 @@ export async function unlikeStory(storyId: string, userId: string) {
   const { error } = await supabase.from('story_likes').delete().eq('story_id', storyId).eq('user_id', userId);
   if (error) throw error;
 }
+
+export async function deleteStory(storyId: string, userId: string) {
+  const { error } = await supabase.from('stories').delete().eq('id', storyId).eq('user_id', userId);
+  if (error) throw error;
+}
