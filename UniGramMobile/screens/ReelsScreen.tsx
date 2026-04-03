@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Video, ResizeMode } from 'expo-av';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CommentSheet } from '../components/CommentSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds } from '../services/reels';
 import { followUser, unfollowUser, isFollowing } from '../services/profiles';
 import { supabase } from '../lib/supabase';
@@ -29,10 +31,15 @@ const ReelItem: React.FC<{
   reel: any;
   currentUserId: string;
   isLiked: boolean;
-}> = ({ reel, currentUserId, isLiked: initLiked }) => {
+  isActive: boolean;
+}> = ({ reel, currentUserId, isLiked: initLiked, isActive }) => {
   const [liked, setLiked] = useState(initLiked);
   const [likes, setLikes] = useState(reel.likes_count ?? 0);
+  const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [following, setFollowing] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const videoRef = useRef<any>(null);
   const profile = reel.profiles;
 
   useEffect(() => {
@@ -40,6 +47,12 @@ const ReelItem: React.FC<{
       isFollowing(currentUserId, profile.id).then(setFollowing).catch(() => {});
     }
   }, [currentUserId, profile?.id]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (isActive) videoRef.current.playAsync().catch(() => {});
+    else videoRef.current.pauseAsync().catch(() => {});
+  }, [isActive]);
 
   const toggleLike = async () => {
     const next = !liked;
@@ -63,32 +76,54 @@ const ReelItem: React.FC<{
 
   return (
     <View style={[styles.reelContainer, { height: ITEM_HEIGHT }]}>
-      {reel.thumbnail_url
-        ? <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-        : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-            <Ionicons name="film-outline" size={64} color="#333" />
-          </View>
-      }
+      {reel.video_url ? (
+        <Video
+          ref={videoRef}
+          source={{ uri: reel.video_url }}
+          style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER}
+          isLooping
+          shouldPlay={isActive}
+          isMuted={muted}
+          posterSource={reel.thumbnail_url ? { uri: reel.thumbnail_url } : undefined}
+          usePoster={!!reel.thumbnail_url}
+        />
+      ) : reel.thumbnail_url ? (
+        <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="film-outline" size={64} color="#333" />
+        </View>
+      )}
       <View style={styles.gradient} />
 
+      {/* Right actions */}
       <View style={styles.rightActions}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#ef4444' : '#fff'} />
           <Text style={styles.actionCount}>{fmtCount(likes)}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionItem}>
+
+        <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)}>
           <Ionicons name="chatbubble-outline" size={28} color="#fff" />
-          <Text style={styles.actionCount}>{fmtCount(reel.comments_count ?? 0)}</Text>
+          <Text style={styles.actionCount}>{fmtCount(commentCount)}</Text>
         </TouchableOpacity>
+
         <TouchableOpacity style={styles.actionItem}>
-          <Ionicons name="repeat" size={28} color="#fff" />
+          <Ionicons name="paper-plane-outline" size={26} color="#fff" />
           <Text style={styles.actionCount}>{fmtCount(reel.shares_count ?? 0)}</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity style={styles.actionItem} onPress={() => setMuted(m => !m)}>
+          <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.actionItem}>
           <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
 
+      {/* Bottom info */}
       <View style={styles.bottomInfo}>
         <View style={styles.userRow}>
           {profile?.avatar_url
@@ -119,6 +154,15 @@ const ReelItem: React.FC<{
           {fmtCount(reel.views_count ?? 0)} views · {timeAgo(reel.created_at)}
         </Text>
       </View>
+
+      <CommentSheet
+        visible={showComments}
+        targetId={reel.id}
+        targetType="reel"
+        currentUserId={currentUserId}
+        onClose={() => setShowComments(false)}
+        onCountChange={delta => setCommentCount(n => Math.max(0, n + delta))}
+      />
     </View>
   );
 };
@@ -128,6 +172,14 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      setActiveIndex(viewableItems[0].index ?? 0);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -173,7 +225,7 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         )}
         <Ionicons name="film-outline" size={64} color="#333" />
         <Text style={{ color: '#555', marginTop: 16, fontSize: 16 }}>No reels yet</Text>
-        <Text style={{ color: '#444', marginTop: 6, fontSize: 13 }}>Be the first to post a reel!</Text>
+        <Text style={{ color: '#444', marginTop: 6, fontSize: 13 }}>Post a reel using the + button!</Text>
       </View>
     );
   }
@@ -184,19 +236,21 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       <FlatList
         data={reels}
         keyExtractor={r => r.id}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <ReelItem
             reel={item}
             currentUserId={currentUserId}
             isLiked={likedIds.has(item.id)}
+            isActive={index === activeIndex}
           />
         )}
         pagingEnabled
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_HEIGHT}
         decelerationRate="fast"
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
       />
-      {/* Back button overlaid on top-left */}
       {onBack && (
         <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
           <Ionicons name="arrow-back" size={22} color="#fff" />

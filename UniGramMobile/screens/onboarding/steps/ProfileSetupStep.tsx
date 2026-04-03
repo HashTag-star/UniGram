@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Animated, ActivityIndicator, Alert,
+  ScrollView, Animated, ActivityIndicator, Alert, FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { updateProfileSetup } from '../../../services/onboarding';
@@ -18,17 +18,54 @@ interface Props {
 
 export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
   const [university, setUniversity] = useState('');
+  const [uniQuery, setUniQuery] = useState('');
+  const [uniResults, setUniResults] = useState<string[]>([]);
+  const [uniSearching, setUniSearching] = useState(false);
+  const [showUniList, setShowUniList] = useState(false);
   const [major, setMajor] = useState('');
   const [year, setYear] = useState('');
   const [bio, setBio] = useState('');
   const [pronouns, setPronouns] = useState('');
   const [loading, setLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { light, success } = useHaptics();
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
+
+  const searchUniversity = async (q: string) => {
+    if (!q.trim() || q.length < 3) { setUniResults([]); return; }
+    setUniSearching(true);
+    try {
+      const res = await fetch(
+        `https://universities.hipolabs.com/search?name=${encodeURIComponent(q)}&limit=30`
+      );
+      const data: any[] = await res.json();
+      const names = [...new Set(data.map((u: any) => u.name as string))].slice(0, 20);
+      setUniResults(names);
+    } catch {
+      setUniResults([]);
+    } finally {
+      setUniSearching(false);
+    }
+  };
+
+  const handleUniType = (text: string) => {
+    setUniQuery(text);
+    setShowUniList(true);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => searchUniversity(text), 400);
+  };
+
+  const selectUniversity = (name: string) => {
+    setUniversity(name);
+    setUniQuery(name);
+    setUniResults([]);
+    setShowUniList(false);
+    light();
+  };
 
   const handleNext = async () => {
     await light();
@@ -66,29 +103,94 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.subtitle}>Tell your campus community about yourself.</Text>
 
-        {[
-          { label: 'University *', value: university, onChange: setUniversity, placeholder: 'e.g. Stanford University', icon: 'school-outline' },
-          { label: 'Major *', value: major, onChange: setMajor, placeholder: 'e.g. Computer Science', icon: 'book-outline' },
-          { label: 'Pronouns', value: pronouns, onChange: setPronouns, placeholder: 'e.g. he/him, she/her, they/them', icon: 'person-outline' },
-        ].map(({ label, value, onChange, placeholder, icon }) => (
-          <View key={label} style={styles.inputGroup}>
-            <Text style={styles.label}>{label}</Text>
-            <View style={styles.inputWrap}>
-              <Ionicons name={icon as any} size={16} color="#555" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                value={value}
-                onChangeText={onChange}
-                placeholder={placeholder}
-                placeholderTextColor="#444"
+        {/* University search */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>University *</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="school-outline" size={16} color="#555" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              value={uniQuery}
+              onChangeText={handleUniType}
+              placeholder="Search your university..."
+              placeholderTextColor="#444"
+              onFocus={() => setShowUniList(true)}
+              returnKeyType="search"
+            />
+            {uniSearching
+              ? <ActivityIndicator size="small" color="#4f46e5" />
+              : university
+                ? <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
+                : null
+            }
+          </View>
+          {showUniList && uniResults.length > 0 && (
+            <View style={styles.uniDropdown}>
+              <FlatList
+                data={uniResults}
+                keyExtractor={(item, i) => `${item}-${i}`}
+                style={{ maxHeight: 200 }}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={styles.uniRow} onPress={() => selectUniversity(item)}>
+                    <Ionicons name="school-outline" size={14} color="#555" />
+                    <Text style={styles.uniRowText} numberOfLines={1}>{item}</Text>
+                  </TouchableOpacity>
+                )}
               />
             </View>
-          </View>
-        ))}
+          )}
+          {showUniList && !uniSearching && uniQuery.length >= 3 && uniResults.length === 0 && (
+            <View style={styles.uniDropdown}>
+              <TouchableOpacity
+                style={styles.uniRow}
+                onPress={() => { selectUniversity(uniQuery); }}
+              >
+                <Ionicons name="add-circle-outline" size={14} color="#4f46e5" />
+                <Text style={[styles.uniRowText, { color: '#818cf8' }]}>Use "{uniQuery}"</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
 
+        {/* Major */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Major *</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="book-outline" size={16} color="#555" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              value={major}
+              onChangeText={setMajor}
+              placeholder="e.g. Computer Science"
+              placeholderTextColor="#444"
+            />
+          </View>
+        </View>
+
+        {/* Pronouns */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Pronouns</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="person-outline" size={16} color="#555" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              value={pronouns}
+              onChangeText={setPronouns}
+              placeholder="e.g. he/him, she/her, they/them"
+              placeholderTextColor="#444"
+            />
+          </View>
+        </View>
+
+        {/* Year */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Year</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -104,6 +206,7 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
           </ScrollView>
         </View>
 
+        {/* Bio */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Bio</Text>
           <TextInput
@@ -155,6 +258,13 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: 'rgba(99,102,241,0.2)', borderColor: '#4f46e5' },
   chipText: { color: '#888', fontSize: 13, fontWeight: '500' },
   chipTextActive: { color: '#818cf8' },
+  uniDropdown: {
+    backgroundColor: '#1a1a1a',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12, marginTop: 4, overflow: 'hidden',
+  },
+  uniRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  uniRowText: { flex: 1, color: '#fff', fontSize: 14 },
   bottom: { paddingBottom: 32, gap: 12 },
   btn: { backgroundColor: '#4f46e5', borderRadius: 14, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Image, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, Modal, ActivityIndicator, Alert,
-  TextInput, KeyboardAvoidingView, Platform,
+  TextInput, KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProfilePostsSkeleton } from '../components/Skeleton';
@@ -10,10 +10,21 @@ import { SettingsScreen } from './SettingsScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { getProfile, getFollowers, getFollowing, isFollowing, followUser, unfollowUser, uploadAvatar, updateProfile } from '../services/profiles';
-import { getUserPosts, getSavedPosts } from '../services/posts';
+import { getUserPosts, getSavedPosts, getLikedPostIds } from '../services/posts';
 import { getUserReels } from '../services/reels';
+import { getUserStories } from '../services/stories';
+import { FeedPost } from './FeedScreen';
 import { createDirectConversation } from '../services/messages';
 import { supabase } from '../lib/supabase';
+
+let profileCache: Record<string, any> = {};
+let profilePostsCache: Record<string, any[]> = {};
+let profileReelsCache: Record<string, any[]> = {};
+let profileStoriesCache: Record<string, any[]> = {};
+let profileFollowersCache: Record<string, any[]> = {};
+let profileFollowingCache: Record<string, any[]> = {};
+let profileSavedCache: Record<string, any[]> = {};
+let profileLikedSetCache: Record<string, Set<string>> = {};
 
 const { width } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -32,15 +43,23 @@ interface Props {
 
 export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: propIsOwn, onVerifyPress, onBack }) => {
   const insets = useSafeAreaInsets();
-  const [profile, setProfile] = useState<any>(null);
-  const [posts, setPosts] = useState<any[]>([]);
-  const [reels, setReels] = useState<any[]>([]);
-  const [savedPosts, setSavedPosts] = useState<any[]>([]);
-  const [followers, setFollowers] = useState<any[]>([]);
-  const [following, setFollowing] = useState<any[]>([]);
+  
+  // Use propUserId or currentUserId (which we might only know later), 
+  // but if propUserId is available, we can init from cache immediately.
+  const initId = propUserId ?? 'own_profile';
+
+  const [profile, setProfile] = useState<any>(profileCache[initId] || null);
+  const [posts, setPosts] = useState<any[]>(profilePostsCache[initId] || []);
+  const [reels, setReels] = useState<any[]>(profileReelsCache[initId] || []);
+  const [stories, setStories] = useState<any[]>(profileStoriesCache[initId] || []);
+  const [savedPosts, setSavedPosts] = useState<any[]>(profileSavedCache[initId] || []);
+  const [followers, setFollowers] = useState<any[]>(profileFollowersCache[initId] || []);
+  const [following, setFollowing] = useState<any[]>(profileFollowingCache[initId] || []);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'saved'>('posts');
+  const [loading, setLoading] = useState(!profileCache[initId]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'saved' | 'threads' | 'stories'>('posts');
+  const [likedIds, setLikedIds] = useState<Set<string>>(profileLikedSetCache[initId] || new Set());
   const [followModal, setFollowModal] = useState<'followers' | 'following' | null>(null);
   const [currentUserId, setCurrentUserId] = useState('');
   const [isOwn, setIsOwn] = useState(propIsOwn ?? false);
@@ -65,19 +84,33 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
       const own = propIsOwn ?? targetId === user.id;
       setIsOwn(own);
 
-      const [prof, userPosts, userReels, followersList, followingList] = await Promise.all([
+      const [prof, userPosts, userReels, userStoryData, followersList, followingList, likedSet] = await Promise.all([
         getProfile(targetId),
         getUserPosts(targetId),
         getUserReels(targetId),
+        getUserStories(targetId),
         getFollowers(targetId),
         getFollowing(targetId),
+        getLikedPostIds(targetId),
       ]);
 
       setProfile(prof);
       setPosts(userPosts);
       setReels(userReels);
+      setStories(userStoryData);
       setFollowers(followersList);
       setFollowing(followingList);
+      setLikedIds(new Set(likedSet));
+
+      const cacheKey = propUserId ?? 'own_profile';
+      profileCache[cacheKey] = prof;
+      profileCache[targetId] = prof; // map both
+      profilePostsCache[cacheKey] = userPosts;
+      profileReelsCache[cacheKey] = userReels;
+      profileStoriesCache[cacheKey] = userStoryData;
+      profileFollowersCache[cacheKey] = followersList;
+      profileFollowingCache[cacheKey] = followingList;
+      profileLikedSetCache[cacheKey] = new Set(likedSet);
 
       if (!own) {
         const following = await isFollowing(user.id, targetId);
@@ -87,6 +120,7 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
       if (own) {
         const saved = await getSavedPosts(user.id);
         setSavedPosts(saved);
+        profileSavedCache[cacheKey] = saved;
       }
     } catch (e) {
       console.error('Profile load error', e);
@@ -95,7 +129,15 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
     }
   }, [propUserId, propIsOwn]);
 
-  useEffect(() => { load(); }, [load]);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const toggleFollow = async () => {
     if (!profile) return;
@@ -105,7 +147,8 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
     try {
       if (next) await followUser(currentUserId, profile.id);
       else await unfollowUser(currentUserId, profile.id);
-    } catch {
+    } catch (e: any) {
+      Alert.alert('Follow Error', e.message ?? 'Failed to update following status');
       setIsFollowingUser(!next);
       setProfile((p: any) => ({ ...p, followers_count: !next ? p.followers_count + 1 : p.followers_count - 1 }));
     }
@@ -230,7 +273,11 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
 
   return (
     <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
+      <ScrollView 
+        showsVerticalScrollIndicator={false} 
+        contentContainerStyle={{ paddingBottom: 80 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
+      >
         {/* Cover */}
         <View style={styles.coverContainer}>
           {profile.cover_url
@@ -349,14 +396,14 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
 
         {/* Tab bar */}
         <View style={styles.tabBar}>
-          {(['posts', 'reels', 'saved'] as const).map(tab => (
+          {(['posts', 'threads', 'stories', 'reels', 'saved'] as const).map(tab => (
             <TouchableOpacity
               key={tab}
               style={[styles.tab, activeTab === tab && styles.activeTab]}
               onPress={() => setActiveTab(tab)}
             >
               <Ionicons
-                name={tab === 'posts' ? 'grid-outline' : tab === 'reels' ? 'film-outline' : 'bookmark-outline'}
+                name={tab === 'posts' ? 'image-outline' : tab === 'threads' ? 'chatbubbles-outline' : tab === 'stories' ? 'time-outline' : tab === 'reels' ? 'film-outline' : 'bookmark-outline'}
                 size={22}
                 color={activeTab === tab ? '#fff' : 'rgba(255,255,255,0.3)'}
               />
@@ -365,16 +412,54 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
         </View>
 
         {activeTab === 'posts' && (
-          posts.length === 0 ? (
+          posts.filter(p => !['thread', 'video'].includes(p.type)).length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="camera-outline" size={48} color="rgba(255,255,255,0.15)" />
               <Text style={styles.emptyText}>No posts yet</Text>
             </View>
           ) : (
             <View style={styles.grid}>
-              {posts.filter(p => p.media_url).map(post => (
+              {posts.filter(p => !['thread'].includes(p.type) && p.media_url).map(post => (
                 <TouchableOpacity key={post.id} style={[styles.gridItem, { width: COL, height: COL }]}>
                   <Image source={{ uri: post.media_url }} style={{ width: '100%', height: '100%' }} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
+        )}
+
+        {activeTab === 'threads' && (
+          posts.filter(p => p.type === 'thread').length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="chatbubbles-outline" size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No threads yet</Text>
+            </View>
+          ) : (
+            <View>
+              {posts.filter(p => p.type === 'thread').map(post => (
+                <FeedPost 
+                  key={post.id} 
+                  post={post} 
+                  currentUserId={currentUserId} 
+                  isLiked={likedIds.has(post.id)}
+                  isSaved={savedPosts.some(s => s.id === post.id)} 
+                />
+              ))}
+            </View>
+          )
+        )}
+
+        {activeTab === 'stories' && (
+          stories.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="time-outline" size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No stories yet</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {stories.filter(s => s.media_url).map(story => (
+                <TouchableOpacity key={story.id} style={[styles.gridItem, { width: COL, height: COL * 1.5 }]}>
+                  <Image source={{ uri: story.media_url }} style={{ width: '100%', height: '100%' }} />
                 </TouchableOpacity>
               ))}
             </View>

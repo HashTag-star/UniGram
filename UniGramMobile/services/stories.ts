@@ -19,6 +19,16 @@ export async function getActiveStories() {
   return Object.values(grouped);
 }
 
+export async function getUserStories(userId: string) {
+  const { data, error } = await supabase
+    .from('stories')
+    .select(`*`)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function createStory(userId: string, mediaUri: string, caption?: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');

@@ -26,18 +26,22 @@ export async function createPost(
   caption: string,
   type: 'image' | 'video' | 'thread' = 'thread',
   mediaUri?: string,
-  extras?: { location?: string; song?: string; taggedUsers?: string[] },
+  extras?: { location?: string; song?: string; taggedUsers?: string[]; mimeType?: string },
 ): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
   let media_url: string | undefined;
   if (mediaUri) {
-    const ext = mediaUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const isVideo = ['mp4', 'mov', 'avi', 'webm'].includes(ext);
+    const isVideo = type === 'video';
+    let ext = mediaUri.split('.').pop()?.toLowerCase();
+    if (!ext || ext.length > 5 || ext === mediaUri.toLowerCase()) {
+      ext = isVideo ? 'mp4' : 'jpg';
+    }
     const bucket = isVideo ? 'videos' : 'post-media';
     const path = `${userId}/${Date.now()}.${ext}`;
-    media_url = await uploadFile(bucket, path, mediaUri);
+    const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
+    media_url = await uploadFile(bucket, path, mediaUri, extras?.mimeType ?? fallbackMime);
   }
 
   const { data, error } = await supabase
@@ -69,10 +73,11 @@ export async function likePost(postId: string, userId: string) {
   if (!user || user.id !== userId) throw new Error('Unauthorized');
   const { error } = await supabase.from('post_likes').insert({ post_id: postId, user_id: userId });
   if (error && error.code !== '23505') throw error; // ignore duplicate
-  // update count
-  await supabase.rpc('increment_post_likes', { p_post_id: postId }).catch(() => {
-    supabase.from('posts').select('likes_count').eq('id', postId); // fallback - count stays via DB trigger
-  });
+  try {
+    await supabase.rpc('increment_post_likes', { p_post_id: postId });
+  } catch (e) {
+    // fallback - count stays via DB trigger
+  }
 }
 
 export async function unlikePost(postId: string, userId: string) {

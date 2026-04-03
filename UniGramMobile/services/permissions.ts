@@ -1,4 +1,8 @@
 import { Alert, Linking } from 'react-native';
+import Constants from 'expo-constants';
+
+// expo-notifications removed from Expo Go in SDK 53
+const isExpoGo = (Constants as any).executionEnvironment === 'storeClient';
 
 async function loadCamera() {
   try { return await import('expo-camera'); } catch { return null; }
@@ -7,6 +11,7 @@ async function loadMediaLibrary() {
   try { return await import('expo-media-library'); } catch { return null; }
 }
 async function loadNotifications() {
+  if (isExpoGo) return null; // not supported in Expo Go SDK 53+
   try { return await import('expo-notifications'); } catch { return null; }
 }
 async function loadImagePicker() {
@@ -48,6 +53,10 @@ export async function requestMediaLibraryPermission(): Promise<boolean> {
 }
 
 export async function requestNotificationPermission(): Promise<boolean> {
+  if (isExpoGo) {
+    console.log('Push notifications not supported in Expo Go. Use a development build.');
+    return false;
+  }
   const Notifications = await loadNotifications();
   if (!Notifications) return false;
   const { status: existing } = await Notifications.getPermissionsAsync();

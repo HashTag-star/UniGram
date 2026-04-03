@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet,
   TextInput, Image, ScrollView, ActivityIndicator,
@@ -6,8 +6,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
 import * as Location from 'expo-location';
+import { Audio } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createPost } from '../services/posts';
 import { createStory } from '../services/stories';
@@ -39,7 +39,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState<'type' | 'compose'>('type');
   const [postType, setPostType] = useState<PostType>(initialType ?? 'post');
-  const [mediaUris, setMediaUris] = useState<string[]>([]);
+  const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
   const [locationLoading, setLocationLoading] = useState(false);
@@ -50,9 +50,15 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const [hashtags, setHashtags] = useState('');
   const [song, setSong] = useState('');
   const [showMusicPicker, setShowMusicPicker] = useState(false);
-  const [musicTracks, setMusicTracks] = useState<MediaLibrary.Asset[]>([]);
+  const [musicTracks, setMusicTracks] = useState<any[]>([]);
+  const [musicQuery, setMusicQuery] = useState('');
+  const [musicSearching, setMusicSearching] = useState(false);
+  const [songPreviewUrl, setSongPreviewUrl] = useState('');
+  const [playingTrackId, setPlayingTrackId] = useState<number | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
   const [posting, setPosting] = useState(false);
   const [selectedMediaIdx, setSelectedMediaIdx] = useState(0);
+  const [activeMention, setActiveMention] = useState('');
 
   useEffect(() => {
     if (visible && userId) {
@@ -61,17 +67,69 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   }, [visible, userId]);
 
   useEffect(() => {
-    if (!tagInput.trim()) { setTagSuggestions([]); return; }
-    const q = tagInput.toLowerCase().replace('@', '');
+    const mentionMatch = caption.match(/@(\w+)$/);
+    if (mentionMatch) setActiveMention(mentionMatch[1]);
+    else setActiveMention('');
+  }, [caption]);
+
+  useEffect(() => {
+    const query = activeMention || tagInput;
+    if (!query.trim()) { setTagSuggestions([]); return; }
+    const q = query.toLowerCase().replace('@', '');
     setTagSuggestions(
       followingList.filter(u => u?.username?.toLowerCase().includes(q)).slice(0, 6)
     );
-  }, [tagInput, followingList]);
+  }, [tagInput, activeMention, followingList]);
+
+  // Location is detected only when user taps the location field
+
+  // Stop any playing preview and unload the sound
+  const stopPreview = async () => {
+    if (soundRef.current) {
+      try { await soundRef.current.stopAsync(); } catch {}
+      try { await soundRef.current.unloadAsync(); } catch {}
+      soundRef.current = null;
+    }
+    setPlayingTrackId(null);
+  };
+
+  // Play/pause a 30-sec iTunes preview for the given track
+  const togglePreview = async (item: any) => {
+    if (playingTrackId === item.trackId) {
+      await stopPreview();
+      return;
+    }
+    await stopPreview();
+    if (!item.previewUrl) return;
+    try {
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: item.previewUrl },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+      setPlayingTrackId(item.trackId);
+      sound.setOnPlaybackStatusUpdate((status: any) => {
+        if (status.isLoaded && status.didJustFinish) {
+          soundRef.current = null;
+          setPlayingTrackId(null);
+        }
+      });
+    } catch {
+      setPlayingTrackId(null);
+    }
+  };
+
+  // Stop preview whenever picker closes
+  useEffect(() => {
+    if (!showMusicPicker) stopPreview();
+  }, [showMusicPicker]);
 
   const reset = () => {
+    stopPreview();
     setStep('type');
     setPostType(initialType ?? 'post');
-    setMediaUris([]);
+    setMediaAssets([]);
     setCaption('');
     setLocation('');
     setTagInput('');
@@ -79,6 +137,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     setTagSuggestions([]);
     setHashtags('');
     setSong('');
+    setSongPreviewUrl('');
     setPosting(false);
     setSelectedMediaIdx(0);
   };
@@ -96,7 +155,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     const allowsVideo = isReel;
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: (isReel ? 'videos' : 'images') as any,
+      mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
       allowsMultipleSelection: !isStory && !isReel,
       selectionLimit: isStory || isReel ? 1 : 10,
       allowsEditing: isStory || isReel,
@@ -106,7 +165,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     });
 
     if (!result.canceled && result.assets?.length > 0) {
-      setMediaUris(result.assets.map(a => a.uri));
+      setMediaAssets(result.assets);
       setSelectedMediaIdx(0);
       setStep('compose');
     }
@@ -116,18 +175,18 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     const ok = await requestPickerPermission();
     if (!ok) return;
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: 'images' as any,
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
       allowsMultipleSelection: true,
-      selectionLimit: 10 - mediaUris.length,
+      selectionLimit: 10 - mediaAssets.length,
       quality: 0.85,
     });
     if (!result.canceled && result.assets?.length > 0) {
-      setMediaUris(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 10));
+      setMediaAssets(prev => [...prev, ...result.assets].slice(0, 10));
     }
   };
 
   const removeMedia = (idx: number) => {
-    setMediaUris(prev => prev.filter((_, i) => i !== idx));
+    setMediaAssets(prev => prev.filter((_, i) => i !== idx));
     if (selectedMediaIdx >= idx && selectedMediaIdx > 0) setSelectedMediaIdx(selectedMediaIdx - 1);
   };
 
@@ -156,26 +215,40 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     }
   };
 
-  const openMusicPicker = async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow media library access to pick music.');
-      return;
+  const searchMusic = async (q: string) => {
+    if (!q.trim()) { setMusicTracks([]); return; }
+    setMusicSearching(true);
+    try {
+      const res = await fetch(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=25`
+      );
+      const json = await res.json();
+      setMusicTracks(json.results ?? []);
+    } catch {
+      setMusicTracks([]);
+    } finally {
+      setMusicSearching(false);
     }
-    const { assets } = await MediaLibrary.getAssetsAsync({
-      mediaType: MediaLibrary.MediaType.audio,
-      first: 50,
-      sortBy: MediaLibrary.SortBy.modificationTime,
-    });
-    setMusicTracks(assets);
+  };
+
+  const openMusicPicker = () => {
+    setMusicQuery('');
+    setMusicTracks([]);
     setShowMusicPicker(true);
+    // Pre-load trending
+    searchMusic('top hits 2024');
   };
 
   const addTag = (username: string) => {
-    if (!taggedUsers.includes(username)) {
-      setTaggedUsers(prev => [...prev, username]);
+    if (activeMention) {
+      setCaption(caption.replace(new RegExp(`@${activeMention}$`), `@${username} `));
+      setActiveMention('');
+    } else {
+      if (!taggedUsers.includes(username)) {
+        setTaggedUsers(prev => [...prev, username]);
+      }
+      setTagInput('');
     }
-    setTagInput('');
     setTagSuggestions([]);
   };
 
@@ -186,7 +259,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       Alert.alert('Empty post', 'Write something first.');
       return;
     }
-    if ((postType === 'post' || postType === 'reel') && mediaUris.length === 0) {
+    if ((postType === 'post' || postType === 'reel') && mediaAssets.length === 0) {
       Alert.alert('No media', `Please select ${postType === 'reel' ? 'a video' : 'an image'}.`);
       return;
     }
@@ -195,17 +268,18 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       const fullCaption = [caption.trim(), hashtags.trim()].filter(Boolean).join('\n\n');
 
       if (postType === 'story') {
-        await createStory(userId, mediaUris[0], fullCaption || undefined);
+        await createStory(userId, mediaAssets[0].uri, fullCaption || undefined);
       } else if (postType === 'reel') {
-        await createReel(userId, mediaUris[0], fullCaption, song || undefined);
+        await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined);
       } else {
-        const ext = mediaUris[0]?.split('.').pop()?.toLowerCase() ?? '';
-        const isVideo = ['mp4', 'mov', 'avi', 'webm'].includes(ext);
-        const type = postType === 'thread' ? 'thread' : isVideo ? 'video' : 'image';
-        await createPost(userId, fullCaption, type, mediaUris[0] ?? undefined, {
+        const primaryAsset = mediaAssets[0];
+        const isVideoFromAsset = primaryAsset?.type === 'video' || ['mp4', 'mov', 'avi', 'webm'].includes(primaryAsset?.uri.split('.').pop()?.toLowerCase() ?? '');
+        const type = postType === 'thread' ? 'thread' : isVideoFromAsset ? 'video' : 'image';
+        await createPost(userId, fullCaption, type, primaryAsset?.uri ?? undefined, {
           location: location || undefined,
           song: song || undefined,
           taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
+          mimeType: primaryAsset?.mimeType,
         });
       }
       reset();
@@ -225,7 +299,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   ];
 
   const isVideo = postType === 'reel' ||
-    (['mp4', 'mov', 'avi', 'webm'].includes(mediaUris[0]?.split('.').pop()?.toLowerCase() ?? ''));
+    mediaAssets[0]?.type === 'video' ||
+    (['mp4', 'mov', 'avi', 'webm'].includes(mediaAssets[0]?.uri.split('.').pop()?.toLowerCase() ?? ''));
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
@@ -236,7 +311,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={step === 'compose' ? () => { setStep('type'); setMediaUris([]); } : handleClose}
+            onPress={step === 'compose' ? () => { setStep('type'); setMediaAssets([]); } : handleClose}
             style={styles.headerSide}
           >
             <Ionicons name={step === 'compose' ? 'arrow-back' : 'close'} size={24} color="#fff" />
@@ -287,11 +362,11 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
 
             {/* Media preview */}
-            {mediaUris.length > 0 && (
+            {mediaAssets.length > 0 && (
               <View>
                 <View style={{ position: 'relative' }}>
                   <Image
-                    source={{ uri: mediaUris[selectedMediaIdx] }}
+                    source={{ uri: mediaAssets[selectedMediaIdx].uri }}
                     style={[styles.mediaPreview, isVideo && { opacity: 0.85 }]}
                     resizeMode="cover"
                   />
@@ -302,10 +377,10 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                       </View>
                     </View>
                   )}
-                  {mediaUris.length > 1 && (
+                  {mediaAssets.length > 1 && (
                     <View style={styles.countBadge}>
                       <Ionicons name="layers-outline" size={12} color="#fff" />
-                      <Text style={styles.countBadgeText}>{selectedMediaIdx + 1}/{mediaUris.length}</Text>
+                      <Text style={styles.countBadgeText}>{selectedMediaIdx + 1}/{mediaAssets.length}</Text>
                     </View>
                   )}
                   <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(selectedMediaIdx)}>
@@ -313,14 +388,14 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                   </TouchableOpacity>
                 </View>
 
-                {mediaUris.length > 1 && (
+                {mediaAssets.length > 1 && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, padding: 8 }}>
-                    {mediaUris.map((uri, i) => (
+                    {mediaAssets.map((asset, i) => (
                       <TouchableOpacity key={i} onPress={() => setSelectedMediaIdx(i)}>
-                        <Image source={{ uri }} style={[styles.thumb, i === selectedMediaIdx && styles.thumbSelected]} />
+                        <Image source={{ uri: asset.uri }} style={[styles.thumb, i === selectedMediaIdx && styles.thumbSelected]} />
                       </TouchableOpacity>
                     ))}
-                    {mediaUris.length < 10 && postType === 'post' && (
+                    {mediaAssets.length < 10 && postType === 'post' && (
                       <TouchableOpacity style={styles.addMoreBtn} onPress={addMoreMedia}>
                         <Ionicons name="add" size={22} color="rgba(255,255,255,0.5)" />
                       </TouchableOpacity>
@@ -377,7 +452,6 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                   autoCapitalize="none"
                 />
               </View>
-              {/* Tagged chips */}
               {taggedUsers.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingTop: 6 }}>
                   {taggedUsers.map(u => (
@@ -450,7 +524,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         )}
       </KeyboardAvoidingView>
 
-      {/* Music picker modal */}
+      {/* Music picker modal — iTunes Search API */}
       <Modal
         visible={showMusicPicker}
         animationType="slide"
@@ -461,30 +535,90 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           <TouchableOpacity style={StyleSheet.absoluteFill as any} onPress={() => setShowMusicPicker(false)} />
           <View style={[styles.musicSheet, { paddingBottom: insets.bottom || 16 }]}>
             <View style={styles.musicHandle} />
-            <Text style={styles.musicTitle}>Choose Music</Text>
-            {musicTracks.length === 0 ? (
+            <Text style={styles.musicTitle}>Add Music</Text>
+
+            {/* Search bar */}
+            <View style={styles.musicSearchRow}>
+              <Ionicons name="search" size={16} color="rgba(255,255,255,0.4)" />
+              <TextInput
+                style={styles.musicSearchInput}
+                value={musicQuery}
+                onChangeText={q => {
+                  setMusicQuery(q);
+                  if (q.length > 1) searchMusic(q);
+                  else if (!q) searchMusic('top hits 2024');
+                }}
+                placeholder="Search any song or artist..."
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                returnKeyType="search"
+                onSubmitEditing={() => searchMusic(musicQuery)}
+                autoFocus
+              />
+              {musicSearching && <ActivityIndicator size="small" color="#f43f5e" />}
+            </View>
+
+            {musicSearching && musicTracks.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                <ActivityIndicator color="#f43f5e" />
+                <Text style={{ color: '#555', marginTop: 12 }}>Searching...</Text>
+              </View>
+            ) : musicTracks.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                 <Ionicons name="musical-notes-outline" size={48} color="#333" />
-                <Text style={{ color: '#555', marginTop: 12 }}>No music found on device</Text>
+                <Text style={{ color: '#555', marginTop: 12, fontSize: 14 }}>Search for a song above</Text>
               </View>
             ) : (
               <FlatList
                 data={musicTracks}
-                keyExtractor={t => t.id}
-                style={{ maxHeight: 400 }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={[styles.trackRow, song === item.filename && { backgroundColor: 'rgba(244,63,94,0.1)' }]}
-                    onPress={() => { setSong(item.filename.replace(/\.[^.]+$/, '')); setShowMusicPicker(false); }}
-                  >
-                    <Ionicons name="musical-note" size={20} color={song === item.filename ? '#f43f5e' : 'rgba(255,255,255,0.4)'} />
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.trackName} numberOfLines={1}>{item.filename.replace(/\.[^.]+$/, '')}</Text>
-                      {item.duration ? <Text style={styles.trackDur}>{Math.floor(item.duration / 60)}:{String(Math.floor(item.duration % 60)).padStart(2, '0')}</Text> : null}
-                    </View>
-                    {song === item.filename && <Ionicons name="checkmark" size={18} color="#f43f5e" />}
-                  </TouchableOpacity>
-                )}
+                keyExtractor={t => String(t.trackId ?? t.collectionId ?? Math.random())}
+                style={{ maxHeight: 380 }}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const trackName = `${item.trackName} — ${item.artistName}`;
+                  const isSelected = song === trackName;
+                  const isPlaying = playingTrackId === item.trackId;
+                  const dur = item.trackTimeMillis ? Math.round(item.trackTimeMillis / 1000) : null;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.trackRow, isSelected && { backgroundColor: 'rgba(244,63,94,0.12)' }]}
+                      onPress={() => {
+                        stopPreview();
+                        setSong(trackName);
+                        setSongPreviewUrl(item.previewUrl ?? '');
+                        setShowMusicPicker(false);
+                      }}
+                    >
+                      {item.artworkUrl60
+                        ? <Image source={{ uri: item.artworkUrl60 }} style={styles.trackArtwork} />
+                        : <View style={styles.trackArtPlaceholder}>
+                            <Ionicons name="musical-note" size={18} color="rgba(255,255,255,0.3)" />
+                          </View>
+                      }
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.trackName} numberOfLines={1}>{item.trackName}</Text>
+                        <Text style={styles.trackArtist} numberOfLines={1}>{item.artistName}</Text>
+                      </View>
+                      <View style={{ alignItems: 'center', gap: 4 }}>
+                        {dur && <Text style={styles.trackDur}>{Math.floor(dur / 60)}:{String(dur % 60).padStart(2, '0')}</Text>}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          {item.previewUrl && (
+                            <TouchableOpacity
+                              onPress={() => togglePreview(item)}
+                              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            >
+                              <Ionicons
+                                name={isPlaying ? 'pause-circle' : 'play-circle-outline'}
+                                size={24}
+                                color={isPlaying ? '#f43f5e' : 'rgba(255,255,255,0.45)'}
+                              />
+                            </TouchableOpacity>
+                          )}
+                          {isSelected && <Ionicons name="checkmark-circle" size={20} color="#f43f5e" />}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
               />
             )}
           </View>
@@ -558,10 +692,20 @@ const styles = StyleSheet.create({
   suggestionSub: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginLeft: 4 },
 
   musicOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  musicSheet: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 16 },
+  musicSheet: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 16, maxHeight: '80%' },
   musicHandle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginBottom: 12 },
-  musicTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 12, textAlign: 'center' },
-  trackRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, marginBottom: 2 },
-  trackName: { fontSize: 13, color: '#fff', fontWeight: '500' },
-  trackDur: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
+  musicTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 10, textAlign: 'center' },
+  musicSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 9, marginBottom: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  musicSearchInput: { flex: 1, color: '#fff', fontSize: 14 },
+  trackRow: { flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 2 },
+  trackArtwork: { width: 44, height: 44, borderRadius: 6 },
+  trackArtPlaceholder: { width: 44, height: 44, borderRadius: 6, backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' },
+  trackName: { fontSize: 13, color: '#fff', fontWeight: '600' },
+  trackArtist: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
+  trackDur: { fontSize: 11, color: 'rgba(255,255,255,0.35)' },
 });

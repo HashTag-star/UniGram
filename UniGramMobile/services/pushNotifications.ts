@@ -1,11 +1,16 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
 
-// Lazy imports to avoid crashing if package not yet installed
+// expo-notifications was removed from Expo Go in SDK 53.
+// Only load in standalone/development builds.
+const isExpoGo = (Constants as any).executionEnvironment === 'storeClient';
+
 let Notifications: any = null;
 let Device: any = null;
 
 async function loadModules() {
+  if (isExpoGo) return; // skip entirely in Expo Go
   if (!Notifications) {
     try {
       Notifications = await import('expo-notifications');

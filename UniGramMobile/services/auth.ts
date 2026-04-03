@@ -1,5 +1,16 @@
 import { supabase } from '../lib/supabase';
 
+export async function checkUsernameAvailable(username: string): Promise<boolean> {
+  if (!username || username.length < 3) return false;
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+  const { data } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('username', clean)
+    .maybeSingle();
+  return !data; // true = available
+}
+
 export async function signUp(email: string, password: string, username: string, fullName: string) {
   const { data, error } = await supabase.auth.signUp({
     email,

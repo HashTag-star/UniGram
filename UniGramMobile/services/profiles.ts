@@ -27,6 +27,7 @@ export async function updateProfile(userId: string, updates: {
   year?: string;
   pronouns?: string;
   website?: string;
+  avatar_url?: string;
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');

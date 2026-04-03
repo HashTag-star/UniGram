@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { signUp } from '../../services/auth';
+import { signUp, checkUsernameAvailable } from '../../services/auth';
 
 interface Props {
   onNavigateLogin: () => void;
@@ -18,6 +18,27 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [usernameChecking, setUsernameChecking] = useState(false);
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+  const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const clean = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    if (clean.length < 3) { setUsernameAvailable(null); return; }
+    setUsernameChecking(true);
+    setUsernameAvailable(null);
+    if (usernameTimer.current) clearTimeout(usernameTimer.current);
+    usernameTimer.current = setTimeout(async () => {
+      try {
+        const available = await checkUsernameAvailable(clean);
+        setUsernameAvailable(available);
+      } catch {
+        setUsernameAvailable(null);
+      } finally {
+        setUsernameChecking(false);
+      }
+    }, 500);
+  }, [username]);
 
   const handleSignup = async () => {
     if (!fullName.trim() || !username.trim() || !email.trim() || !password) {
@@ -35,6 +56,14 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
     const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
     if (cleanUsername.length < 3) {
       Alert.alert('Invalid username', 'Username must be at least 3 characters (letters, numbers, _ or .)');
+      return;
+    }
+    if (usernameAvailable === false) {
+      Alert.alert('Username taken', 'That username is already in use. Please choose another.');
+      return;
+    }
+    if (usernameAvailable === null) {
+      Alert.alert('Please wait', 'Checking username availability...');
       return;
     }
     setLoading(true);
@@ -60,24 +89,62 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
         <View style={styles.form}>
           <Text style={styles.title}>Create account</Text>
 
-          {[
-            { placeholder: 'Full name', value: fullName, onChange: setFullName, icon: 'person-outline', cap: 'words' as any },
-            { placeholder: 'Username', value: username, onChange: setUsername, icon: 'at-outline', cap: 'none' as any },
-            { placeholder: 'Email', value: email, onChange: setEmail, icon: 'mail-outline', cap: 'none' as any, keyboard: 'email-address' as any },
-          ].map(({ placeholder, value, onChange, icon, cap, keyboard }) => (
-            <View key={placeholder} style={styles.inputWrap}>
-              <Ionicons name={icon as any} size={18} color="#6b7280" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder={placeholder}
-                placeholderTextColor="#6b7280"
-                value={value}
-                onChangeText={onChange}
-                autoCapitalize={cap}
-                keyboardType={keyboard}
-              />
-            </View>
-          ))}
+          {/* Full name */}
+          <View style={styles.inputWrap}>
+            <Ionicons name="person-outline" size={18} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Full name"
+              placeholderTextColor="#6b7280"
+              value={fullName}
+              onChangeText={setFullName}
+              autoCapitalize="words"
+            />
+          </View>
+
+          {/* Username with availability check */}
+          <View style={[
+            styles.inputWrap,
+            usernameAvailable === true && { borderColor: '#22c55e' },
+            usernameAvailable === false && { borderColor: '#ef4444' },
+          ]}>
+            <Ionicons name="at-outline" size={18} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Username"
+              placeholderTextColor="#6b7280"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+            />
+            {usernameChecking && <ActivityIndicator size="small" color="#6b7280" style={{ marginLeft: 6 }} />}
+            {!usernameChecking && usernameAvailable === true && (
+              <Ionicons name="checkmark-circle" size={18} color="#22c55e" style={{ marginLeft: 6 }} />
+            )}
+            {!usernameChecking && usernameAvailable === false && (
+              <Ionicons name="close-circle" size={18} color="#ef4444" style={{ marginLeft: 6 }} />
+            )}
+          </View>
+          {!usernameChecking && usernameAvailable === false && (
+            <Text style={styles.usernameError}>Username already taken</Text>
+          )}
+          {!usernameChecking && usernameAvailable === true && (
+            <Text style={styles.usernameOk}>Username available</Text>
+          )}
+
+          {/* Email */}
+          <View style={styles.inputWrap}>
+            <Ionicons name="mail-outline" size={18} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#6b7280"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+          </View>
 
           <View style={styles.inputWrap}>
             <Ionicons name="lock-closed-outline" size={18} color="#6b7280" style={styles.inputIcon} />
@@ -134,4 +201,6 @@ const styles = StyleSheet.create({
   switchBtn: { alignItems: 'center', marginTop: 20 },
   switchText: { color: '#9ca3af', fontSize: 14 },
   switchLink: { color: '#818cf8', fontWeight: '600' },
+  usernameError: { color: '#ef4444', fontSize: 11, marginTop: -10, marginBottom: 6, marginLeft: 4 },
+  usernameOk: { color: '#22c55e', fontSize: 11, marginTop: -10, marginBottom: 6, marginLeft: 4 },
 });
