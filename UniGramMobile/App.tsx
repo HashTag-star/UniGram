@@ -12,12 +12,15 @@ import { ReelsScreen } from './screens/ReelsScreen';
 import { MessagesScreen } from './screens/MessagesScreen';
 import { MarketScreen } from './screens/MarketScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
+import { NotificationsScreen } from './screens/NotificationsScreen';
 import { VerificationScreen } from './screens/VerificationScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
 import { OnboardingNavigator } from './screens/onboarding/OnboardingNavigator';
 import { isOnboardingComplete } from './services/onboarding';
+import { getUnreadNotificationCount } from './services/notifications';
+import { registerForPushNotifications } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
@@ -81,6 +84,9 @@ function AppShell() {
   const [hideTabBar, setHideTabBar] = useState(false); // for messages chat & full-screen
   const [feedRefreshKey, setFeedRefreshKey] = useState(0);
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
+  const [notifBadge, setNotifBadge] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifChannelRef = useRef<any>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -98,6 +104,41 @@ function AppShell() {
       .catch(() => setOnboardingDone(true));
   }, [session?.user?.id]);
 
+  // Load unread count + subscribe to new notifications
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const uid = session.user.id;
+
+    // Initial unread count
+    getUnreadNotificationCount(uid).then(setNotifBadge).catch(() => {});
+
+    // Register for push notifications (no-op in Expo Go)
+    registerForPushNotifications(uid).catch(() => {});
+
+    // Realtime: increment badge when new notification arrives and screen is not active
+    const channel = supabase
+      .channel(`app-notifs-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
+        () => {
+          // Use functional updater on setActiveTab to read current value without stale closure
+          setActiveTab(currentTab => {
+            if (currentTab !== 'notifications') {
+              setNotifBadge(b => b + 1);
+            }
+            return currentTab; // don't change tab
+          });
+        }
+      )
+      .subscribe();
+    notifChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
+
   if (session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
   if (!session) {
     if (authScreen === 'signup') return <SignupScreen onNavigateLogin={() => setAuthScreen('login')} />;
@@ -113,6 +154,11 @@ function AppShell() {
     if (tab !== 'messages') setInitialConv(null);
     setActiveTab(tab);
     setHideTabBar(false);
+  };
+
+  const openNotifications = () => {
+    setNotifBadge(0);
+    setShowNotifications(true);
   };
 
   const navigateToMessages = (convId: string, otherProfile: any) => {
@@ -133,6 +179,8 @@ function AppShell() {
           <FeedScreen
             refreshKey={feedRefreshKey}
             onCreateStory={() => setShowCreate(true)}
+            onNotifPress={openNotifications}
+            notifBadge={notifBadge}
           />
         );
       case 'explore':
@@ -214,6 +262,17 @@ function AppShell() {
         </SafeAreaView>
       )}
 
+      {/* Notifications overlay — full-screen */}
+      {showNotifications && (
+        <View style={styles.notifOverlay}>
+          <NotificationsScreen
+            userId={session.user.id}
+            onBadgeClear={() => setNotifBadge(0)}
+            onBack={() => setShowNotifications(false)}
+          />
+        </View>
+      )}
+
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
 
       <CreatePostModal
@@ -254,4 +313,10 @@ const styles = StyleSheet.create({
   tabIconActive: { backgroundColor: 'rgba(99,102,241,0.1)' },
   tabLabel: { fontSize: 9, color: 'rgba(255,255,255,0.3)', fontWeight: '500' },
   tabLabelActive: { color: '#818cf8' },
+  notifOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: '#000',
+    zIndex: 200,
+  },
 });

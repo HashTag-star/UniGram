@@ -4,6 +4,7 @@ import {
   StyleSheet, Modal, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { submitVerificationRequest } from '../services/verification';
 import { supabase } from '../lib/supabase';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff';
@@ -65,17 +66,55 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   const [reason, setReason] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [documentUri, setDocumentUri] = useState<string | null>(null);
+  const [base64Data, setBase64Data] = useState<string | null>(null);
 
-  const reset = () => { setStep('select'); setSelected(null); setName(''); setEmail(''); setReason(''); setAgreed(false); };
+  const reset = () => { setStep('select'); setSelected(null); setName(''); setEmail(''); setReason(''); setAgreed(false); setDocumentUri(null); setBase64Data(null); };
   const handleClose = () => { reset(); onClose(); };
 
+  const pickDocument = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.7,
+      base64: true,
+    });
+    if (!res.canceled && res.assets[0].base64) {
+      setDocumentUri(res.assets[0].uri);
+      setBase64Data(res.assets[0].base64);
+    }
+  };
+
+  const uploadDocument = async (uri: string, path: string) => {
+    if (!base64Data) {
+      // Fallback to fetch if base64 missing for some reason
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const { error } = await supabase.storage.from('verifications').upload(path, blob);
+      if (error) throw error;
+    } else {
+      const { decode } = require('base64-arraybuffer');
+      const { error } = await supabase.storage.from('verifications').upload(path, decode(base64Data), {
+        contentType: 'image/jpeg',
+      });
+      if (error) throw error;
+    }
+    const { data } = supabase.storage.from('verifications').getPublicUrl(path);
+    return data.publicUrl;
+  };
+
   const submit = async () => {
-    if (!selected) return;
+    if (!selected || !documentUri) return;
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
-      await submitVerificationRequest(user.id, selected.type);
+
+      const ext = documentUri.split('.').pop();
+      const fileName = `${user.id}_${Date.now()}.${ext}`;
+      const documentUrl = await uploadDocument(documentUri, fileName);
+
+      await submitVerificationRequest(user.id, selected.type, name, email, reason, documentUrl);
       setStep('success');
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to submit request.');
@@ -166,9 +205,25 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
               numberOfLines={3}
             />
 
-            <TouchableOpacity style={styles.uploadBtn}>
-              <Ionicons name="cloud-upload-outline" size={18} color="rgba(255,255,255,0.4)" />
-              <Text style={styles.uploadText}>Upload supporting document (optional)</Text>
+            <Text style={styles.formLabel}>Supporting Document *</Text>
+            <TouchableOpacity 
+              style={[styles.uploadBtn, documentUri && { borderColor: '#818cf8', backgroundColor: '#818cf810' }]} 
+              onPress={pickDocument}
+            >
+              <Ionicons 
+                name={documentUri ? "checkmark-circle" : "cloud-upload-outline"} 
+                size={18} 
+                color={documentUri ? "#818cf8" : "rgba(255,255,255,0.4)"} 
+              />
+              <Text style={[styles.uploadText, documentUri && { color: '#818cf8' }]}>
+                {documentUri 
+                  ? 'Document Selected' 
+                  : selected.type === 'student' ? 'Upload Student ID / Proof' 
+                  : selected.type === 'professor' ? 'Upload Faculty ID'
+                  : selected.type === 'club' ? 'Upload Recognition Letter'
+                  : 'Upload Supporting Document'
+                }
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.agreeRow} onPress={() => setAgreed(p => !p)}>
@@ -180,8 +235,8 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
 
             <TouchableOpacity
               onPress={submit}
-              disabled={!name || !email || !agreed || loading}
-              style={[styles.submitBtn, (!name || !email || !agreed) && styles.submitBtnDisabled]}
+              disabled={!name || !email || !agreed || !documentUri || loading}
+              style={[styles.submitBtn, (!name || !email || !agreed || !documentUri) && styles.submitBtnDisabled]}
             >
               <Text style={[styles.submitBtnText, (!name || !email || !agreed) && { color: 'rgba(255,255,255,0.3)' }]}>
                 {loading ? 'Submitting...' : 'Submit Verification Request'}

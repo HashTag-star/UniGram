@@ -247,6 +247,10 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_HEIGHT}
         decelerationRate="fast"
+        windowSize={3}
+        maxToRenderPerBatch={2}
+        initialNumToRender={1}
+        removeClippedSubviews={true}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
       />

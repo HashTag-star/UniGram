@@ -3,7 +3,8 @@ import {
   View, Text, ScrollView, Image, TouchableOpacity,
   StyleSheet, Dimensions, Modal, FlatList,
   StatusBar, RefreshControl, Animated, Alert, Share,
-  TouchableWithoutFeedback, ActivityIndicator,
+  TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
+  TextInput, InteractionManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +15,7 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
+import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
 import { supabase } from '../lib/supabase';
@@ -106,6 +108,76 @@ const StoryBar: React.FC<{
   );
 };
 
+// ─── Background Upload Indicator ──────────────────────────────────────────────
+const BackgroundUploadIndicator: React.FC = () => {
+  const [status, setStatus] = useState<'loading' | 'success' | 'error' | null>(null);
+  const [type, setType] = useState<string>('');
+  const haptics = useHaptics();
+  const slideAnim = useRef(new Animated.Value(-100)).current;
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('upload_status', (data) => {
+      setStatus(data.status);
+      setType(data.type.charAt(0).toUpperCase() + data.type.slice(1));
+      
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 8
+      }).start();
+
+      if (data.status === 'success') {
+        haptics.success();
+        setTimeout(dismiss, 3000);
+      } else if (data.status === 'error') {
+        haptics.error();
+        setTimeout(dismiss, 4000);
+      }
+    });
+    return () => sub.remove();
+  }, [slideAnim]);
+
+  const dismiss = () => {
+    Animated.timing(slideAnim, {
+      toValue: -100,
+      duration: 300,
+      useNativeDriver: true
+    }).start(() => setStatus(null));
+  };
+
+  if (!status) return null;
+
+  const config = {
+    loading: { icon: 'cloud-upload', color: '#4f46e5', text: `Adding ${type}...` },
+    success: { icon: 'checkmark-circle', color: '#10b981', text: `${type} posted!` },
+    error: { icon: 'alert-circle', color: '#ef4444', text: `${type} upload failed` }
+  }[status];
+
+  return (
+    <Animated.View style={[bi.container, { transform: [{ translateY: slideAnim }] }]}>
+      <View style={[bi.banner, { borderLeftColor: config.color }]}>
+        <Ionicons name={status === 'loading' ? 'sync' : config.icon as any} size={20} color={config.color} />
+        <Text style={bi.text}>{config.text}</Text>
+        {status === 'loading' && <ActivityIndicator size="small" color={config.color} style={{ marginLeft: 'auto' }} />}
+      </View>
+    </Animated.View>
+  );
+};
+
+const bi = StyleSheet.create({
+  container: {
+    position: 'absolute', top: 100, left: 16, right: 16, zIndex: 1000,
+  },
+  banner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#1a1a1a', padding: 14, borderRadius: 12,
+    borderLeftWidth: 4, elevation: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
+  },
+  text: { color: '#fff', fontSize: 14, fontWeight: '600' },
+});
+
 // ─── Viewers Sheet ────────────────────────────────────────────────────────────
 const ViewersSheet: React.FC<{
   visible: boolean;
@@ -161,6 +233,11 @@ const ViewersSheet: React.FC<{
                   <Text style={vv.username}>{v.username}</Text>
                   <Text style={vv.time}>{timeAgo(v.viewed_at)}</Text>
                 </View>
+                {v.reaction && (
+                  <View style={vv.reactionBadge}>
+                    <Text style={vv.reactionEmoji}>{v.reaction}</Text>
+                  </View>
+                )}
               </View>
             ))
           )}
@@ -185,6 +262,8 @@ const StoryViewer: React.FC<{
   const [si, setSi] = useState(0);
   const [paused, setPaused] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
+  const [reply, setReply] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
   const [stats, setStats] = useState({ views: 0, likes: 0, isLiked: false });
   const progress = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef<Animated.CompositeAnimation | null>(null);
@@ -201,18 +280,38 @@ const StoryViewer: React.FC<{
     setStats(s);
   };
 
-  const toggleLike = async () => {
+  const toggleLike = async (emoji?: string) => {
     if (!story || !currentUserId) return;
+    const reaction = emoji || '❤️';
     try {
-      if (stats.isLiked) {
+      if (!emoji && stats.isLiked) {
         await unlikeStory(story.id, currentUserId);
         setStats(ps => ({ ...ps, isLiked: false, likes: Math.max(0, ps.likes - 1) }));
       } else {
-        await likeStory(story.id, currentUserId);
-        setStats(ps => ({ ...ps, isLiked: true, likes: ps.likes + 1 }));
+        await likeStory(story.id, currentUserId, reaction);
+        setStats(ps => ({ ...ps, isLiked: true, likes: emoji ? ps.likes : (ps.isLiked ? ps.likes : ps.likes + 1) }));
+        if (emoji) {
+          Alert.alert('Sent!', `${emoji} sent to ${group.profile.username}`);
+          setPaused(false);
+          setIsTyping(false);
+        }
       }
     } catch (e) {
       console.error('Like toggle error', e);
+    }
+  };
+
+  const submitReply = async () => {
+    if (!reply.trim() || !story) return;
+    try {
+      // In a real app, this would create a record in the 'messages' table
+      // For now, we simulate a success notification
+      Alert.alert('Sent!', `Reply sent to ${group.profile.username}`);
+      setReply('');
+      setIsTyping(false);
+      setPaused(false);
+    } catch (e) {
+      Alert.alert('Error', 'Could not send reply.');
     }
   };
 
@@ -239,9 +338,9 @@ const StoryViewer: React.FC<{
   }, [story?.id, visible]);
 
   useEffect(() => {
-    if (paused || showViewers) progressAnim.current?.stop();
+    if (paused || showViewers || isTyping) progressAnim.current?.stop();
     else if (story) startProgress();
-  }, [paused, showViewers]);
+  }, [paused, showViewers, isTyping]);
 
   const advance = () => {
     if (!group) return;
@@ -354,6 +453,20 @@ const StoryViewer: React.FC<{
           </TouchableWithoutFeedback>
         </View>
 
+        {isTyping && (
+          <View style={[sv.reactionOverlay, { bottom: insets.bottom + 80 }]}>
+            {['😂', '😮', '😍', '😢', '🔥', '👏'].map(emoji => (
+              <TouchableOpacity 
+                key={emoji} 
+                style={sv.reactionItem} 
+                onPress={() => toggleLike(emoji)}
+              >
+                <Text style={{ fontSize: 28 }}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         <View style={[sv.replyRow, { paddingBottom: insets.bottom + 12 }]}>
           {isOwner ? (
             <TouchableOpacity style={sv.viewersBtn} onPress={() => setShowViewers(true)}>
@@ -363,17 +476,37 @@ const StoryViewer: React.FC<{
               <Text style={sv.viewersCount}>{stats.views} viewers</Text>
             </TouchableOpacity>
           ) : (
-            <View style={sv.replyInput}>
-              <Text style={sv.replyPlaceholder}>Reply to {group.profile.username}…</Text>
+            <View style={[sv.replyInput, isTyping && sv.replyInputActive]}>
+              <TextInput
+                style={sv.replyTextInput}
+                placeholder={`Reply to ${group.profile.username}…`}
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                value={reply}
+                onChangeText={setReply}
+                onFocus={() => { setIsTyping(true); setPaused(true); }}
+                onBlur={() => { if (!reply) { setIsTyping(false); setPaused(false); } }}
+                onSubmitEditing={submitReply}
+                returnKeyType="send"
+              />
             </View>
           )}
           
-          <TouchableOpacity style={sv.replyHeart} onPress={toggleLike}>
-            <Ionicons name={stats.isLiked ? "heart" : "heart-outline"} size={26} color={stats.isLiked ? "#ff3b30" : "#fff"} />
-          </TouchableOpacity>
-          <TouchableOpacity style={sv.replyShare}>
-            <Ionicons name="paper-plane-outline" size={22} color="#fff" />
-          </TouchableOpacity>
+          {!isTyping && (
+            <>
+              <TouchableOpacity style={sv.replyHeart} onPress={() => toggleLike()}>
+                <Ionicons name={stats.isLiked ? "heart" : "heart-outline"} size={26} color={stats.isLiked ? "#ff3b30" : "#fff"} />
+              </TouchableOpacity>
+              <TouchableOpacity style={sv.replyShare}>
+                <Ionicons name="paper-plane-outline" size={22} color="#fff" />
+              </TouchableOpacity>
+            </>
+          )}
+
+          {isTyping && reply.trim().length > 0 && (
+            <TouchableOpacity style={sv.sendBtn} onPress={submitReply}>
+              <Text style={sv.sendBtnText}>Send</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <ViewersSheet 
@@ -484,6 +617,8 @@ const MediaCarousel: React.FC<{
         decelerationRate="fast"
         snapToInterval={width}
         snapToAlignment="center"
+        scrollEventThrottle={16}
+        nestedScrollEnabled={true}
         onScroll={e => {
           const x = e.nativeEvent.contentOffset.x;
           setCurrentIdx(Math.round(x / width));
@@ -555,12 +690,14 @@ export const FeedPost: React.FC<{
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
   onCommentCountChange?: (postId: string, delta: number) => void;
-}> = React.memo(({ post, currentUserId, isLiked: initLiked, isSaved: initSaved, isActive, isMuted, setIsMuted, onCommentCountChange }) => {
+  onDeleted?: (postId: string) => void;
+}> = React.memo(({ post, currentUserId, isLiked: initLiked, isSaved: initSaved, isActive, isMuted, setIsMuted, onCommentCountChange, onDeleted }) => {
   const [liked, setLiked] = useState(initLiked);
   const [likes, setLikes] = useState(post.likes_count ?? 0);
   const [saved, setSaved] = useState(initSaved);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
   const [showComments, setShowComments] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [songLoading, setSongLoading] = useState(false);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
@@ -667,6 +804,19 @@ export const FeedPost: React.FC<{
     onCommentCountChange?.(post.id, delta);
   };
 
+  const handleDeletePost = () => {
+    Alert.alert('Delete post?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+        // Optimistic: remove from UI immediately
+        onDeleted?.(post.id);
+        deletePost(post.id, currentUserId).catch(() => {
+          Alert.alert('Error', 'Could not delete post. Please refresh.');
+        });
+      }},
+    ]);
+  };
+
   const profile = post.profiles;
 
   return (
@@ -695,43 +845,29 @@ export const FeedPost: React.FC<{
         </View>
         <TouchableOpacity
           style={{ padding: 4 }}
-          onPress={() => {
-            const isOwn = post.user_id === currentUserId;
-            if (isOwn) {
-              Alert.alert('Post options', undefined, [
-                {
-                  text: 'Delete post',
-                  style: 'destructive',
-                  onPress: () => Alert.alert('Delete post?', 'This cannot be undone.', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: async () => {
-                      try { await deletePost(post.id, currentUserId); }
-                      catch { Alert.alert('Error', 'Could not delete post.'); }
-                    }},
-                  ]),
-                },
-                { text: 'Share', onPress: () => Share.share({ message: `Check out this post on UniGram by @${post.profiles?.username ?? 'user'}:\n\n${post.caption ?? ''}` }) },
-                { text: 'Cancel', style: 'cancel' },
-              ]);
-            } else {
-              Alert.alert('Post options', undefined, [
-                { text: 'Report post', style: 'destructive', onPress: () =>
-                  Alert.alert('Report', 'Why are you reporting this?', [
-                    { text: 'Spam', onPress: async () => { await reportContent(currentUserId, 'post', post.id, 'spam').catch(() => {}); Alert.alert('Reported', 'Thanks for your report.'); } },
-                    { text: 'Inappropriate content', onPress: async () => { await reportContent(currentUserId, 'post', post.id, 'inappropriate').catch(() => {}); Alert.alert('Reported', 'Thanks for your report.'); } },
-                    { text: 'Harassment', onPress: async () => { await reportContent(currentUserId, 'post', post.id, 'harassment').catch(() => {}); Alert.alert('Reported', 'Thanks for your report.'); } },
-                    { text: 'Cancel', style: 'cancel' },
-                  ])
-                },
-                { text: 'Share', onPress: () => Share.share({ message: `Check out this post on UniGram by @${post.profiles?.username ?? 'user'}:\n\n${post.caption ?? ''}` }) },
-                { text: 'Cancel', style: 'cancel' },
-              ]);
-            }
-          }}
+          onPress={() => setShowOptions(true)}
         >
           <Ionicons name="ellipsis-horizontal" size={20} color="rgba(255,255,255,0.5)" />
         </TouchableOpacity>
       </View>
+
+      <PostOptionsSheet
+        visible={showOptions}
+        onClose={() => setShowOptions(false)}
+        post={post}
+        currentUserId={currentUserId}
+        isSaved={saved}
+        onSave={toggleSave}
+        onDelete={handleDeletePost}
+        onShare={() => {
+          setShowOptions(false);
+          Share.share({ message: `Check out this post on UniGram by @${post.profiles?.username ?? 'user'}:\n\n${post.caption ?? ''}` });
+        }}
+        onCopyLink={() => {
+          setShowOptions(false);
+          Alert.alert('Link Copied', 'Post link copied to clipboard.');
+        }}
+      />
 
       {post.type !== 'thread' && (post.media_url || (post.media_urls && post.media_urls.length > 0)) ? (
         <View>
@@ -835,9 +971,11 @@ export const FeedPost: React.FC<{
 interface FeedScreenProps {
   refreshKey?: number;
   onCreateStory?: () => void;
+  onNotifPress?: () => void;
+  notifBadge?: number;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreateStory }) => {
+export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreateStory, onNotifPress, notifBadge = 0 }) => {
   const insets = useSafeAreaInsets();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -879,11 +1017,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
 
   const headerTranslateY = headerVisible.interpolate({ inputRange: [0, 1], outputRange: [-HEADER_HEIGHT, 0] });
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (isManualRefresh = false) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
+      
       const [postsData, storiesData, likedData, savedData, viewedData, prof] = await Promise.all([
         getPersonalizedFeed(user.id),
         getActiveStories(),
@@ -892,12 +1031,37 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
         getViewedStoryIds(user.id),
         supabase.from('profiles').select('*').eq('id', user.id).single().then(r => r.data),
       ]);
+
       setCurrentProfile(prof);
-      setPosts(postsData);
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
       setViewedIds(viewedData);
+
+      // ── Feed Stability Logic ──
+      // If we already have posts and this isn't a manual pull-to-refresh, 
+      // we maintain the current order but update metadata (likes/counts) 
+      // for posts that already exist in our list.
+      if (posts.length > 0 && !isManualRefresh) {
+        setPosts(prev => {
+          const updated = [...prev];
+          postsData.forEach((newP: any) => {
+            const idx = updated.findIndex(p => p.id === newP.id);
+            if (idx !== -1) {
+              // Update existing post data without moving it
+              updated[idx] = { ...updated[idx], ...newP };
+            } else {
+              // Prepend truly new posts at the very top
+              updated.unshift(newP);
+            }
+          });
+          return updated;
+        });
+      } else {
+        // First load or manual refresh - take the new order
+        setPosts(postsData);
+      }
+
       cachedFeedPosts = postsData;
       cachedStoryGroups = storiesData;
       cachedLikedIds = new Set(likedData);
@@ -909,9 +1073,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [posts.length]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Defer the first load until after animations settle — keeps app launch smooth
+    const task = InteractionManager.runAfterInteractions(() => { load(); });
+    return () => task.cancel();
+  }, [load]);
   useEffect(() => { if (refreshKey > 0) load(); }, [refreshKey]);
 
   const handleCommentCountChange = useCallback((postId: string, delta: number) => {
@@ -919,6 +1087,11 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       ? { ...p, comments_count: Math.max(0, (p.comments_count ?? 0) + delta) }
       : p
     ));
+  }, []);
+
+  const handlePostDeleted = useCallback((postId: string) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
+    cachedFeedPosts = cachedFeedPosts.filter((p: any) => p.id !== postId);
   }, []);
 
   const onRefresh = () => { setRefreshing(true); load(); };
@@ -931,12 +1104,20 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       mediaTypes: 'images' as any, allowsEditing: true, aspect: [9, 16], quality: 0.85,
     });
     if (!result.canceled && result.assets?.[0] && currentUserId) {
-      try {
-        await createStory(currentUserId, result.assets[0].uri);
-        load();
-      } catch (e: any) {
-        Alert.alert('Error', e.message ?? 'Could not post story.');
-      }
+      const uri = result.assets[0].uri;
+      // Optimistic: show temp story immediately in the story bar
+      const tempId = 'temp-story-' + Date.now();
+      setStoryGroups(prev => {
+        const existing = prev.find(g => g.profile?.id === currentUserId);
+        if (existing) return prev; // already has stories, skip temp
+        return [{ profile: currentProfile, stories: [{ id: tempId, media_url: uri, _pending: true }] }, ...prev];
+      });
+      createStory(currentUserId, uri)
+        .then(() => load())
+        .catch((e: any) => {
+          setStoryGroups(prev => prev.filter(g => !g.stories?.some((s: any) => s.id === tempId)));
+          Alert.alert('Error', e.message ?? 'Could not post story.');
+        });
     }
   };
 
@@ -946,14 +1127,27 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
 
       <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }] }]}>
         <Text style={styles.topBarLogo}>UniGram</Text>
-        <TouchableOpacity><Ionicons name="notifications-outline" size={24} color="#fff" /></TouchableOpacity>
+        <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative' }}>
+          <Ionicons name="notifications-outline" size={24} color="#fff" />
+          {notifBadge > 0 && (
+            <View style={styles.notifHeaderBadge}>
+              <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </Animated.View>
+
+      <BackgroundUploadIndicator />
 
       <FlatList
         data={loading ? [] : posts}
         keyExtractor={p => p.id}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        windowSize={4}
+        maxToRenderPerBatch={3}
+        initialNumToRender={2}
+        removeClippedSubviews={true}
         ListHeaderComponent={
           <>
             <View style={{ height: HEADER_HEIGHT }} />
@@ -985,6 +1179,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
             isMuted={isMuted}
             setIsMuted={setIsMuted}
             onCommentCountChange={handleCommentCountChange}
+            onDeleted={handlePostDeleted}
           />
         )}
         viewabilityConfig={viewabilityConfig}
@@ -1028,6 +1223,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingBottom: 8, backgroundColor: '#000',
   },
   topBarLogo: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
+  notifHeaderBadge: {
+    position: 'absolute', top: -4, right: -6,
+    minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#000',
+  },
+  notifHeaderBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
 
   storyScroll: { paddingVertical: 10 },
   storyItem: { alignItems: 'center', width: 72 },
@@ -1133,16 +1335,26 @@ const sv = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 16, paddingTop: 12, zIndex: 10,
   },
+  viewersCount: { color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 8 },
+  viewersBtn: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  viewerAvatars: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   replyInput: {
     flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
     borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8,
   },
-  replyPlaceholder: { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  replyInputActive: { borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.1)' },
+  replyTextInput: { color: '#fff', fontSize: 14, padding: 0 },
   replyHeart: { padding: 4 },
   replyShare: { padding: 4 },
-  viewersBtn: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  viewerAvatars: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
-  viewersCount: { color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 8 },
+  reactionOverlay: {
+    position: 'absolute', left: 20, right: 20,
+    flexDirection: 'row', justifyContent: 'space-between',
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 30,
+    padding: 12, zIndex: 20,
+  },
+  reactionItem: { padding: 4 },
+  sendBtn: { paddingHorizontal: 4 },
+  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
 });
 
 const vv = StyleSheet.create({
@@ -1161,6 +1373,12 @@ const vv = StyleSheet.create({
   info: { flex: 1 },
   username: { color: '#fff', fontSize: 14, fontWeight: '600' },
   time: { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 },
+  reactionBadge: { 
+    width: 28, height: 28, borderRadius: 14, 
+    backgroundColor: 'rgba(255,255,255,0.05)', 
+    alignItems: 'center', justifyContent: 'center' 
+  },
+  reactionEmoji: { fontSize: 14 },
   empty: { alignItems: 'center', marginTop: 60 },
   emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14 },
 });

@@ -254,6 +254,10 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress }) => {
             contentContainerStyle={{ gap: 1, paddingBottom: 80 }}
             columnWrapperStyle={{ gap: 1 }}
             showsVerticalScrollIndicator={false}
+            windowSize={5}
+            maxToRenderPerBatch={9}
+            initialNumToRender={9}
+            removeClippedSubviews={true}
           />
         )}
         {detailPost && (

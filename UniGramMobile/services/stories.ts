@@ -79,16 +79,43 @@ export async function getStoryStats(storyId: string) {
 export async function getStoryViewers(storyId: string) {
   const { data, error } = await supabase
     .from('story_views')
-    .select(`*, profiles!story_views_user_id_fkey(*)`)
+    .select(`
+      *, 
+      profiles!story_views_user_id_fkey(*),
+      story_likes:story_likes!inner(reaction)
+    `)
     .eq('story_id', storyId)
     .order('viewed_at', { ascending: false });
-  if (error) throw error;
-  return data?.map(d => ({ ...d.profiles, viewed_at: d.viewed_at })) ?? [];
+    
+  // If no likes, story_likes join might return empty or null.
+  // We should actually use a left join (default) but select it properly.
+  // Re-fetching with a better join approach:
+  const { data: views } = await supabase
+    .from('story_views')
+    .select(`*, profiles:profiles!story_views_user_id_fkey(*)`)
+    .eq('story_id', storyId);
+  
+  const { data: likes } = await supabase
+    .from('story_likes')
+    .select(`user_id, reaction`)
+    .eq('story_id', storyId);
+
+  const likesMap = new Map((likes ?? []).map(l => [l.user_id, l.reaction]));
+
+  return (views ?? []).map(v => ({ 
+    ...v.profiles, 
+    viewed_at: v.viewed_at,
+    reaction: likesMap.get(v.user_id) || null
+  }));
 }
 
-export async function likeStory(storyId: string, userId: string) {
-  const { error } = await supabase.from('story_likes').insert({ story_id: storyId, user_id: userId });
-  if (error && error.code !== '23505') throw error;
+export async function likeStory(storyId: string, userId: string, reaction: string = '❤️') {
+  const { error } = await supabase.from('story_likes').upsert({ 
+    story_id: storyId, 
+    user_id: userId,
+    reaction 
+  }, { onConflict: 'story_id,user_id' });
+  if (error) throw error;
 }
 
 export async function unlikeStory(storyId: string, userId: string) {

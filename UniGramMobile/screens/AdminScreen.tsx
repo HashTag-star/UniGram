@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, ActivityIndicator, TextInput, Alert,
-  RefreshControl, ScrollView,
+  RefreshControl, ScrollView, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { AdminReport, getReports, updateReportStatus, banUser as banUserAction } from '../services/reports';
+import { sendAdminNotification } from '../services/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +32,20 @@ interface AdminUser {
   verification_type: string | null;
 }
 
+interface AdminVerificationRequest {
+  id: string;
+  user_id: string;
+  type: string;
+  status: string;
+  full_name: string;
+  email: string;
+  reason: string;
+  document_url: string;
+  submitted_at: string;
+  rejection_reason: string | null;
+  profiles: { username: string; avatar_url: string | null } | null;
+}
+
 interface AdminPost {
   id: string;
   caption: string | null;
@@ -46,11 +62,12 @@ interface AdminMarketItem {
   price: number;
   image_urls: string[] | null;
   is_sold: boolean;
+  user_id: string;
   created_at: string;
   profiles: { username: string } | null;
 }
 
-type AdminTab = 'overview' | 'users' | 'posts' | 'market' | 'reports';
+type AdminTab = 'overview' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce';
 type PostFilter = 'all' | 'flagged';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -62,25 +79,91 @@ function timeAgo(ts: string) {
   return `${Math.floor(d / 86400)}d ago`;
 }
 
+// ─── Components ───────────────────────────────────────────────────────────────
+
+const SectionHeader: React.FC<{ title: string; onSeeAll?: () => void; count?: number }> = ({ title, onSeeAll, count }) => (
+  <View style={styles.sectionHeader}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {count !== undefined && (
+        <View style={styles.countBadge}><Text style={styles.countBadgeText}>{count}</Text></View>
+      )}
+    </View>
+    {onSeeAll && (
+      <TouchableOpacity onPress={onSeeAll}>
+        <Text style={styles.seeAllText}>See All</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+const HorizontalItem: React.FC<{ 
+  image?: string; 
+  title: string; 
+  subtitle: string; 
+  onPress?: () => void;
+  badge?: string;
+  badgeColor?: string;
+}> = ({ image, title, subtitle, onPress, badge, badgeColor }) => (
+  <TouchableOpacity style={styles.hItem} onPress={onPress}>
+    {image ? (
+      <Image source={{ uri: image }} style={styles.hItemImage} />
+    ) : (
+      <View style={[styles.hItemImage, { backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="image-outline" size={20} color="rgba(255,255,255,0.2)" />
+      </View>
+    )}
+    {badge && (
+      <View style={[styles.hItemBadge, { backgroundColor: badgeColor || '#6366f1' }]}>
+        <Text style={styles.hItemBadgeText}>{badge}</Text>
+      </View>
+    )}
+    <View style={styles.hItemInfo}>
+      <Text style={styles.hItemTitle} numberOfLines={1}>{title}</Text>
+      <Text style={styles.hItemSub} numberOfLines={1}>{subtitle}</Text>
+    </View>
+  </TouchableOpacity>
+);
+
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
-const OverviewTab: React.FC<{ stats: AdminStats | null; loading: boolean; onRefresh: () => void }> = ({
-  stats, loading, onRefresh,
-}) => {
+const OverviewTab: React.FC<{ 
+  stats: AdminStats | null; 
+  loading: boolean; 
+  onRefresh: () => void;
+  setActiveTab: (tab: AdminTab) => void;
+}> = ({ stats, loading, onRefresh, setActiveTab }) => {
+  const [recentPosts, setRecentPosts] = useState<AdminPost[]>([]);
+  const [recentMarket, setRecentMarket] = useState<AdminMarketItem[]>([]);
+  const [pendingVerifs, setPendingVerifs] = useState<AdminVerificationRequest[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const [p, m, v] = await Promise.all([
+        supabase.from('posts').select('*, profiles(username)').order('created_at', { ascending: false }).limit(5),
+        supabase.from('market_items').select('*, profiles(username)').order('created_at', { ascending: false }).limit(5),
+        supabase.from('verification_requests').select('*, profiles(username, avatar_url)').eq('status', 'pending').limit(5)
+      ]);
+      setRecentPosts(((p.data || []).map(x => ({ ...x, profiles: Array.isArray(x.profiles) ? x.profiles[0] : x.profiles })) as any));
+      setRecentMarket(((m.data || []).map(x => ({ ...x, profiles: Array.isArray(x.profiles) ? x.profiles[0] : x.profiles })) as any));
+      setPendingVerifs(((v.data || []).map(x => ({ ...x, profiles: Array.isArray(x.profiles) ? x.profiles[0] : x.profiles })) as any));
+    };
+    fetchData();
+  }, [loading]);
+
   const cards = stats
     ? [
         { label: 'Total Users', value: stats.totalUsers, icon: 'people', color: '#6366f1' },
         { label: 'Total Posts', value: stats.totalPosts, icon: 'images', color: '#22c55e' },
         { label: 'Market Items', value: stats.totalMarketItems, icon: 'storefront', color: '#f59e0b' },
         { label: 'Active Reports', value: stats.activeReports, icon: 'flag', color: '#ef4444' },
-        { label: 'DAU Estimate', value: stats.dauEstimate, icon: 'pulse', color: '#3b82f6' },
       ]
     : [];
 
   return (
-    <ScrollView contentContainerStyle={styles.tabContent}>
+    <ScrollView contentContainerStyle={[styles.tabContent, { paddingBottom: 100 }]}>
       <View style={styles.overviewHeader}>
-        <Text style={styles.sectionTitle}>App Overview</Text>
+        <Text style={styles.sectionTitle}>Dashboard Stats</Text>
         <TouchableOpacity onPress={onRefresh} style={styles.refreshBtn} disabled={loading}>
           {loading
             ? <ActivityIndicator size="small" color="#6366f1" />
@@ -89,26 +172,82 @@ const OverviewTab: React.FC<{ stats: AdminStats | null; loading: boolean; onRefr
         </TouchableOpacity>
       </View>
 
-      {loading && !stats ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
-      ) : (
-        <View style={styles.statsGrid}>
-          {cards.map(card => (
-            <View key={card.label} style={styles.statCard}>
-              <View style={[styles.statIconWrap, { backgroundColor: card.color + '22' }]}>
-                <Ionicons name={card.icon as any} size={22} color={card.color} />
-              </View>
-              <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
-              <Text style={styles.statLabel}>{card.label}</Text>
+      <View style={styles.statsGrid}>
+        {cards.map(card => (
+          <View key={card.label} style={styles.statCard}>
+            <View style={[styles.statIconWrap, { backgroundColor: card.color + '22' }]}>
+              <Ionicons name={card.icon as any} size={22} color={card.color} />
             </View>
-          ))}
+            <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
+            <Text style={styles.statLabel}>{card.label}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={{ gap: 24, marginTop: 24 }}>
+        {pendingVerifs.length > 0 && (
+          <View>
+            <SectionHeader title="Pending Verifications" onSeeAll={() => setActiveTab('verifications')} count={pendingVerifs.length} />
+            <FlatList
+              data={pendingVerifs}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              renderItem={({ item }) => (
+                <HorizontalItem 
+                  image={item.profiles?.avatar_url || undefined}
+                  title={`@${item.profiles?.username}`}
+                  subtitle={item.type === 'influencer' ? 'Notable' : item.type.toUpperCase()}
+                  badge={item.type === 'influencer' ? 'Notable' : item.type}
+                  badgeColor={item.type === 'influencer' ? '#818cf8' : undefined}
+                  onPress={() => setActiveTab('verifications')}
+                />
+              )}
+            />
+          </View>
+        )}
+
+        <View>
+          <SectionHeader title="Recent Posts" onSeeAll={() => setActiveTab('posts')} />
+          <FlatList
+            data={recentPosts}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+            renderItem={({ item }) => (
+              <HorizontalItem 
+                image={item.media_url || undefined}
+                title={`@${item.profiles?.username}`}
+                subtitle={item.caption || 'No caption'}
+                onPress={() => setActiveTab('posts')}
+              />
+            )}
+          />
         </View>
-      )}
+
+        <View>
+          <SectionHeader title="Latest Market Items" onSeeAll={() => setActiveTab('market')} />
+          <FlatList
+            data={recentMarket}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+            renderItem={({ item }) => (
+              <HorizontalItem 
+                image={item.image_urls?.[0]}
+                title={item.title}
+                subtitle={`$${item.price.toFixed(2)} · @${item.profiles?.username}`}
+                onPress={() => setActiveTab('market')}
+              />
+            )}
+          />
+        </View>
+      </View>
 
       <View style={styles.infoBox}>
         <Ionicons name="information-circle-outline" size={16} color="rgba(255,255,255,0.4)" />
         <Text style={styles.infoText}>
-          DAU estimate is based on profiles updated in the last 24 hours. Stats refresh on demand.
+          Real-time insights across the UniGram platform. Click "See All" to manage items.
         </Text>
       </View>
     </ScrollView>
@@ -321,7 +460,11 @@ const PostsTab: React.FC = () => {
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      setPosts((data as AdminPost[]) ?? []);
+      const formatted = (data as any[]).map(p => ({
+        ...p,
+        profiles: Array.isArray(p.profiles) ? p.profiles[0] : p.profiles
+      })) as unknown as AdminPost[];
+      setPosts(formatted);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to load posts');
     } finally {
@@ -454,7 +597,11 @@ const MarketTab: React.FC = () => {
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      setItems((data as AdminMarketItem[]) ?? []);
+      const formatted = (data as any[]).map(item => ({
+        ...item,
+        profiles: Array.isArray(item.profiles) ? item.profiles[0] : item.profiles
+      })) as unknown as AdminMarketItem[];
+      setItems(formatted);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to load market items');
     } finally {
@@ -584,23 +731,664 @@ const MarketTab: React.FC = () => {
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
 
-const ReportsTab: React.FC = () => (
-  <View style={[styles.tabContent, styles.centered]}>
-    <Ionicons name="flag-outline" size={52} color="rgba(255,255,255,0.15)" />
-    <Text style={styles.comingSoonTitle}>Reports coming soon</Text>
-    <Text style={styles.comingSoonSub}>
-      Run the SQL migration to create the reports table, then this tab will display flagged content.
-    </Text>
-  </View>
-);
+const ReportsTab: React.FC = () => {
+  const [reports, setReports] = useState<AdminReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actioning, setActioning] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getReports();
+      setReports(data.filter(r => r.status === 'pending'));
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to load reports');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAction = async (report: AdminReport, action: 'resolve' | 'dismiss' | 'ban') => {
+    setActioning(report.id);
+    try {
+      if (action === 'ban') {
+        await banUserAction(report.target_id);
+        await updateReportStatus(report.id, 'resolved');
+        Alert.alert('Success', 'User has been banned and report resolved.');
+      } else if (action === 'resolve') {
+        await updateReportStatus(report.id, 'resolved');
+        Alert.alert('Success', 'Report marked as resolved.');
+      } else {
+        await updateReportStatus(report.id, 'dismissed');
+        Alert.alert('Success', 'Report dismissed.');
+      }
+      setReports(prev => prev.filter(r => r.id !== report.id));
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setActioning(null);
+    }
+  };
+
+  const renderReport = ({ item: r }: { item: AdminReport }) => (
+    <View style={styles.reportCard}>
+      <View style={styles.reportHeader}>
+        <Image source={{ uri: r.reporter?.avatar_url || 'https://via.placeholder.com/40' }} style={styles.reportAvatar} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.reportReporter}>@{r.reporter?.username || 'unknown'} reported a {r.target_type}</Text>
+          <Text style={styles.reportMeta}>{timeAgo(r.created_at)} · {r.reason}</Text>
+        </View>
+        <View style={[styles.badge, styles.badgeBanned]}>
+          <Text style={styles.badgeText}>{r.status}</Text>
+        </View>
+      </View>
+
+      <View style={styles.reportContent}>
+        <Text style={styles.reportDetailLabel}>Reason:</Text>
+        <Text style={styles.reportReasonText}>{r.reason}</Text>
+        {r.details ? (
+          <>
+            <Text style={[styles.reportDetailLabel, { marginTop: 8 }]}>Additional Details:</Text>
+            <Text style={styles.reportDetailsText}>{r.details}</Text>
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.reportActions}>
+        {actioning === r.id ? (
+          <ActivityIndicator size="small" color="#6366f1" />
+        ) : (
+          <>
+            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDismiss]} onPress={() => handleAction(r, 'dismiss')}>
+              <Text style={styles.actionBtnText}>Dismiss</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnResolve]} onPress={() => handleAction(r, 'resolve')}>
+              <Text style={styles.actionBtnText}>Resolved</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBan]} onPress={() => handleAction(r, 'ban')}>
+              <Text style={styles.actionBtnText}>Ban User</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.tabContent}>
+      <Text style={styles.countLabel}>{reports.length} pending reports</Text>
+      {loading ? (
+        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+      ) : (
+        <FlatList
+          data={reports}
+          keyExtractor={r => r.id}
+          renderItem={renderReport}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor="#6366f1" />
+          }
+          contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Ionicons name="checkmark-done" size={40} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No pending reports</Text>
+            </View>
+          }
+        />
+      )}
+    </View>
+  );
+};
+
+// ─── Verifications Tab ────────────────────────────────────────────────────────
+
+type VerifFilter = 'pending' | 'approved' | 'rejected';
+
+const VerificationsTab: React.FC = () => {
+  const [allRequests, setAllRequests] = useState<AdminVerificationRequest[]>([]);
+  const [filter, setFilter] = useState<VerifFilter>('pending');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actioning, setActioning] = useState<string | null>(null);
+  const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [selectedRequest, setSelectedRequest] = useState<AdminVerificationRequest | null>(null);
+
+  // Derived list based on active filter
+  const requests = allRequests.filter(r => r.status === filter);
+
+  const counts = {
+    pending: allRequests.filter(r => r.status === 'pending').length,
+    approved: allRequests.filter(r => r.status === 'approved').length,
+    rejected: allRequests.filter(r => r.status === 'rejected').length,
+  };
+
+  const load = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('verification_requests')
+        .select('*, profiles(username, avatar_url)')
+        .order('submitted_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      const formatted = (data as any[]).map(req => ({
+        ...req,
+        profiles: Array.isArray(req.profiles) ? req.profiles[0] : req.profiles
+      })) as unknown as AdminVerificationRequest[];
+      setAllRequests(formatted);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to load requests');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAction = async (request: AdminVerificationRequest, approve: boolean) => {
+    if (!approve) {
+      setSelectedRequest(request);
+      setRejectionReason('');
+      setRejectionModalVisible(true);
+      return;
+    }
+    
+    setActioning(request.id);
+    try {
+      // 1. Update profile
+      const { error: pErr } = await supabase
+        .from('profiles')
+        .update({ is_verified: true, verification_type: request.type })
+        .eq('id', request.user_id);
+      if (pErr) throw pErr;
+
+      // 2. Update request status
+      const { error: rErr } = await supabase
+        .from('verification_requests')
+        .update({ status: 'approved' })
+        .eq('id', request.id);
+      if (rErr) throw rErr;
+
+      setAllRequests(prev => prev.map(r => r.id === request.id ? { ...r, status: 'approved' } : r));
+      Alert.alert('Success', 'Request approved and profile updated.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setActioning(null);
+    }
+  };
+
+  const submitRejection = async () => {
+    if (!selectedRequest || !rejectionReason.trim()) return;
+    setActioning(selectedRequest.id);
+    setRejectionModalVisible(false);
+    
+    try {
+      const { error } = await supabase
+        .from('verification_requests')
+        .update({ 
+          status: 'rejected',
+          rejection_reason: rejectionReason.trim()
+        })
+        .eq('id', selectedRequest.id);
+      
+      if (error) throw error;
+      
+      setAllRequests(prev => prev.map(r => r.id === selectedRequest.id ? { ...r, status: 'rejected', rejection_reason: rejectionReason.trim() } : r));
+      Alert.alert('Success', 'Request rejected with reason.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setActioning(null);
+      setSelectedRequest(null);
+    }
+  };
+
+  const renderRequest = ({ item: r }: { item: AdminVerificationRequest }) => (
+    <View style={styles.requestCard}>
+      <View style={styles.requestHeader}>
+        <View style={styles.userAvatarWrap}>
+          {r.profiles?.avatar_url
+            ? <Image source={{ uri: r.profiles.avatar_url }} style={styles.userAvatar} />
+            : <View style={[styles.userAvatar, styles.userAvatarPlaceholder]}><Ionicons name="person" size={16} color="#555" /></View>
+          }
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.userName}>@{r.profiles?.username ?? 'unknown'}</Text>
+          <Text style={styles.userMeta}>{timeAgo(r.submitted_at)} · {r.type === 'influencer' ? 'NOTABLE' : r.type.toUpperCase()}</Text>
+        </View>
+        <View style={[styles.badge, styles.badgeAdmin, { backgroundColor: r.type === 'influencer' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)' }]}>
+          <Text style={[styles.badgeText, { color: r.type === 'influencer' ? '#818cf8' : 'rgba(255,255,255,0.4)' }]}>
+            {r.type === 'influencer' ? 'Notable' : r.type}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.requestDetails}>
+        <Text style={styles.detailLabel}>Full Name: <Text style={styles.detailValue}>{r.full_name}</Text></Text>
+        <Text style={styles.detailLabel}>Email: <Text style={styles.detailValue}>{r.email}</Text></Text>
+        <Text style={styles.detailLabel}>Reason:</Text>
+        <Text style={styles.reasonText}>{r.reason}</Text>
+      </View>
+
+      {r.document_url && (
+        <View style={styles.docWrapper}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={styles.detailLabel}>Supporting Document:</Text>
+            <TouchableOpacity onPress={() => {
+              const { Linking } = require('react-native');
+              Linking.openURL(r.document_url);
+            }}>
+              <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '700' }}>VIEW FULL</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={() => {
+              const { Linking } = require('react-native');
+              Linking.openURL(r.document_url);
+            }}
+          >
+            <Image source={{ uri: r.document_url }} style={styles.docPreview} resizeMode="contain" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {r.status === 'approved' && (
+        <View style={[styles.statusBanner, { backgroundColor: 'rgba(34,197,94,0.12)' }]}>
+          <Ionicons name="checkmark-circle" size={14} color="#22c55e" />
+          <Text style={[styles.statusBannerText, { color: '#22c55e' }]}>Approved</Text>
+        </View>
+      )}
+      {r.status === 'rejected' && (
+        <View style={[styles.statusBanner, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
+          <Ionicons name="close-circle" size={14} color="#ef4444" />
+          <Text style={[styles.statusBannerText, { color: '#ef4444' }]}>
+            Rejected{r.rejection_reason ? `: ${r.rejection_reason}` : ''}
+          </Text>
+        </View>
+      )}
+
+      {r.status === 'pending' && (
+        <View style={styles.requestActions}>
+          {actioning === r.id ? (
+            <ActivityIndicator size="small" color="#6366f1" />
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionBtnReject]}
+                onPress={() => handleAction(r, false)}
+              >
+                <Text style={styles.actionBtnText}>Reject</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionBtnApprove]}
+                onPress={() => handleAction(r, true)}
+              >
+                <Text style={styles.actionBtnText}>Approve</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
+    </View>
+  );
+
+  return (
+    <View style={styles.tabContent}>
+      {/* Status filter tabs */}
+      <View style={styles.verifFilterRow}>
+        {(['pending', 'approved', 'rejected'] as VerifFilter[]).map(f => {
+          const isActive = filter === f;
+          const color = f === 'approved' ? '#22c55e' : f === 'rejected' ? '#ef4444' : '#f59e0b';
+          return (
+            <TouchableOpacity
+              key={f}
+              style={[styles.verifFilterBtn, isActive && { borderColor: color, backgroundColor: color + '18' }]}
+              onPress={() => setFilter(f)}
+            >
+              <Text style={[styles.verifFilterText, isActive && { color }]}>
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+                {counts[f] > 0 ? ` (${counts[f]})` : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+      ) : (
+        <FlatList
+          data={requests}
+          keyExtractor={r => r.id}
+          renderItem={renderRequest}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); load(); }}
+              tintColor="#6366f1"
+            />
+          }
+          contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Ionicons name="checkmark-circle-outline" size={40} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>
+                {filter === 'pending' ? 'All caught up!' : `No ${filter} requests`}
+              </Text>
+            </View>
+          }
+        />
+      )}
+
+      {/* Rejection Modal */}
+      <Modal visible={rejectionModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.rejectionModal}>
+            <View style={styles.rejectionHeader}>
+              <Text style={styles.rejectionTitle}>Reject Request</Text>
+              <TouchableOpacity onPress={() => setRejectionModalVisible(false)}>
+                <Ionicons name="close" size={24} color="rgba(255,255,255,0.4)" />
+              </TouchableOpacity>
+            </View>
+            
+            <Text style={styles.rejectionSubtitle}>Please provide a reason for rejecting @{selectedRequest?.profiles?.username}'s request.</Text>
+            
+            <TextInput
+              style={styles.rejectionInput}
+              placeholder="e.g., Document not clear, requirements not met..."
+              placeholderTextColor="rgba(255,255,255,0.2)"
+              multiline
+              autoFocus
+              value={rejectionReason}
+              onChangeText={setRejectionReason}
+            />
+            
+            <View style={styles.rejectionActions}>
+              <TouchableOpacity 
+                style={[styles.rejectionBtn, styles.rejectionBtnCancel]} 
+                onPress={() => setRejectionModalVisible(false)}
+              >
+                <Text style={styles.rejectionBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.rejectionBtn, styles.rejectionBtnSubmit, !rejectionReason.trim() && { opacity: 0.5 }]} 
+                onPress={submitRejection}
+                disabled={!rejectionReason.trim() || actioning !== null}
+              >
+                <Text style={[styles.rejectionBtnText, { color: '#fff' }]}>Submit Rejection</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
+// ─── Announcements Tab ────────────────────────────────────────────────────────
+
+const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
+  const [message, setMessage] = useState('');
+  const [targetUsername, setTargetUsername] = useState('');
+  const [sending, setSending] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+
+  // Load recent announcements sent by admin
+  useEffect(() => {
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('actor_id', adminId)
+      .in('type', ['announcement', 'verification_approved', 'verification_rejected'])
+      .order('created_at', { ascending: false })
+      .limit(30)
+      .then(({ data }) => setHistory(data ?? []));
+  }, [adminId]);
+
+  const handleSend = async (broadcast: boolean) => {
+    const msg = message.trim();
+    if (!msg) return;
+    setSending(true);
+    try {
+      let targetId: string | undefined;
+      if (!broadcast) {
+        if (!targetUsername.trim()) {
+          Alert.alert('Error', 'Enter a username to send to a specific user.');
+          setSending(false);
+          return;
+        }
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', targetUsername.trim().replace('@', ''))
+          .maybeSingle();
+        if (!profile) {
+          Alert.alert('User not found', `@${targetUsername} does not exist.`);
+          setSending(false);
+          return;
+        }
+        targetId = profile.id;
+      }
+      await sendAdminNotification(adminId, msg, 'announcement', targetId);
+      // Add to local history optimistically
+      setHistory(prev => [{
+        id: 'temp-' + Date.now(),
+        text: msg,
+        type: 'announcement',
+        created_at: new Date().toISOString(),
+        user_id: targetId ?? null,
+      }, ...prev]);
+      setMessage('');
+      setTargetUsername('');
+      Alert.alert('Sent!', broadcast ? 'Announcement sent to all users.' : `Notification sent to @${targetUsername}.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to send.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={[styles.tabContent, { padding: 16, paddingBottom: 100 }]}>
+      {/* Compose */}
+      <View style={annoStyles.card}>
+        <View style={annoStyles.cardHeader}>
+          <Ionicons name="megaphone" size={18} color="#818cf8" />
+          <Text style={annoStyles.cardTitle}>Send Notification</Text>
+        </View>
+        <TextInput
+          style={annoStyles.input}
+          placeholder="Write your message..."
+          placeholderTextColor="rgba(255,255,255,0.2)"
+          multiline
+          value={message}
+          onChangeText={setMessage}
+        />
+        <View style={annoStyles.targetRow}>
+          <Ionicons name="at" size={16} color="rgba(255,255,255,0.3)" style={{ marginRight: 6 }} />
+          <TextInput
+            style={annoStyles.targetInput}
+            placeholder="Username (leave blank to broadcast to all)"
+            placeholderTextColor="rgba(255,255,255,0.2)"
+            value={targetUsername}
+            onChangeText={setTargetUsername}
+            autoCapitalize="none"
+          />
+        </View>
+        <View style={annoStyles.btnRow}>
+          <TouchableOpacity
+            style={[annoStyles.sendBtn, annoStyles.sendBtnUser, !message.trim() && { opacity: 0.4 }]}
+            onPress={() => handleSend(false)}
+            disabled={sending || !message.trim()}
+          >
+            <Ionicons name="person" size={14} color="#fff" />
+            <Text style={annoStyles.sendBtnText}>Send to User</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[annoStyles.sendBtn, annoStyles.sendBtnAll, !message.trim() && { opacity: 0.4 }]}
+            onPress={() => {
+              Alert.alert(
+                'Broadcast to ALL users?',
+                'This will notify every user on the platform.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Send', style: 'destructive', onPress: () => handleSend(true) },
+                ]
+              );
+            }}
+            disabled={sending || !message.trim()}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="megaphone" size={14} color="#fff" />
+                <Text style={annoStyles.sendBtnText}>Broadcast All</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Quick templates */}
+      <Text style={annoStyles.sectionLabel}>QUICK TEMPLATES</Text>
+      {[
+        'Welcome to UniGram! Explore and connect with your campus.',
+        'Reminder: Community guidelines must be followed. Stay respectful.',
+        'New feature available! Update your app for the latest experience.',
+      ].map(t => (
+        <TouchableOpacity
+          key={t}
+          style={annoStyles.templateBtn}
+          onPress={() => setMessage(t)}
+        >
+          <Ionicons name="document-text-outline" size={14} color="rgba(255,255,255,0.3)" />
+          <Text style={annoStyles.templateText} numberOfLines={1}>{t}</Text>
+        </TouchableOpacity>
+      ))}
+
+      {/* History */}
+      {history.length > 0 && (
+        <>
+          <Text style={[annoStyles.sectionLabel, { marginTop: 24 }]}>RECENT NOTIFICATIONS</Text>
+          {history.map(n => (
+            <View key={n.id} style={annoStyles.historyItem}>
+              <View style={{ flex: 1 }}>
+                <Text style={annoStyles.historyText} numberOfLines={2}>{n.text}</Text>
+                <Text style={annoStyles.historyMeta}>
+                  {n.type} · {timeAgo(n.created_at)}
+                  {n.user_id && ` · 1 user`}
+                  {!n.user_id && ` · all users`}
+                </Text>
+              </View>
+              <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
+            </View>
+          ))}
+        </>
+      )}
+    </ScrollView>
+  );
+};
+
+const annoStyles = StyleSheet.create({
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 20,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    padding: 12,
+    color: '#fff',
+    fontSize: 14,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    marginBottom: 10,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  targetInput: { flex: 1, color: '#fff', fontSize: 13 },
+  btnRow: { flexDirection: 'row', gap: 10 },
+  sendBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  sendBtnUser: { backgroundColor: 'rgba(99,102,241,0.3)', borderWidth: 1, borderColor: '#6366f1' },
+  sendBtnAll: { backgroundColor: '#6366f1' },
+  sendBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.3)',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  templateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  templateText: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.5)' },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.15)',
+  },
+  historyText: { fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 3 },
+  historyMeta: { fontSize: 11, color: 'rgba(255,255,255,0.25)' },
+});
 
 // ─── Main AdminScreen ─────────────────────────────────────────────────────────
 
 interface Props {
   onBack: () => void;
+  adminId: string;
 }
 
-export const AdminScreen: React.FC<Props> = ({ onBack }) => {
+export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -677,7 +1465,9 @@ export const AdminScreen: React.FC<Props> = ({ onBack }) => {
     { key: 'users', label: 'Users', icon: 'people' },
     { key: 'posts', label: 'Posts', icon: 'images' },
     { key: 'market', label: 'Market', icon: 'storefront' },
+    { key: 'verifications', label: 'Verify', icon: 'shield-checkmark' },
     { key: 'reports', label: 'Reports', icon: 'flag' },
+    { key: 'announce', label: 'Announce', icon: 'megaphone' },
   ];
 
   return (
@@ -723,12 +1513,14 @@ export const AdminScreen: React.FC<Props> = ({ onBack }) => {
       {/* Tab Content */}
       <View style={{ flex: 1 }}>
         {activeTab === 'overview' && (
-          <OverviewTab stats={stats} loading={statsLoading} onRefresh={loadStats} />
+          <OverviewTab stats={stats} loading={statsLoading} onRefresh={loadStats} setActiveTab={setActiveTab} />
         )}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'posts' && <PostsTab />}
         {activeTab === 'market' && <MarketTab />}
+        {activeTab === 'verifications' && <VerificationsTab />}
         {activeTab === 'reports' && <ReportsTab />}
+        {activeTab === 'announce' && <AnnouncementsTab adminId={adminId} />}
       </View>
     </View>
   );
@@ -794,6 +1586,43 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 60 },
   emptyText: { color: 'rgba(255,255,255,0.3)', marginTop: 12, fontSize: 14 },
 
+  // Verification filter
+  verifFilterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  verifFilterBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+  },
+  verifFilterText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.35)',
+  },
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 12,
+    marginBottom: 12,
+    padding: 8,
+    borderRadius: 8,
+  },
+  statusBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+
   // Overview
   overviewHeader: {
     flexDirection: 'row',
@@ -830,6 +1659,48 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 26, fontWeight: '800', color: '#fff', marginBottom: 2 },
   statLabel: { fontSize: 12, color: 'rgba(255,255,255,0.45)', fontWeight: '500' },
+
+  // Section Header
+  sectionHeader: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    marginTop: 10,
+  },
+  countBadge: {
+    backgroundColor: 'rgba(99,102,241,0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  countBadgeText: { color: '#818cf8', fontSize: 10, fontWeight: '700' },
+  seeAllText: { color: '#6366f1', fontSize: 13, fontWeight: '600' },
+
+  // Horizontal Items
+  hItem: {
+    width: 140,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  hItemImage: { width: '100%', height: 100 },
+  hItemBadge: { 
+    position: 'absolute', 
+    top: 6, 
+    right: 6, 
+    paddingHorizontal: 6, 
+    paddingVertical: 2, 
+    borderRadius: 4 
+  },
+  hItemBadgeText: { color: '#fff', fontSize: 8, fontWeight: '800', textTransform: 'uppercase' },
+  hItemInfo: { padding: 8 },
+  hItemTitle: { color: '#fff', fontSize: 11, fontWeight: '700', marginBottom: 2 },
+  hItemSub: { color: 'rgba(255,255,255,0.4)', fontSize: 10 },
+
   infoBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -978,19 +1849,126 @@ const styles = StyleSheet.create({
   soldBadgeText: { fontSize: 9, fontWeight: '800', color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5 },
   marketActions: { flexDirection: 'column', gap: 5, alignItems: 'flex-end' },
 
+  // Verifications
+  requestCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    marginBottom: 12,
+    padding: 14,
+  },
+  requestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  requestDetails: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  detailLabel: { fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 2 },
+  detailValue: { color: '#fff', fontWeight: '600' },
+  reasonText: { fontSize: 13, color: 'rgba(255,255,255,0.8)', marginTop: 4, lineHeight: 18 },
+  docWrapper: { marginBottom: 12 },
+  docPreview: { width: '100%', height: 200, borderRadius: 8, backgroundColor: '#111' },
+  requestActions: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end' },
+  actionBtnReject: { backgroundColor: 'rgba(239,68,68,0.15)', flex: 1, paddingVertical: 10 },
+  actionBtnApprove: { backgroundColor: '#6366f1', flex: 1, paddingVertical: 10 },
+
   // Reports
-  comingSoonTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 16,
+  reportCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    marginBottom: 12,
+    padding: 14,
+  },
+  reportHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  reportAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 10 },
+  reportReporter: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  reportMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
+  reportContent: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  reportDetailLabel: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontWeight: '600' },
+  reportReasonText: { fontSize: 13, color: '#fff', marginTop: 4, fontWeight: '600' },
+  reportDetailsText: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 4, lineHeight: 18 },
+  reportActions: { flexDirection: 'row', gap: 8 },
+  actionBtnResolve: { backgroundColor: 'rgba(34,197,94,0.2)', flex: 1 },
+  actionBtnDismiss: { backgroundColor: 'rgba(255,255,255,0.08)', flex: 1 },
+
+  // Rejection Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  rejectionModal: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    width: '100%',
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  rejectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
   },
-  comingSoonSub: {
+  rejectionTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  rejectionSubtitle: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.3)',
-    textAlign: 'center',
-    paddingHorizontal: 32,
-    lineHeight: 20,
+    color: 'rgba(255,255,255,0.5)',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  rejectionInput: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 12,
+    color: '#fff',
+    fontSize: 14,
+    height: 100,
+    textAlignVertical: 'top',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  rejectionActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  rejectionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rejectionBtnCancel: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  rejectionBtnSubmit: {
+    backgroundColor: '#ef4444',
+  },
+  rejectionBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.6)',
   },
 });

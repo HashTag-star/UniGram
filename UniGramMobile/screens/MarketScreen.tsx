@@ -556,6 +556,14 @@ const SellModal: React.FC<SellModalProps> = ({
   const [condition, setCondition] = useState<Condition>('good');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
+
+  useEffect(() => {
+    if (visible && currentUserId) {
+      supabase.from('profiles').select('is_banned').eq('id', currentUserId).single()
+        .then(({ data }) => setIsBanned(!!data?.is_banned));
+    }
+  }, [visible, currentUserId]);
 
   // Pre-fill when editing
   useEffect(() => {
@@ -677,101 +685,111 @@ const SellModal: React.FC<SellModalProps> = ({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Image picker */}
-          <TouchableOpacity style={sell.imagePicker} onPress={pickImage} activeOpacity={0.75}>
-            {imageUri ? (
-              <>
-                <Image source={{ uri: imageUri }} style={sell.imagePreview} resizeMode="cover" />
-                <View style={sell.imageChangeOverlay}>
-                  <Ionicons name="camera" size={22} color="#fff" />
-                  <Text style={sell.imageChangeText}>Change</Text>
-                </View>
-              </>
-            ) : (
-              <View style={sell.imageEmpty}>
-                <Ionicons name="camera-outline" size={36} color="#444" />
-                <Text style={sell.imageEmptyText}>Tap to add photo</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          {/* Title */}
-          <TextInput
-            style={sell.input}
-            placeholder="Title *"
-            placeholderTextColor="#555"
-            value={title}
-            onChangeText={setTitle}
-            maxLength={120}
-            returnKeyType="next"
-          />
-
-          {/* Price */}
-          <TextInput
-            style={sell.input}
-            placeholder="Price (e.g. 25.00) *"
-            placeholderTextColor="#555"
-            value={price}
-            onChangeText={setPrice}
-            keyboardType="decimal-pad"
-          />
-
-          {/* Description */}
-          <TextInput
-            style={[sell.input, sell.textArea]}
-            placeholder="Description (optional)"
-            placeholderTextColor="#555"
-            value={description}
-            onChangeText={setDescription}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            maxLength={1000}
-          />
-
-          {/* Category */}
-          <Text style={sell.sectionLabel}>Category</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-          >
-            {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[sell.chip, category === cat.id && sell.chipActive]}
-                onPress={() => setCategory(cat.id)}
-              >
-                <Text style={sell.chipEmoji}>{cat.icon}</Text>
-                <Text style={[sell.chipLabel, category === cat.id && sell.chipLabelActive]}>
-                  {cat.label}
-                </Text>
+          {isBanned ? (
+            <View style={sell.bannedCard}>
+              <Ionicons name="alert-circle" size={42} color="#ef4444" />
+              <Text style={sell.bannedTitle}>Market Restricted</Text>
+              <Text style={sell.bannedSub}>Your account is restricted from creating marketplace listings due to community policy violations. You can still browse and message sellers.</Text>
+            </View>
+          ) : (
+            <>
+              {/* Image picker */}
+              <TouchableOpacity style={sell.imagePicker} onPress={pickImage} activeOpacity={0.75}>
+                {imageUri ? (
+                  <>
+                    <Image source={{ uri: imageUri }} style={sell.imagePreview} resizeMode="cover" />
+                    <View style={sell.imageChangeOverlay}>
+                      <Ionicons name="camera" size={22} color="#fff" />
+                      <Text style={sell.imageChangeText}>Change</Text>
+                    </View>
+                  </>
+                ) : (
+                  <View style={sell.imageEmpty}>
+                    <Ionicons name="camera-outline" size={36} color="#444" />
+                    <Text style={sell.imageEmptyText}>Tap to add photo</Text>
+                  </View>
+                )}
               </TouchableOpacity>
-            ))}
-          </ScrollView>
 
-          {/* Condition */}
-          <Text style={sell.sectionLabel}>Condition</Text>
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            {CONDITIONS.map(c => {
-              const color = CONDITION_COLOR[c];
-              const active = condition === c;
-              return (
-                <TouchableOpacity
-                  key={c}
-                  style={[
-                    sell.condChip,
-                    active && { borderColor: color, backgroundColor: color + '20' },
-                  ]}
-                  onPress={() => setCondition(c)}
-                >
-                  <Text style={[sell.condChipText, active && { color }]}>
-                    {CONDITION_LABEL[c]}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+              {/* Title */}
+              <TextInput
+                style={sell.input}
+                placeholder="Title *"
+                placeholderTextColor="#555"
+                value={title}
+                onChangeText={setTitle}
+                maxLength={120}
+                returnKeyType="next"
+              />
+
+              {/* Price */}
+              <TextInput
+                style={sell.input}
+                placeholder="Price (e.g. 25.00) *"
+                placeholderTextColor="#555"
+                value={price}
+                onChangeText={setPrice}
+                keyboardType="decimal-pad"
+              />
+
+              {/* Description */}
+              <TextInput
+                style={[sell.input, sell.textArea]}
+                placeholder="Description (optional)"
+                placeholderTextColor="#555"
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                maxLength={1000}
+              />
+
+              {/* Category */}
+              <Text style={sell.sectionLabel}>Category</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+              >
+                {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[sell.chip, category === cat.id && sell.chipActive]}
+                    onPress={() => setCategory(cat.id)}
+                  >
+                    <Text style={sell.chipEmoji}>{cat.icon}</Text>
+                    <Text style={[sell.chipLabel, category === cat.id && sell.chipLabelActive]}>
+                      {cat.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Condition */}
+              <Text style={sell.sectionLabel}>Condition</Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                {CONDITIONS.map(c => {
+                  const color = CONDITION_COLOR[c];
+                  const active = condition === c;
+                  return (
+                    <TouchableOpacity
+                      key={c}
+                      style={[
+                        sell.condChip,
+                        active && { borderColor: color, backgroundColor: color + '20' },
+                      ]}
+                      onPress={() => setCondition(c)}
+                    >
+                      <Text style={[sell.condChipText, active && { color }]}>
+                        {CONDITION_LABEL[c]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
@@ -1253,6 +1271,10 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) =>
           columnWrapperStyle={styles.columnWrapper}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          windowSize={5}
+          maxToRenderPerBatch={6}
+          initialNumToRender={6}
+          removeClippedSubviews={true}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -1861,9 +1883,20 @@ const sell = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
   condChipText: {
-    color: '#666',
     fontSize: 13,
     fontWeight: '600',
     textTransform: 'capitalize',
   },
+  bannedCard: { 
+    backgroundColor: 'rgba(239, 68, 68, 0.05)', 
+    borderRadius: 20, 
+    padding: 32, 
+    alignItems: 'center', 
+    borderColor: 'rgba(239, 68, 68, 0.15)', 
+    borderWidth: 1, 
+    marginTop: 40,
+    marginHorizontal: 16
+  },
+  bannedTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginTop: 16 },
+  bannedSub: { color: 'rgba(255,255,255,0.4)', fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
 });

@@ -64,9 +64,14 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const [selectedMediaIdx, setSelectedMediaIdx] = useState(0);
   const [activeMention, setActiveMention] = useState('');
 
+  const [isBanned, setIsBanned] = useState(false);
+
   useEffect(() => {
     if (visible && userId) {
       getFollowing(userId).then(setFollowingList).catch(() => {});
+      // Check if user is banned
+      supabase.from('profiles').select('is_banned').eq('id', userId).single()
+        .then(({ data }) => setIsBanned(!!data?.is_banned));
     }
   }, [visible, userId]);
 
@@ -268,20 +273,23 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
     // Fire and forget upload process
     const uploadTask = async () => {
+      DeviceEventEmitter.emit('upload_status', { status: 'loading', type: postType });
       try {
         if (postType === 'story') {
           await createStory(userId, mediaAssets[0].uri, fullCaption || undefined);
         } else if (postType === 'reel') {
           await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined);
         } else {
-          await createPost(userId, fullCaption, type, primaryAsset?.uri ?? undefined, {
+          await createPost(userId, fullCaption, type, mediaAssets.map(a => a.uri), {
             location: location || undefined,
             song: song || undefined,
             taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
             mimeType: primaryAsset?.mimeType,
           });
         }
+        DeviceEventEmitter.emit('upload_status', { status: 'success', type: postType });
       } catch (e: any) {
+        DeviceEventEmitter.emit('upload_status', { status: 'error', type: postType });
         Alert.alert('Upload Failed', 'Your post could not be uploaded.');
       }
     };
@@ -355,8 +363,24 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           )}
         </View>
 
+        {/* ── Banned Zone ── */}
+        {isBanned && (
+          <View style={styles.bannedContainer}>
+            <View style={styles.bannedCard}>
+              <Ionicons name="alert-circle" size={48} color="#ef4444" />
+              <Text style={styles.bannedTitle}>Account Suspended</Text>
+              <Text style={styles.bannedSub}>
+                Your account has been suspended for violating campus community guidelines. You can still browse, but you are restricted from posting or selling.
+              </Text>
+              <TouchableOpacity style={styles.bannedBtn}>
+                <Text style={styles.bannedBtnText}>Contact Support</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* ── Step 1: Type selector ── */}
-        {step === 'type' && (
+        {!isBanned && step === 'type' && (
           <ScrollView contentContainerStyle={styles.typeList} showsVerticalScrollIndicator={false}>
             {typeOptions.map(({ type, icon, label, sub, color }) => (
               <TouchableOpacity key={type} style={styles.typeCard} onPress={() => pickMedia(type)} activeOpacity={0.75}>
@@ -374,7 +398,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         )}
 
         {/* ── Step 2: Compose ── */}
-        {step === 'compose' && (
+        {!isBanned && step === 'compose' && (
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
 
             {/* Media preview */}
@@ -724,4 +748,11 @@ const styles = StyleSheet.create({
   trackName: { fontSize: 13, color: '#fff', fontWeight: '600' },
   trackArtist: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
   trackDur: { fontSize: 11, color: 'rgba(255,255,255,0.35)' },
+
+  bannedContainer: { flex: 1, padding: 24, justifyContent: 'center' },
+  bannedCard: { backgroundColor: 'rgba(239, 68, 68, 0.05)', borderRadius: 24, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.2)' },
+  bannedTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold', marginTop: 20 },
+  bannedSub: { color: 'rgba(255,255,255,0.5)', fontSize: 15, textAlign: 'center', marginTop: 12, lineHeight: 22 },
+  bannedBtn: { backgroundColor: '#ef4444', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 25, marginTop: 32 },
+  bannedBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

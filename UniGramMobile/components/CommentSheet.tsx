@@ -74,13 +74,19 @@ export const CommentSheet: React.FC<Props> = ({
     }
   };
 
-  const deleteComment = async (comment: any) => {
+  const deleteComment = (comment: any) => {
     if (comment.user_id !== currentUserId) return;
-    try {
-      if (targetType === 'post') await deletePostComment(comment.id, currentUserId);
-      setComments(prev => prev.filter(c => c.id !== comment.id));
-      onCountChange?.(-1);
-    } catch {}
+    // Optimistic: remove immediately
+    setComments(prev => prev.filter(c => c.id !== comment.id));
+    onCountChange?.(-1);
+    if (targetType === 'post') {
+      deletePostComment(comment.id, currentUserId).catch(() => {
+        setComments(prev => [...prev, comment].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        ));
+        onCountChange?.(1);
+      });
+    }
   };
 
   return (

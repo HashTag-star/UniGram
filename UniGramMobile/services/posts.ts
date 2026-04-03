@@ -25,23 +25,26 @@ export async function createPost(
   userId: string,
   caption: string,
   type: 'image' | 'video' | 'thread' = 'thread',
-  mediaUri?: string,
+  mediaUris?: string[],
   extras?: { location?: string; song?: string; taggedUsers?: string[]; mimeType?: string },
 ): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
-  let media_url: string | undefined;
-  if (mediaUri) {
-    const isVideo = type === 'video';
-    let ext = mediaUri.split('.').pop()?.toLowerCase();
-    if (!ext || ext.length > 5 || ext === mediaUri.toLowerCase()) {
-      ext = isVideo ? 'mp4' : 'jpg';
+  const uploadedUrls: string[] = [];
+  if (mediaUris && mediaUris.length > 0) {
+    for (const uri of mediaUris) {
+      const isVideo = type === 'video';
+      let ext = uri.split('.').pop()?.toLowerCase();
+      if (!ext || ext.length > 5 || ext === uri.toLowerCase()) {
+        ext = isVideo ? 'mp4' : 'jpg';
+      }
+      const bucket = isVideo ? 'videos' : 'post-media';
+      const path = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+      const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
+      const url = await uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime);
+      uploadedUrls.push(url);
     }
-    const bucket = isVideo ? 'videos' : 'post-media';
-    const path = `${userId}/${Date.now()}.${ext}`;
-    const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
-    media_url = await uploadFile(bucket, path, mediaUri, extras?.mimeType ?? fallbackMime);
   }
 
   const { data, error } = await supabase
@@ -50,12 +53,27 @@ export async function createPost(
       user_id: userId,
       caption,
       type,
-      media_url,
+      media_url: uploadedUrls[0] || null,
+      media_urls: uploadedUrls,
       location: extras?.location,
       song: extras?.song,
       tagged_users: extras?.taggedUsers,
     })
     .select(`*, profiles!posts_user_id_fkey(*)`)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updatePost(postId: string, userId: string, updates: { caption?: string; location?: string; tagged_users?: string[] }) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+  const { data, error } = await supabase
+    .from('posts')
+    .update(updates)
+    .eq('id', postId)
+    .eq('user_id', userId)
+    .select()
     .single();
   if (error) throw error;
   return data;

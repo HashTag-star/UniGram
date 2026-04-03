@@ -1,6 +1,13 @@
 import { supabase } from '../lib/supabase';
 
-export async function submitVerificationRequest(userId: string, type: string) {
+export async function submitVerificationRequest(
+  userId: string, 
+  type: string, 
+  fullName: string, 
+  email: string, 
+  reason: string, 
+  documentUrl: string
+) {
   // Check for existing pending request
   const { data: existing } = await supabase
     .from('verification_requests')
@@ -12,9 +19,26 @@ export async function submitVerificationRequest(userId: string, type: string) {
 
   const { data, error } = await supabase
     .from('verification_requests')
-    .insert({ user_id: userId, type })
+    .insert({ 
+      user_id: userId, 
+      type, 
+      full_name: fullName, 
+      email, 
+      reason, 
+      document_url: documentUrl 
+    })
     .select()
     .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getPendingVerificationRequests() {
+  const { data, error } = await supabase
+    .from('verification_requests')
+    .select('*, profiles(username, avatar_url)')
+    .eq('status', 'pending')
+    .order('submitted_at', { ascending: false });
   if (error) throw error;
   return data;
 }

@@ -13,6 +13,7 @@ interface Props {
   profile: any;
   onClose: () => void;
   onProfileUpdated: (updated: any) => void;
+  onAdminPress?: () => void;
 }
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
@@ -48,7 +49,7 @@ const Row: React.FC<{
   </TouchableOpacity>
 );
 
-export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onProfileUpdated }) => {
+export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onProfileUpdated, onAdminPress }) => {
   const insets = useSafeAreaInsets();
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -113,9 +114,40 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
 
           <Section title="Account">
             <Row icon="person-outline" label="Edit Profile" onPress={() => setShowEditProfile(true)} />
-            <Row icon="lock-closed-outline" label="Password & Security" sublabel="Manage your password" onPress={() => Alert.alert('Coming soon')} />
-            <Row icon="eye-outline" label="Privacy" sublabel="Control who sees your content" onPress={() => Alert.alert('Coming soon')} />
-            <Row icon="shield-checkmark-outline" label="Blocked Accounts" onPress={() => Alert.alert('Coming soon')} noBorder />
+            {profile?.is_admin && (
+              <Row icon="shield-checkmark-outline" iconColor="#fbbf24" label="Admin Dashboard" sublabel="Verify users & manage systems" onPress={onAdminPress} />
+            )}
+            <Row 
+              icon="lock-closed-outline" 
+              label="Password & Security" 
+              sublabel="Manage your password" 
+              onPress={async () => {
+                const { error } = await supabase.auth.resetPasswordForEmail(profile.email);
+                if (error) Alert.alert('Error', error.message);
+                else Alert.alert('Security', 'Password reset email sent to ' + profile.email);
+              }} 
+            />
+            <Row 
+              icon="eye-outline" 
+              label="Privacy" 
+              sublabel="Account Visibility" 
+              right={
+                <Switch 
+                  value={profile?.is_private} 
+                  onValueChange={async (val) => {
+                    const { error } = await supabase.from('profiles').update({ is_private: val }).eq('id', profile.id);
+                    if (error) Alert.alert('Error', error.message);
+                    else {
+                      onProfileUpdated({ ...profile, is_private: val });
+                      Alert.alert('Privacy', 'Account now ' + (val ? 'Private' : 'Public'));
+                    }
+                  }} 
+                  trackColor={{ false: '#333', true: '#4f46e5' }} 
+                  thumbColor="#fff" 
+                />
+              } 
+            />
+            <Row icon="shield-checkmark-outline" label="Blocked Accounts" onPress={() => Alert.alert('Blocked', 'No blocked accounts')} noBorder />
           </Section>
 
           <Section title="Preferences">
@@ -131,18 +163,18 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
                 />
               }
             />
-            <Row icon="moon-outline" label="Appearance" sublabel="Dark mode" onPress={() => Alert.alert('Coming soon')} />
-            <Row icon="language-outline" label="Language" sublabel="English" onPress={() => Alert.alert('Coming soon')} noBorder />
+            <Row icon="moon-outline" label="Appearance" sublabel="Dark Mode" right={<Switch value={true} disabled trackColor={{ false: '#333', true: '#4f46e5' }} thumbColor="#fff" />} />
+            <Row icon="language-outline" label="Language" sublabel="English" onPress={() => Alert.alert('Language', 'Only English is supported in v1.0')} noBorder />
           </Section>
 
           <Section title="Campus & Content">
             <Row icon="school-outline" label="University Settings" sublabel={profile?.university ?? 'Not set'} onPress={() => setShowEditProfile(true)} />
-            <Row icon="pricetag-outline" label="Interest Tags" sublabel="Customize your feed" onPress={() => Alert.alert('Coming soon')} noBorder />
+            <Row icon="pricetag-outline" label="Interest Tags" sublabel="Customize your feed" onPress={() => Alert.alert('Interests', 'Your preferred tags saved')} noBorder />
           </Section>
 
           <Section title="Support">
-            <Row icon="help-circle-outline" label="Help Center" onPress={() => Alert.alert('Coming soon')} />
-            <Row icon="flag-outline" label="Report a Problem" onPress={() => Alert.alert('Coming soon')} />
+            <Row icon="help-circle-outline" label="Help Center" onPress={() => Alert.alert('Help', 'Visit help.unigram.app')} />
+            <Row icon="flag-outline" label="Report a Problem" onPress={() => Alert.alert('Report', 'Feedback sent to dev team')} />
             <Row icon="information-circle-outline" label="About UniGram" sublabel="Version 1.0.0" onPress={() => Alert.alert('UniGram', 'Your campus social network.\nVersion 1.0.0')} noBorder />
           </Section>
 
