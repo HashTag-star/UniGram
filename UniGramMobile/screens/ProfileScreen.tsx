@@ -475,7 +475,11 @@ const styles = StyleSheet.create({
   },
   avatar: { width: '100%', height: '100%' },
   avatarEditOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
-  verifiedBadgeRow: { position: 'absolute', bottom: 0, right: -4 },
+  verifiedBadgeRow: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+  },
   
   profileActions: { alignItems: 'center', marginBottom: 6 },
   actionRow: { flexDirection: 'row', gap: 8 },

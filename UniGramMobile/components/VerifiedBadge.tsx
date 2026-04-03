@@ -21,15 +21,26 @@ export const VerifiedBadge: React.FC<Props> = ({ type = 'student', size = 'sm' }
   return (
     <View
       style={{
-        width: dim,
-        height: dim,
-        borderRadius: dim / 2,
-        backgroundColor: colors[type],
+        width: dim + 4,
+        height: dim + 4,
+        borderRadius: (dim + 4) / 2,
+        backgroundColor: '#000',           // dark ring matches app bg
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: '#fff', fontSize, fontWeight: 'bold', lineHeight: fontSize + 2 }}>✓</Text>
+      <View
+        style={{
+          width: dim,
+          height: dim,
+          borderRadius: dim / 2,
+          backgroundColor: colors[type],
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text style={{ color: '#fff', fontSize, fontWeight: 'bold', lineHeight: fontSize + 2 }}>✓</Text>
+      </View>
     </View>
   );
 };

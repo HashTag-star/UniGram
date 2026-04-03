@@ -1485,6 +1485,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
         { count: totalPosts },
         { count: totalMarketItems },
         { count: activeReports },
+        { count: pendingVerifications },
         { count: dauEstimate },
       ] = await Promise.all([
         supabase.from('profiles').select('*', { count: 'exact', head: true }),
@@ -1534,6 +1535,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
           totalPosts: totalPosts ?? 0,
           totalMarketItems: totalMarketItems ?? 0,
           activeReports: 0,
+          pendingVerifications: 0,
           dauEstimate: dauEstimate ?? 0,
         });
       } catch {
@@ -1965,6 +1967,18 @@ const styles = StyleSheet.create({
   requestActions: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end' },
   actionBtnReject: { backgroundColor: 'rgba(239,68,68,0.15)', flex: 1, paddingVertical: 10 },
   actionBtnApprove: { backgroundColor: '#6366f1', flex: 1, paddingVertical: 10 },
+  docRevealBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 12, 
+    backgroundColor: 'rgba(129,140,248,0.08)', 
+    padding: 14, 
+    borderRadius: 16, 
+    borderWidth: 1, 
+    borderColor: 'rgba(129,140,248,0.15)', 
+    marginBottom: 12 
+  },
+  docRevealText: { flex: 1, color: '#818cf8', fontSize: 13, fontWeight: '700' },
 
   // Reports
   reportCard: {
