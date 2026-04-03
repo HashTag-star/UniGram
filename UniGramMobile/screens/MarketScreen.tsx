@@ -50,6 +50,12 @@ import { createDirectConversation } from '../services/messages';
 const { width } = Dimensions.get('window');
 const CARD_W = (width - 38) / 2;
 const PAGE_SIZE = 20;
+const MARKET_TTL = 3 * 60 * 1000; // 3 minutes
+
+// Module-level memory cache (survives tab switches)
+let _cachedItems: any[] = [];
+let _cachedSavedIds: Set<string> = new Set();
+let _lastLoaded = 0;
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: '🛍️' },
@@ -798,9 +804,10 @@ const SellModal: React.FC<SellModalProps> = ({
 
 interface MarketScreenProps {
   onMessagePress?: (convId: string, otherProfile: any) => void;
+  isVisible?: boolean;
 }
 
-export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) => {
+export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible }) => {
   const insets = useSafeAreaInsets();
 
   // Auth
@@ -815,11 +822,11 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) =>
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
-  // Browse data
-  const [browseItems, setBrowseItems] = useState<MarketItem[]>([]);
-  const [browseOffset, setBrowseOffset] = useState(0);
+  // Browse data (initialize from module cache for instant display)
+  const [browseItems, setBrowseItems] = useState<MarketItem[]>(_cachedItems);
+  const [browseOffset, setBrowseOffset] = useState(_cachedItems.length || 0);
   const [browseHasMore, setBrowseHasMore] = useState(true);
-  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(_cachedItems.length === 0);
 
   // Saved data
   const [savedItems, setSavedItems] = useState<MarketItem[]>([]);
@@ -830,7 +837,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) =>
   const [myLoading, setMyLoading] = useState(false);
 
   // Saved IDs for optimistic bookmark state
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedIds, setSavedIds] = useState<Set<string>>(_cachedSavedIds);
 
   // UI state
   const [refreshing, setRefreshing] = useState(false);
@@ -865,9 +872,13 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) =>
         setBrowseItems(data);
         setBrowseOffset(data.length);
         setBrowseHasMore(data.length === PAGE_SIZE);
+        _cachedItems = data;
+        _lastLoaded = Date.now();
         if (hard) {
           const savedData = await getSavedItemIds(currentUserId);
-          setSavedIds(new Set(savedData));
+          const savedSet = new Set<string>(savedData);
+          setSavedIds(savedSet);
+          _cachedSavedIds = savedSet;
         }
       } catch (e) {
         console.error('loadBrowse', e);
@@ -929,10 +940,23 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) =>
   // ── Initial load ──
   useEffect(() => {
     if (!currentUserId) return;
+    // If we have fresh cache, skip the spinner and just background-refresh
+    if (_cachedItems.length > 0 && Date.now() - _lastLoaded < MARKET_TTL) {
+      setBrowseLoading(false);
+      return;
+    }
     loadBrowse(true);
     loadSaved();
     loadMine();
   }, [currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Visibility-based background refresh ──
+  useEffect(() => {
+    if (isVisible && currentUserId && _lastLoaded > 0) {
+      const stale = Date.now() - _lastLoaded > MARKET_TTL;
+      if (stale) loadBrowse(true);
+    }
+  }, [isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reload browse when filters change ──
   useEffect(() => {

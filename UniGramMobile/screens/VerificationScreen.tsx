@@ -4,7 +4,8 @@ import {
   StyleSheet, Modal, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { submitVerificationRequest } from '../services/verification';
 import { supabase } from '../lib/supabase';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff';
@@ -66,55 +67,64 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   const [reason, setReason] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [documentUri, setDocumentUri] = useState<string | null>(null);
-  const [base64Data, setBase64Data] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentPicker.DocumentPickerAsset[]>([]);
 
-  const reset = () => { setStep('select'); setSelected(null); setName(''); setEmail(''); setReason(''); setAgreed(false); setDocumentUri(null); setBase64Data(null); };
+  const reset = () => { 
+    setStep('select'); 
+    setSelected(null); 
+    setName(''); 
+    setEmail(''); 
+    setReason(''); 
+    setAgreed(false); 
+    setDocuments([]); 
+  };
   const handleClose = () => { reset(); onClose(); };
 
-  const pickDocument = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      quality: 0.7,
-      base64: true,
-    });
-    if (!res.canceled && res.assets[0].base64) {
-      setDocumentUri(res.assets[0].uri);
-      setBase64Data(res.assets[0].base64);
+  const pickDocuments = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        multiple: true,
+      });
+
+      if (!res.canceled) {
+        setDocuments(prev => [...prev, ...res.assets]);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to pick documents');
     }
   };
 
-  const uploadDocument = async (uri: string, path: string) => {
-    if (!base64Data) {
-      // Fallback to fetch if base64 missing for some reason
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const { error } = await supabase.storage.from('verifications').upload(path, blob);
-      if (error) throw error;
-    } else {
-      const { decode } = require('base64-arraybuffer');
-      const { error } = await supabase.storage.from('verifications').upload(path, decode(base64Data), {
-        contentType: 'image/jpeg',
-      });
-      if (error) throw error;
-    }
+  const uploadFile = async (asset: DocumentPicker.DocumentPickerAsset, userId: string) => {
+    const ext = asset.name.split('.').pop();
+    const fileName = `${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    const path = fileName;
+
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
+    const { decode } = require('base64-arraybuffer');
+    
+    const { error } = await supabase.storage.from('verifications').upload(path, decode(base64), {
+      contentType: asset.mimeType ?? 'application/octet-stream',
+    });
+
+    if (error) throw error;
+
     const { data } = supabase.storage.from('verifications').getPublicUrl(path);
     return data.publicUrl;
   };
 
   const submit = async () => {
-    if (!selected || !documentUri) return;
+    if (!selected || documents.length === 0) return;
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const ext = documentUri.split('.').pop();
-      const fileName = `${user.id}_${Date.now()}.${ext}`;
-      const documentUrl = await uploadDocument(documentUri, fileName);
+      const documentUrls = await Promise.all(
+        documents.map(doc => uploadFile(doc, user.id))
+      );
 
-      await submitVerificationRequest(user.id, selected.type, name, email, reason, documentUrl);
+      await submitVerificationRequest(user.id, selected.type, name, email, reason, documentUrls);
       setStep('success');
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to submit request.');
@@ -205,24 +215,35 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
               numberOfLines={3}
             />
 
-            <Text style={styles.formLabel}>Supporting Document *</Text>
+            <Text style={styles.formLabel}>Supporting Documents *</Text>
+            {documents.length > 0 && (
+              <View style={styles.docList}>
+                {documents.map((doc, i) => (
+                  <View key={i} style={styles.docListItem}>
+                    <Ionicons 
+                      name={doc.mimeType?.includes('pdf') ? "document-text" : "image"} 
+                      size={16} 
+                      color="rgba(255,255,255,0.4)" 
+                    />
+                    <Text style={styles.docName} numberOfLines={1}>{doc.name}</Text>
+                    <TouchableOpacity onPress={() => setDocuments(prev => prev.filter((_, idx) => idx !== i))}>
+                      <Ionicons name="close-circle" size={16} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
             <TouchableOpacity 
-              style={[styles.uploadBtn, documentUri && { borderColor: '#818cf8', backgroundColor: '#818cf810' }]} 
-              onPress={pickDocument}
+              style={[styles.uploadBtn, documents.length > 0 && { borderColor: '#818cf8', backgroundColor: '#818cf810' }]} 
+              onPress={pickDocuments}
             >
               <Ionicons 
-                name={documentUri ? "checkmark-circle" : "cloud-upload-outline"} 
+                name="cloud-upload-outline" 
                 size={18} 
-                color={documentUri ? "#818cf8" : "rgba(255,255,255,0.4)"} 
+                color="rgba(255,255,255,0.4)" 
               />
-              <Text style={[styles.uploadText, documentUri && { color: '#818cf8' }]}>
-                {documentUri 
-                  ? 'Document Selected' 
-                  : selected.type === 'student' ? 'Upload Student ID / Proof' 
-                  : selected.type === 'professor' ? 'Upload Faculty ID'
-                  : selected.type === 'club' ? 'Upload Recognition Letter'
-                  : 'Upload Supporting Document'
-                }
+              <Text style={styles.uploadText}>
+                {documents.length > 0 ? 'Add More Documents' : 'Upload ID / Proof (Images or PDF)'}
               </Text>
             </TouchableOpacity>
 
@@ -235,10 +256,10 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
 
             <TouchableOpacity
               onPress={submit}
-              disabled={!name || !email || !agreed || !documentUri || loading}
-              style={[styles.submitBtn, (!name || !email || !agreed || !documentUri) && styles.submitBtnDisabled]}
+              disabled={!name || !email || !agreed || documents.length === 0 || loading}
+              style={[styles.submitBtn, (!name || !email || !agreed || documents.length === 0) && styles.submitBtnDisabled]}
             >
-              <Text style={[styles.submitBtnText, (!name || !email || !agreed) && { color: 'rgba(255,255,255,0.3)' }]}>
+              <Text style={[styles.submitBtnText, (!name || !email || !agreed || documents.length === 0) && { color: 'rgba(255,255,255,0.3)' }]}>
                 {loading ? 'Submitting...' : 'Submit Verification Request'}
               </Text>
             </TouchableOpacity>
@@ -282,6 +303,9 @@ const styles = StyleSheet.create({
   formLabel: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.45)', marginBottom: 6 },
   input: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14, marginBottom: 14 },
   textarea: { height: 80, textAlignVertical: 'top' },
+  docList: { marginBottom: 12 },
+  docListItem: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  docName: { flex: 1, color: 'rgba(255,255,255,0.7)', fontSize: 13 },
   uploadBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', borderStyle: 'dashed', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
   uploadText: { color: 'rgba(255,255,255,0.35)', fontSize: 13 },
   agreeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 24 },

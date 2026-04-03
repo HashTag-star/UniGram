@@ -4,7 +4,7 @@ import {
   StyleSheet, Dimensions, Modal, FlatList,
   StatusBar, RefreshControl, Animated, Alert, Share,
   TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
-  TextInput, InteractionManager,
+  TextInput, InteractionManager, AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useAudioPlayer } from 'expo-audio';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
@@ -92,7 +93,7 @@ const StoryBar: React.FC<{
             <View style={[styles.storyRing, allViewed && styles.storyRingViewed]}>
               <View style={styles.storyAvatarClip}>
                 {group.profile.avatar_url
-                  ? <Image source={{ uri: group.profile.avatar_url }} style={styles.storyAvatar} />
+                  ? <CachedImage uri={group.profile.avatar_url} style={styles.storyAvatar} />
                   : <View style={[styles.storyAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
                       <Ionicons name="person" size={22} color="#555" />
                     </View>}
@@ -630,7 +631,7 @@ const MediaCarousel: React.FC<{
               {type === 'video' ? (
                 <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} />
               ) : (
-                <Image source={{ uri: item }} style={styles.postMedia} resizeMode="cover" />
+                <CachedImage uri={item} style={styles.postMedia} resizeMode="cover" />
               )}
             </View>
           </TouchableWithoutFeedback>
@@ -829,7 +830,7 @@ export const FeedPost: React.FC<{
         <View style={styles.postUserRow}>
           <View style={styles.avatarRing}>
             {profile?.avatar_url
-              ? <Image source={{ uri: profile.avatar_url }} style={styles.postAvatar} />
+              ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
               : <View style={[styles.postAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
                   <Ionicons name="person" size={18} color="#555" />
                 </View>}
@@ -968,14 +969,18 @@ export const FeedPost: React.FC<{
 });
 
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
+const FEED_PAGE = 12; // posts per page
+const FEED_TTL = 2 * 60 * 1000; // 2 minutes before a background refresh
+
 interface FeedScreenProps {
   refreshKey?: number;
+  isVisible?: boolean;
   onCreateStory?: () => void;
   onNotifPress?: () => void;
   notifBadge?: number;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreateStory, onNotifPress, notifBadge = 0 }) => {
+export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0 }) => {
   const insets = useSafeAreaInsets();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -988,7 +993,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentProfile, setCurrentProfile] = useState<any>(cachedCurrentProfile);
   const [activePostId, setActivePostId] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(true); // Default to muted like IG
+  const [isMuted, setIsMuted] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const pageRef = useRef(0);
+  const lastLoadedRef = useRef(0);
+  const appStateRef = useRef(AppState.currentState);
 
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 70,
@@ -1022,14 +1032,17 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
-      
+
+      // Fetch first page + supporting data in parallel
       const [postsData, storiesData, likedData, savedData, viewedData, prof] = await Promise.all([
-        getPersonalizedFeed(user.id),
+        getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
         getViewedStoryIds(user.id),
-        supabase.from('profiles').select('*').eq('id', user.id).single().then(r => r.data),
+        supabase.from('profiles')
+          .select('id, username, full_name, avatar_url, is_verified, verification_type')
+          .eq('id', user.id).single().then(r => r.data),
       ]);
 
       setCurrentProfile(prof);
@@ -1037,28 +1050,23 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
       setViewedIds(viewedData);
+      setHasMore(postsData.length === FEED_PAGE);
+      pageRef.current = 0;
+      lastLoadedRef.current = Date.now();
 
-      // ── Feed Stability Logic ──
-      // If we already have posts and this isn't a manual pull-to-refresh, 
-      // we maintain the current order but update metadata (likes/counts) 
-      // for posts that already exist in our list.
-      if (posts.length > 0 && !isManualRefresh) {
+      if (cachedFeedPosts.length > 0 && !isManualRefresh) {
+        // Stale-while-revalidate: merge without reordering visible posts
         setPosts(prev => {
-          const updated = [...prev];
-          postsData.forEach((newP: any) => {
-            const idx = updated.findIndex(p => p.id === newP.id);
-            if (idx !== -1) {
-              // Update existing post data without moving it
-              updated[idx] = { ...updated[idx], ...newP };
-            } else {
-              // Prepend truly new posts at the very top
-              updated.unshift(newP);
-            }
+          const map = new Map(prev.map((p: any) => [p.id, p]));
+          postsData.forEach((p: any) => {
+            if (map.has(p.id)) map.set(p.id, { ...map.get(p.id), ...p });
+            else map.set(p.id, p); // new post at top handled below
           });
-          return updated;
+          // Prepend genuinely new posts
+          const newOnes = postsData.filter((p: any) => !prev.find((pp: any) => pp.id === p.id));
+          return [...newOnes, ...Array.from(map.values()).filter((p: any) => !newOnes.find((n: any) => n.id === p.id))];
         });
       } else {
-        // First load or manual refresh - take the new order
         setPosts(postsData);
       }
 
@@ -1073,14 +1081,59 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
       setLoading(false);
       setRefreshing(false);
     }
-  }, [posts.length]);
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const nextPage = pageRef.current + 1;
+      const morePosts = await getPersonalizedFeed(user.id, FEED_PAGE, nextPage * FEED_PAGE);
+      if (morePosts.length === 0) { setHasMore(false); return; }
+      pageRef.current = nextPage;
+      setHasMore(morePosts.length === FEED_PAGE);
+      setPosts(prev => {
+        const existing = new Set(prev.map((p: any) => p.id));
+        return [...prev, ...morePosts.filter((p: any) => !existing.has(p.id))];
+      });
+    } catch (e) {
+      console.error('loadMore error', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore]);
 
   useEffect(() => {
-    // Defer the first load until after animations settle — keeps app launch smooth
+    // Defer first load until after tab-switch animations settle
     const task = InteractionManager.runAfterInteractions(() => { load(); });
     return () => task.cancel();
   }, [load]);
-  useEffect(() => { if (refreshKey > 0) load(); }, [refreshKey]);
+
+  // Background refresh when tab becomes visible and data is stale
+  useEffect(() => {
+    if (isVisible && lastLoadedRef.current > 0) {
+      const age = Date.now() - lastLoadedRef.current;
+      if (age > FEED_TTL) {
+        load(); // silent background refresh, no spinner
+      }
+    }
+  }, [isVisible]);
+
+  // Refresh when app comes back to foreground (like IG does)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+        const age = Date.now() - lastLoadedRef.current;
+        if (age > FEED_TTL) load();
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, [load]);
+
+  useEffect(() => { if (refreshKey > 0) { pageRef.current = 0; load(true); } }, [refreshKey]);
 
   const handleCommentCountChange = useCallback((postId: string, delta: number) => {
     setPosts(prev => prev.map(p => p.id === postId
@@ -1094,7 +1147,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
     cachedFeedPosts = cachedFeedPosts.filter((p: any) => p.id !== postId);
   }, []);
 
-  const onRefresh = () => { setRefreshing(true); load(); };
+  const onRefresh = () => { setRefreshing(true); load(true); };
 
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
@@ -1184,6 +1237,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, onCreate
         )}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={loadingMore ? (
+          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color="#6366f1" />
+          </View>
+        ) : null}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" progressViewOffset={HEADER_HEIGHT} />
         }

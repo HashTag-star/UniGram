@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
-  StyleSheet, Dimensions, StatusBar,
+  StyleSheet, Dimensions, StatusBar, Pressable,
 } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withSequence, withTiming, withDelay, runOnJS } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { VerifiedBadge } from '../components/VerifiedBadge';
@@ -39,6 +41,13 @@ const ReelItem: React.FC<{
   const [following, setFollowing] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [showControls, setShowControls] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const lastTapRef = useRef(0);
+  const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
+  const heartScale = useSharedValue(0);
+  const heartOpacity = useSharedValue(0);
   const profile = reel.profiles;
 
   const player = useVideoPlayer(reel.video_url, (player) => {
@@ -53,10 +62,21 @@ const ReelItem: React.FC<{
   useEffect(() => {
     if (isActive) {
       player.play();
+      setIsPaused(false);
     } else {
       player.pause();
+      setIsPaused(true);
     }
   }, [isActive, player]);
+
+  useEffect(() => {
+    const sub = player.addListener('timeUpdate', (event) => {
+      if (player.duration > 0) {
+        setProgress(event.currentTime / player.duration);
+      }
+    });
+    return () => sub.remove();
+  }, [player]);
 
   const toggleLike = async () => {
     const next = !liked;
@@ -78,23 +98,104 @@ const ReelItem: React.FC<{
     } catch { setFollowing(!next); }
   };
 
+  const showHeartAnim = () => {
+    heartScale.value = withSequence(
+      withSpring(1.2, { damping: 10, stiffness: 100 }),
+      withTiming(0.8, { duration: 200 }),
+      withTiming(0, { duration: 500 })
+    );
+    heartOpacity.value = withSequence(
+      withTiming(1, { duration: 100 }),
+      withDelay(400, withTiming(0, { duration: 400 }))
+    );
+  };
+
+  const handleTap = (e: any) => {
+    const now = Date.now();
+    const { x, y } = e.nativeEvent;
+    
+    // Check for double tap (within 300ms)
+    if (now - lastTapRef.current < 300) {
+      handleDoubleTap(x);
+      lastTapRef.current = 0; // reset
+      return;
+    }
+    lastTapRef.current = now;
+
+    // Single tap delay to confirm it's not a double tap
+    setTimeout(() => {
+      if (lastTapRef.current === now) {
+        handleSingleTap();
+      }
+    }, 300);
+  };
+
+  const handleSingleTap = () => {
+    const nextPaused = !player.playing;
+    setIsPaused(nextPaused);
+    if (nextPaused) player.pause();
+    else player.play();
+
+    setShowControls(true);
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    hideControlsTimer.current = setTimeout(() => setShowControls(false), 3000);
+  };
+
+  const handleDoubleTap = (x: number) => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    
+    if (x < width * 0.35) {
+      // Seek back 10s
+      player.seekBy(-10);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } else if (x > width * 0.65) {
+      // Seek forward 10s
+      player.seekBy(10);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } else {
+      // Middle - Like
+      if (!liked) toggleLike();
+      showHeartAnim();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+  };
+
+  const heartStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: heartScale.value }],
+    opacity: heartOpacity.value,
+  }));
+
   return (
     <View style={[styles.reelContainer, { height: ITEM_HEIGHT }]}>
-      {reel.video_url ? (
-        <VideoView
-          player={player}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          nativeControls={false}
-        />
-      ) : reel.thumbnail_url ? (
-        <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-          <Ionicons name="film-outline" size={64} color="#333" />
-        </View>
-      )}
-      <View style={styles.gradient} />
+      <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
+        {reel.video_url ? (
+          <VideoView
+            player={player}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            nativeControls={false}
+          />
+        ) : reel.thumbnail_url ? (
+          <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="film-outline" size={64} color="#333" />
+          </View>
+        )}
+      </Pressable>
+      <View style={styles.gradient} pointerEvents="none" />
+
+      {/* Center Heart Anim */}
+      <View style={styles.centerOverlay} pointerEvents="none">
+        <Animated.View style={heartStyle}>
+          <Ionicons name="heart" size={100} color="#fff" />
+        </Animated.View>
+        {isPaused && showControls && (
+          <View style={styles.pauseOverlay}>
+            <Ionicons name="play" size={60} color="rgba(255,255,255,0.6)" />
+          </View>
+        )}
+      </View>
 
       {/* Right actions */}
       <View style={styles.rightActions}>
@@ -152,6 +253,11 @@ const ReelItem: React.FC<{
         <Text style={styles.viewCount}>
           {fmtCount(reel.views_count ?? 0)} views · {timeAgo(reel.created_at)}
         </Text>
+      </View>
+
+      {/* Bottom Seek Bar */}
+      <View style={[styles.seekBarWrap, showControls && { opacity: 1 }]}>
+        <View style={[styles.seekBarProgress, { width: `${progress * 100}%` }]} />
       </View>
 
       <CommentSheet
@@ -272,8 +378,12 @@ const reelNavStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  reelContainer: { width, position: 'relative' },
-  gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 300 },
+  reelContainer: { width, position: 'relative', overflow: 'hidden' },
+  gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 350 },
+  centerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  pauseOverlay: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.1)', padding: 20, borderRadius: 50 },
+  seekBarWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.2)', opacity: 0.4 },
+  seekBarProgress: { height: '100%', backgroundColor: '#fff' },
   rightActions: { position: 'absolute', right: 12, bottom: 100, alignItems: 'center', gap: 18 },
   actionItem: { alignItems: 'center', gap: 3 },
   actionCount: { color: '#fff', fontSize: 12, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },

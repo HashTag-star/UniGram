@@ -24,6 +24,7 @@ const COL = (width - 2) / 3;
 interface Props {
   userId?: string;
   isOwn?: boolean;
+  isVisible?: boolean;
   onVerifyPress?: () => void;
   onBack?: () => void;
   onMessagePress?: (convId: string, otherProfile: any) => void;
@@ -32,6 +33,7 @@ interface Props {
 export const ProfileScreen: React.FC<Props> = ({
   userId: propUserId,
   isOwn: propIsOwn,
+  isVisible,
   onVerifyPress,
   onBack,
   onMessagePress,

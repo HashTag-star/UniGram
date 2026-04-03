@@ -11,7 +11,11 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     console.warn('Algorithm fallback:', error.message);
     const { data: fallback } = await supabase
       .from('posts')
-      .select('*, profiles!posts_user_id_fkey(*)')
+      .select(`
+        id, user_id, caption, type, media_url, media_urls,
+        likes_count, comments_count, location, song, tagged_users, created_at,
+        profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
+      `)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
     return fallback ?? [];

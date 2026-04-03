@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, Image, TouchableOpacity,
+  View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import { CachedImage } from '../components/CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
@@ -94,7 +95,7 @@ const NotifItem: React.FC<{
       {/* Avatar + icon badge */}
       <View style={styles.avatarWrap}>
         {actor?.avatar_url ? (
-          <Image source={{ uri: actor.avatar_url }} style={styles.avatar} />
+          <CachedImage uri={actor.avatar_url} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarPlaceholder]}>
             <Ionicons name="person" size={18} color="rgba(255,255,255,0.3)" />
@@ -118,7 +119,7 @@ const NotifItem: React.FC<{
 
       {/* Post thumbnail */}
       {item.posts?.media_url ? (
-        <Image source={{ uri: item.posts.media_url }} style={styles.thumb} />
+        <CachedImage uri={item.posts.media_url} style={styles.thumb} />
       ) : (
         <View style={{ width: 44 }} />
       )}

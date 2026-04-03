@@ -30,9 +30,10 @@ const FALLBACK_TRENDS = [
 
 interface Props {
   onUserPress?: (profile: any) => void;
+  isVisible?: boolean;
 }
 
-export const ExploreScreen: React.FC<Props> = ({ onUserPress }) => {
+export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   const insets = useSafeAreaInsets();
   const { selection } = useHaptics();
 

@@ -17,6 +17,7 @@ interface AdminStats {
   totalPosts: number;
   totalMarketItems: number;
   activeReports: number;
+  pendingVerifications: number;
   dauEstimate: number;
 }
 
@@ -40,7 +41,7 @@ interface AdminVerificationRequest {
   full_name: string;
   email: string;
   reason: string;
-  document_url: string;
+  document_urls: string[];
   submitted_at: string;
   rejection_reason: string | null;
   profiles: { username: string; avatar_url: string | null } | null;
@@ -154,9 +155,9 @@ const OverviewTab: React.FC<{
   const cards = stats
     ? [
         { label: 'Total Users', value: stats.totalUsers, icon: 'people', color: '#6366f1' },
-        { label: 'Total Posts', value: stats.totalPosts, icon: 'images', color: '#22c55e' },
-        { label: 'Market Items', value: stats.totalMarketItems, icon: 'storefront', color: '#f59e0b' },
         { label: 'Active Reports', value: stats.activeReports, icon: 'flag', color: '#ef4444' },
+        { label: 'Pending Verifs', value: stats.pendingVerifications, icon: 'shield-checkmark', color: '#f59e0b' },
+        { label: 'Market Items', value: stats.totalMarketItems, icon: 'storefront', color: '#22c55e' },
       ]
     : [];
 
@@ -856,9 +857,11 @@ const VerificationsTab: React.FC = () => {
   const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<AdminVerificationRequest | null>(null);
+  const [docViewerVisible, setDocViewerVisible] = useState(false);
+  const [viewingDocs, setViewingDocs] = useState<string[]>([]);
 
   // Derived list based on active filter
-  const requests = allRequests.filter(r => r.status === filter);
+  const requests = React.useMemo(() => allRequests.filter(r => r.status === filter), [allRequests, filter]);
 
   const counts = {
     pending: allRequests.filter(r => r.status === 'pending').length,
@@ -878,6 +881,12 @@ const VerificationsTab: React.FC = () => {
         ...req,
         profiles: Array.isArray(req.profiles) ? req.profiles[0] : req.profiles
       })) as unknown as AdminVerificationRequest[];
+      
+      console.log(`[Admin] Loaded ${formatted.length} verification requests. Filter: ${filter}`);
+      if (formatted.some(r => r.type === 'influencer')) {
+        console.log('[Admin] Found notable/influencer requests in fetch results.');
+      }
+      
       setAllRequests(formatted);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to load requests');
@@ -914,6 +923,22 @@ const VerificationsTab: React.FC = () => {
       if (rErr) throw rErr;
 
       setAllRequests(prev => prev.map(r => r.id === request.id ? { ...r, status: 'approved' } : r));
+      
+      // 3. Send Notification
+      try {
+        const { data: { user: admin } } = await supabase.auth.getUser();
+        if (admin) {
+          await sendAdminNotification(
+            admin.id,
+            `Congratulations! Your verification request as ${request.type === 'influencer' ? 'Notable Account' : request.type} has been approved.`,
+            'verification_approved',
+            request.user_id
+          );
+        }
+      } catch (notiErr) {
+        console.error('Failed to send notification:', notiErr);
+      }
+
       Alert.alert('Success', 'Request approved and profile updated.');
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -939,6 +964,22 @@ const VerificationsTab: React.FC = () => {
       if (error) throw error;
       
       setAllRequests(prev => prev.map(r => r.id === selectedRequest.id ? { ...r, status: 'rejected', rejection_reason: rejectionReason.trim() } : r));
+      
+      // Send Notification
+      try {
+        const { data: { user: admin } } = await supabase.auth.getUser();
+        if (admin) {
+          await sendAdminNotification(
+            admin.id,
+            `Your verification request has been rejected. Reason: ${rejectionReason.trim()}`,
+            'verification_rejected',
+            selectedRequest.user_id
+          );
+        }
+      } catch (notiErr) {
+        console.error('Failed to send notification:', notiErr);
+      }
+
       Alert.alert('Success', 'Request rejected with reason.');
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -975,25 +1016,18 @@ const VerificationsTab: React.FC = () => {
         <Text style={styles.reasonText}>{r.reason}</Text>
       </View>
 
-      {r.document_url && (
+      {r.document_urls && r.document_urls.length > 0 && (
         <View style={styles.docWrapper}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <Text style={styles.detailLabel}>Supporting Document:</Text>
-            <TouchableOpacity onPress={() => {
-              const { Linking } = require('react-native');
-              Linking.openURL(r.document_url);
-            }}>
-              <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '700' }}>VIEW FULL</Text>
-            </TouchableOpacity>
-          </View>
           <TouchableOpacity 
-            activeOpacity={0.9}
+            style={styles.docRevealBtn}
             onPress={() => {
-              const { Linking } = require('react-native');
-              Linking.openURL(r.document_url);
+              setViewingDocs(r.document_urls);
+              setDocViewerVisible(true);
             }}
           >
-            <Image source={{ uri: r.document_url }} style={styles.docPreview} resizeMode="contain" />
+            <Ionicons name="document-text" size={18} color="#818cf8" />
+            <Text style={styles.docRevealText}>View {r.document_urls.length} Submitted Document(s)</Text>
+            <Ionicons name="chevron-forward" size={16} color="rgba(129, 140, 248, 0.5)" />
           </TouchableOpacity>
         </View>
       )}
@@ -1085,6 +1119,55 @@ const VerificationsTab: React.FC = () => {
           }
         />
       )}
+
+      {/* Doc Viewer Modal */}
+      <Modal visible={docViewerVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.docViewerContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Verification Documents</Text>
+              <TouchableOpacity onPress={() => setDocViewerVisible(false)}>
+                <Ionicons name="close" size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={{ padding: 20 }}>
+              {viewingDocs.map((url, idx) => {
+                const isPdf = url.toLowerCase().endsWith('.pdf');
+                return (
+                  <View key={idx} style={styles.viewerItem}>
+                    <View style={styles.viewerItemHeader}>
+                      <Text style={styles.viewerItemTitle}>Document {idx + 1}</Text>
+                      <TouchableOpacity onPress={() => {
+                        const { Linking } = require('react-native');
+                        Linking.openURL(url);
+                      }}>
+                        <Text style={styles.viewFullBtn}>OPEN ORIGINAL</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {isPdf ? (
+                      <View style={styles.pdfPlaceholder}>
+                        <Ionicons name="document-text" size={48} color="rgba(255,255,255,0.2)" />
+                        <Text style={styles.pdfPlaceholderText}>PDF Document</Text>
+                        <TouchableOpacity 
+                          style={styles.pdfOpenBtn}
+                          onPress={() => {
+                            const { Linking } = require('react-native');
+                            Linking.openURL(url);
+                          }}
+                        >
+                          <Text style={styles.pdfOpenText}>Open PDF to View</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Image source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" />
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Rejection Modal */}
       <Modal visible={rejectionModalVisible} transparent animationType="fade">
@@ -1412,6 +1495,10 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
           .select('*', { count: 'exact', head: true })
           .eq('status', 'pending'),
         supabase
+          .from('verification_requests')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+        supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
           .gte('updated_at', new Date(Date.now() - 86400000).toISOString()),
@@ -1422,6 +1509,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
         totalPosts: totalPosts ?? 0,
         totalMarketItems: totalMarketItems ?? 0,
         activeReports: activeReports ?? 0,
+        pendingVerifications: pendingVerifications ?? 0,
         dauEstimate: dauEstimate ?? 0,
       });
     } catch (e: any) {
@@ -1971,4 +2059,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255,255,255,0.6)',
   },
+  docViewerContent: { backgroundColor: '#111', borderRadius: 24, width: '95%', height: '85%', maxHeight: 800, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  modalTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  viewerItem: { marginBottom: 30 },
+  viewerItemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  viewerItemTitle: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  viewFullBtn: { color: '#818cf8', fontSize: 11, fontWeight: '700' },
+  viewerImage: { width: '100%', height: 400, borderRadius: 16, backgroundColor: '#000' },
+  pdfPlaceholder: { width: '100%', height: 180, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderStyle: 'dashed' },
+  pdfPlaceholderText: { color: 'rgba(255,255,255,0.4)', fontSize: 14, marginTop: 12 },
+  pdfOpenBtn: { marginTop: 16, backgroundColor: 'rgba(129, 140, 248, 0.1)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
+  pdfOpenText: { color: '#818cf8', fontSize: 13, fontWeight: '600' },
 });

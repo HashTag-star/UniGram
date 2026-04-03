@@ -1296,9 +1296,10 @@ type ScreenState = 'list' | 'chat' | 'new';
 interface MessagesScreenProps {
   onChatStateChange?: (inChat: boolean) => void;
   initialConv?: { convId: string; otherProfile: any } | null;
+  isVisible?: boolean;
 }
 
-export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChange, initialConv }) => {
+export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChange, initialConv, isVisible }) => {
   const [screenState, setScreenState] = useState<ScreenState>('list');
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUsername, setCurrentUsername] = useState('Messages');

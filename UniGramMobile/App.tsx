@@ -166,61 +166,66 @@ function AppShell() {
     setActiveTab('messages');
   };
 
+  // Reels is full-screen video — unmount when not active to free GPU/memory.
+  // All other tabs stay permanently mounted so switching is instant (display:none trick).
   const isReels = activeTab === 'reels';
-  // Tab bar hidden for: full-screen reels, or when in a chat
   const showTabBar = !isReels && !hideTabBar;
-
   const TAB_BAR_HEIGHT = 58;
 
-  const renderScreen = () => {
-    switch (activeTab) {
-      case 'feed':
-        return (
-          <FeedScreen
-            refreshKey={feedRefreshKey}
-            onCreateStory={() => setShowCreate(true)}
-            onNotifPress={openNotifications}
-            notifBadge={notifBadge}
-          />
-        );
-      case 'explore':
-        return (
-          <ExploreScreen
-            onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-          />
-        );
-      case 'reels':
-        return (
-          <ReelsScreen
-            onBack={() => setActiveTab(prevTab)}
-          />
-        );
-      case 'market':  return <MarketScreen onMessagePress={navigateToMessages} />;
-      case 'messages':
-        return (
-          <MessagesScreen
-            onChatStateChange={setHideTabBar}
-            initialConv={initialConv}
-          />
-        );
-      case 'profile':
-        return (
-          <ProfileScreen
-            userId={viewedUserId ?? session.user.id}
-            isOwn={!viewedUserId}
-            onVerifyPress={() => setShowVerification(true)}
-            onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
-            onMessagePress={navigateToMessages}
-          />
-        );
-    }
-  };
+  // Helper: style that hides a screen without unmounting it
+  const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#000" translucent={false} />
 
-      <View style={styles.content}>{renderScreen()}</View>
+      {/* ── Screens container (flex:1 → tab bar is pushed to bottom) ── */}
+      <View style={styles.screensContainer}>
+        {/* Each screen uses absoluteFill inside the container so they overlap
+            each other but NOT the tab bar. display:none hides without unmounting. */}
+        <View style={[styles.screen, hide('feed')]}>
+          <FeedScreen
+            refreshKey={feedRefreshKey}
+            isVisible={activeTab === 'feed'}
+            onCreateStory={() => setShowCreate(true)}
+            onNotifPress={openNotifications}
+            notifBadge={notifBadge}
+          />
+        </View>
+        <View style={[styles.screen, hide('explore')]}>
+          <ExploreScreen
+            isVisible={activeTab === 'explore'}
+            onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+          />
+        </View>
+        <View style={[styles.screen, hide('market')]}>
+          <MarketScreen isVisible={activeTab === 'market'} onMessagePress={navigateToMessages} />
+        </View>
+        <View style={[styles.screen, hide('messages')]}>
+          <MessagesScreen
+            isVisible={activeTab === 'messages'}
+            onChatStateChange={setHideTabBar}
+            initialConv={initialConv}
+          />
+        </View>
+        <View style={[styles.screen, hide('profile')]}>
+          <ProfileScreen
+            userId={viewedUserId ?? session.user.id}
+            isOwn={!viewedUserId}
+            isVisible={activeTab === 'profile'}
+            onVerifyPress={() => setShowVerification(true)}
+            onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
+            onMessagePress={navigateToMessages}
+          />
+        </View>
+
+        {/* Reels: full-screen video, only mount when active to free GPU memory */}
+        {isReels && (
+          <View style={styles.screen}>
+            <ReelsScreen onBack={() => setActiveTab(prevTab)} />
+          </View>
+        )}
+      </View>
 
       {/* Floating "+" create button — only when tab bar is visible */}
       {showTabBar && (
@@ -295,7 +300,11 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
-  content: { flex: 1 },
+  // screensContainer takes all space above the tab bar (flex:1 in a column root)
+  screensContainer: { flex: 1, position: 'relative' },
+  // each screen fills the container; display:none hides without unmounting
+  screen: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  screenHidden: { display: 'none' },
   fab: {
     position: 'absolute', right: 18,
     width: 52, height: 52, borderRadius: 26,
