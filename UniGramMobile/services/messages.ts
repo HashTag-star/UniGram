@@ -1,5 +1,8 @@
 import { supabase } from '../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { uploadFile } from './upload';
+
+// ─── Conversations ────────────────────────────────────────────────────────────
 
 export async function getConversations(userId: string) {
   const { data, error } = await supabase
@@ -17,6 +20,63 @@ export async function getConversations(userId: string) {
   return data ?? [];
 }
 
+export async function createDirectConversation(userId1: string, userId2: string): Promise<string> {
+  const { data, error } = await supabase.rpc('create_dm', { user1: userId1, user2: userId2 });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function createGroupConversation(
+  creatorId: string,
+  memberIds: string[],
+  groupName: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('create_group_v2', {
+    owner_id: creatorId,
+    member_ids: memberIds,
+    group_name: groupName,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function searchConversations(userId: string, query: string) {
+  if (!query.trim()) return [];
+  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 50);
+  // Fetch user's conversation_participants with nested profiles of all participants
+  const { data, error } = await supabase
+    .from('conversation_participants')
+    .select(`
+      unread_count,
+      conversations(
+        id, is_group, group_name, last_message, last_message_at,
+        conversation_participants(user_id, profiles(*))
+      )
+    `)
+    .eq('user_id', userId);
+  if (error) throw error;
+  if (!data) return [];
+
+  const lower = safe.toLowerCase();
+  return data.filter((row: any) => {
+    const conv = row.conversations;
+    if (!conv) return false;
+    if (conv.is_group) {
+      return (conv.group_name ?? '').toLowerCase().includes(lower);
+    }
+    const other = (conv.conversation_participants ?? []).find(
+      (p: any) => p.user_id !== userId,
+    )?.profiles;
+    if (!other) return false;
+    return (
+      (other.full_name ?? '').toLowerCase().includes(lower) ||
+      (other.username ?? '').toLowerCase().includes(lower)
+    );
+  });
+}
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
 export async function getMessages(conversationId: string) {
   const { data, error } = await supabase
     .from('messages')
@@ -31,23 +91,32 @@ export async function sendMessage(
   conversationId: string,
   senderId: string,
   text: string,
+  type: 'text' | 'image' | 'gif' = 'text',
   mediaUrl?: string,
-  messageType: 'text' | 'image' = 'text',
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
+
   const { data, error } = await supabase
     .from('messages')
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
       text,
-      media_url: mediaUrl,
-      message_type: messageType,
+      type,
+      media_url: mediaUrl ?? null,
     })
     .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
     .single();
   if (error) throw error;
+
+  // Update conversation's last_message snapshot
+  const preview = type === 'text' ? (text.slice(0, 100) || '') : type === 'image' ? '📷 Photo' : '🎬 GIF';
+  await supabase
+    .from('conversations')
+    .update({ last_message: preview, last_message_at: data.created_at })
+    .eq('id', conversationId);
+
   return data;
 }
 
@@ -56,17 +125,28 @@ export async function sendImageMessage(
   senderId: string,
   imageUri: string,
 ) {
-  const ext = imageUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const ext = imageUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${senderId}/${Date.now()}.${ext}`;
-  const response = await fetch(imageUri);
-  const blob = await response.blob();
-  const { error: upErr } = await supabase.storage
-    .from('chat-images')
-    .upload(path, blob, { contentType: `image/${ext}` });
-  if (upErr) throw upErr;
-  const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
-  return sendMessage(conversationId, senderId, '', urlData.publicUrl, 'image');
+  const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+  const publicUrl = await uploadFile('message-media', path, imageUri, mimeType);
+  return sendMessage(conversationId, senderId, '', 'image', publicUrl);
 }
+
+export async function markMessagesRead(conversationId: string, userId: string) {
+  await supabase
+    .from('messages')
+    .update({ is_read: true })
+    .eq('conversation_id', conversationId)
+    .neq('sender_id', userId)
+    .eq('is_read', false);
+  await supabase
+    .from('conversation_participants')
+    .update({ unread_count: 0, last_read_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+}
+
+// ─── Reactions ───────────────────────────────────────────────────────────────
 
 export async function addReaction(messageId: string, userId: string, emoji: string) {
   const { error } = await supabase
@@ -76,40 +156,90 @@ export async function addReaction(messageId: string, userId: string, emoji: stri
 }
 
 export async function removeReaction(messageId: string, userId: string, emoji: string) {
-  await supabase
+  const { error } = await supabase
     .from('message_reactions')
     .delete()
     .eq('message_id', messageId)
     .eq('user_id', userId)
     .eq('emoji', emoji);
-}
-
-export async function createDirectConversation(userId1: string, userId2: string) {
-  const { data, error } = await supabase.rpc('create_dm', { user1: userId1, user2: userId2 });
   if (error) throw error;
-  return data;
 }
 
-export async function markMessagesRead(conversationId: string, userId: string) {
-  await supabase
-    .from('messages')
-    .update({ is_read: true })
-    .eq('conversation_id', conversationId)
-    .neq('sender_id', userId);
-  await supabase
-    .from('conversation_participants')
-    .update({ unread_count: 0 })
-    .eq('conversation_id', conversationId)
-    .eq('user_id', userId);
+export async function getReactions(messageIds: string[]) {
+  if (!messageIds.length) return [];
+  const { data, error } = await supabase
+    .from('message_reactions')
+    .select('id, message_id, emoji, user_id, profiles(*)')
+    .in('message_id', messageIds);
+  if (error) throw error;
+  return data ?? [];
 }
+
+// ─── Realtime ────────────────────────────────────────────────────────────────
+
+export function subscribeToMessages(
+  conversationId: string,
+  onMessage: (msg: any) => void,
+): RealtimeChannel {
+  return supabase
+    .channel(`messages:${conversationId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      async (payload) => {
+        const { data } = await supabase
+          .from('messages')
+          .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
+          .eq('id', payload.new.id)
+          .single();
+        if (data) onMessage(data);
+      },
+    )
+    .subscribe();
+}
+
+export function subscribeToConversationList(
+  userId: string,
+  onChange: () => void,
+): RealtimeChannel {
+  // We listen to all message inserts and check server-side if userId is a participant.
+  // Since Supabase filters can't do joins, we listen broadly and let the caller reload.
+  return supabase
+    .channel(`conv-list:${userId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      async (payload) => {
+        // Only trigger if the current user is a participant in this conversation
+        const convId = payload.new.conversation_id;
+        if (!convId) return;
+        const { data } = await supabase
+          .from('conversation_participants')
+          .select('id')
+          .eq('conversation_id', convId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (data) onChange();
+      },
+    )
+    .subscribe();
+}
+
+// ─── User search (keep local — used by NewConvModal) ────────────────────────
 
 export async function searchUsersForDM(query: string, currentUserId: string) {
   if (!query.trim()) return [];
+  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 50);
   const { data, error } = await supabase
     .from('profiles')
     .select('id, username, full_name, avatar_url, is_verified, verification_type')
     .neq('id', currentUserId)
-    .or(`username.ilike.%${query}%,full_name.ilike.%${query}%`)
+    .or(`username.ilike.%${safe}%,full_name.ilike.%${safe}%`)
     .limit(15);
   if (error) return [];
   return data ?? [];
@@ -119,57 +249,37 @@ export async function getFollowConnections(userId: string) {
   const [followingRes, followersRes] = await Promise.all([
     supabase
       .from('follows')
-      .select(`following_id, profiles!follows_following_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`)
+      .select(
+        `following_id, profiles!follows_following_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`,
+      )
       .eq('follower_id', userId),
     supabase
       .from('follows')
-      .select(`follower_id, profiles!follows_follower_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`)
+      .select(
+        `follower_id, profiles!follows_follower_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`,
+      )
       .eq('following_id', userId),
   ]);
 
-  const uniqueUsers = new Map();
-  followingRes.data?.forEach((row: any) => {
-    if (row.profiles) uniqueUsers.set(row.profiles.id, row.profiles);
-  });
-  followersRes.data?.forEach((row: any) => {
-    if (row.profiles) uniqueUsers.set(row.profiles.id, row.profiles);
-  });
+  const uniqueUsers = new Map<string, any>();
   
-  return Array.from(uniqueUsers.values());
-}
+  // Tag following
+  followingRes.data?.forEach((row: any) => {
+    if (row.profiles) {
+      uniqueUsers.set(row.profiles.id, { ...row.profiles, relationship: 'following' });
+    }
+  });
 
-export function subscribeToMessages(conversationId: string, onMessage: (msg: any) => void): RealtimeChannel {
-  return supabase
-    .channel(`messages:${conversationId}`)
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
-      async (payload) => {
-        const { data } = await supabase
-          .from('messages')
-          .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
-          .eq('id', payload.new.id)
-          .single();
-        if (data) onMessage(data);
+  // Tag followers (mutuals will be updated to 'mutual')
+  followersRes.data?.forEach((row: any) => {
+    if (row.profiles) {
+      if (uniqueUsers.has(row.profiles.id)) {
+        uniqueUsers.set(row.profiles.id, { ...row.profiles, relationship: 'mutual' });
+      } else {
+        uniqueUsers.set(row.profiles.id, { ...row.profiles, relationship: 'follower' });
       }
-    )
-    .subscribe();
-}
+    }
+  });
 
-export function subscribeToTyping(
-  conversationId: string,
-  currentUserId: string,
-  onTypingChange: (typingUsers: string[]) => void,
-): RealtimeChannel {
-  return supabase
-    .channel(`typing:${conversationId}`)
-    .on('presence', { event: 'sync' }, function (this: any) {
-      const state = (this as any).presenceState?.() ?? {};
-      const users = Object.values(state)
-        .flat()
-        .map((u: any) => u.userId)
-        .filter((uid: string) => uid !== currentUserId);
-      onTypingChange(users);
-    })
-    .subscribe();
+  return Array.from(uniqueUsers.values());
 }

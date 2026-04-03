@@ -4,7 +4,7 @@ import {
   StyleSheet, Dimensions, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CommentSheet } from '../components/CommentSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds } from '../services/reels';
@@ -39,20 +39,24 @@ const ReelItem: React.FC<{
   const [following, setFollowing] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [muted, setMuted] = useState(false);
-  const videoRef = useRef<any>(null);
   const profile = reel.profiles;
 
-  useEffect(() => {
-    if (currentUserId && profile?.id && profile.id !== currentUserId) {
-      isFollowing(currentUserId, profile.id).then(setFollowing).catch(() => {});
-    }
-  }, [currentUserId, profile?.id]);
+  const player = useVideoPlayer(reel.video_url, (player) => {
+    player.loop = true;
+    if (isActive) player.play();
+  });
 
   useEffect(() => {
-    if (!videoRef.current) return;
-    if (isActive) videoRef.current.playAsync().catch(() => {});
-    else videoRef.current.pauseAsync().catch(() => {});
-  }, [isActive]);
+    player.muted = muted;
+  }, [muted, player]);
+
+  useEffect(() => {
+    if (isActive) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, player]);
 
   const toggleLike = async () => {
     const next = !liked;
@@ -77,16 +81,11 @@ const ReelItem: React.FC<{
   return (
     <View style={[styles.reelContainer, { height: ITEM_HEIGHT }]}>
       {reel.video_url ? (
-        <Video
-          ref={videoRef}
-          source={{ uri: reel.video_url }}
+        <VideoView
+          player={player}
           style={StyleSheet.absoluteFill}
-          resizeMode={ResizeMode.COVER}
-          isLooping
-          shouldPlay={isActive}
-          isMuted={muted}
-          posterSource={reel.thumbnail_url ? { uri: reel.thumbnail_url } : undefined}
-          usePoster={!!reel.thumbnail_url}
+          contentFit="cover"
+          nativeControls={false}
         />
       ) : reel.thumbnail_url ? (
         <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
@@ -161,7 +160,7 @@ const ReelItem: React.FC<{
         targetType="reel"
         currentUserId={currentUserId}
         onClose={() => setShowComments(false)}
-        onCountChange={delta => setCommentCount(n => Math.max(0, n + delta))}
+        onCountChange={delta => setCommentCount((n: number) => Math.max(0, n + delta))}
       />
     </View>
   );

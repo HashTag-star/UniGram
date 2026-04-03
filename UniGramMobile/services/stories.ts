@@ -54,3 +54,44 @@ export async function getViewedStoryIds(userId: string): Promise<string[]> {
   const { data } = await supabase.from('story_views').select('story_id').eq('user_id', userId);
   return data?.map((r: any) => r.story_id) ?? [];
 }
+
+export async function getStoryStats(storyId: string) {
+  const [views, likes] = await Promise.all([
+    supabase.from('story_views').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId),
+    supabase.from('story_likes').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId)
+  ]);
+  
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: isLiked } = await supabase
+    .from('story_likes')
+    .select('user_id')
+    .eq('story_id', storyId)
+    .eq('user_id', user?.id)
+    .single();
+
+  return {
+    views: views.count ?? 0,
+    likes: likes.count ?? 0,
+    isLiked: !!isLiked
+  };
+}
+
+export async function getStoryViewers(storyId: string) {
+  const { data, error } = await supabase
+    .from('story_views')
+    .select(`*, profiles!story_views_user_id_fkey(*)`)
+    .eq('story_id', storyId)
+    .order('viewed_at', { ascending: false });
+  if (error) throw error;
+  return data?.map(d => ({ ...d.profiles, viewed_at: d.viewed_at })) ?? [];
+}
+
+export async function likeStory(storyId: string, userId: string) {
+  const { error } = await supabase.from('story_likes').insert({ story_id: storyId, user_id: userId });
+  if (error && error.code !== '23505') throw error;
+}
+
+export async function unlikeStory(storyId: string, userId: string) {
+  const { error } = await supabase.from('story_likes').delete().eq('story_id', storyId).eq('user_id', userId);
+  if (error) throw error;
+}

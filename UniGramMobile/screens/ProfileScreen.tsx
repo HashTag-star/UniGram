@@ -5,7 +5,7 @@ import {
   TextInput, KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ProfilePostsSkeleton } from '../components/Skeleton';
+import { ProfilePostsSkeleton, ProfileHeaderSkeleton } from '../components/Skeleton';
 import { SettingsScreen } from './SettingsScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
@@ -39,9 +39,16 @@ interface Props {
   isOwn?: boolean;
   onVerifyPress?: () => void;
   onBack?: () => void;
+  onMessagePress?: (convId: string, otherProfile: any) => void;
 }
 
-export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: propIsOwn, onVerifyPress, onBack }) => {
+export const ProfileScreen: React.FC<Props> = ({
+  userId: propUserId,
+  isOwn: propIsOwn,
+  onVerifyPress,
+  onBack,
+  onMessagePress,
+}) => {
   const insets = useSafeAreaInsets();
   
   // Use propUserId or currentUserId (which we might only know later), 
@@ -157,8 +164,8 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
   const handleMessage = async () => {
     if (!profile) return;
     try {
-      await createDirectConversation(currentUserId, profile.id);
-      Alert.alert('Message started', 'Go to Messages to chat.');
+      const convId = await createDirectConversation(currentUserId, profile.id);
+      onMessagePress?.(convId, profile);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
@@ -216,14 +223,7 @@ export const ProfileScreen: React.FC<Props> = ({ userId: propUserId, isOwn: prop
   if (loading) {
     return (
       <View style={styles.container}>
-        <View style={{ height: 120, backgroundColor: '#111' }} />
-        <View style={{ paddingHorizontal: 14, marginTop: -44 }}>
-          <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: '#252525', borderWidth: 4, borderColor: '#000', marginBottom: 10 }} />
-          <View style={{ height: 16, width: '40%', backgroundColor: '#252525', borderRadius: 8, marginBottom: 8 }} />
-          <View style={{ height: 12, width: '25%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 16 }} />
-          <View style={{ height: 12, width: '80%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 8 }} />
-          <View style={{ height: 12, width: '60%', backgroundColor: '#252525', borderRadius: 6, marginBottom: 20 }} />
-        </View>
+        <ProfileHeaderSkeleton />
         <ProfilePostsSkeleton colSize={COL} />
       </View>
     );

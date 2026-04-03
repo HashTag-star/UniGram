@@ -158,3 +158,47 @@ export async function deletePostComment(commentId: string, userId: string) {
   const { error } = await supabase.from('post_comments').delete().eq('id', commentId).eq('user_id', userId);
   if (error) throw error;
 }
+
+export async function searchPosts(query: string, limit = 20) {
+  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 100);
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .ilike('caption', `%${safe}%`)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getPostsByHashtag(hashtag: string, limit = 30) {
+  const tag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+  const safe = tag.replace(/[%_\\]/g, '\\$&').slice(0, 50);
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .ilike('caption', `%${safe}%`)
+    .not('media_url', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function reportContent(
+  reporterId: string,
+  targetType: 'post' | 'user' | 'reel' | 'market_item',
+  targetId: string,
+  reason: string,
+) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== reporterId) throw new Error('Unauthorized');
+  const { error } = await supabase.from('reports').insert({
+    reporter_id: reporterId,
+    target_type: targetType,
+    target_id: targetId,
+    reason,
+  });
+  // If reports table doesn't exist yet, fail silently
+  if (error && !error.message.includes('does not exist')) throw error;
+}

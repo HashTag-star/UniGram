@@ -80,6 +80,7 @@ function AppShell() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [hideTabBar, setHideTabBar] = useState(false); // for messages chat & full-screen
   const [feedRefreshKey, setFeedRefreshKey] = useState(0);
+  const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -109,8 +110,14 @@ function AppShell() {
   const handleTabChange = (tab: Tab) => {
     if (tab === 'reels') setPrevTab(activeTab);
     if (tab !== 'profile') setViewedUserId(null);
+    if (tab !== 'messages') setInitialConv(null);
     setActiveTab(tab);
     setHideTabBar(false);
+  };
+
+  const navigateToMessages = (convId: string, otherProfile: any) => {
+    setInitialConv({ convId, otherProfile });
+    setActiveTab('messages');
   };
 
   const isReels = activeTab === 'reels';
@@ -140,11 +147,12 @@ function AppShell() {
             onBack={() => setActiveTab(prevTab)}
           />
         );
-      case 'market':  return <MarketScreen />;
+      case 'market':  return <MarketScreen onMessagePress={navigateToMessages} />;
       case 'messages':
         return (
           <MessagesScreen
             onChatStateChange={setHideTabBar}
+            initialConv={initialConv}
           />
         );
       case 'profile':
@@ -154,6 +162,7 @@ function AppShell() {
             isOwn={!viewedUserId}
             onVerifyPress={() => setShowVerification(true)}
             onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
+            onMessagePress={navigateToMessages}
           />
         );
     }

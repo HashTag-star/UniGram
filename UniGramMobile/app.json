@@ -1,10 +1,12 @@
 {
   "expo": {
     "name": "UniGram",
-    "slug": "UniGramMobile",
+    "slug": "unigram-mobile",
     "version": "1.0.0",
+    "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "unigram",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
@@ -13,9 +15,16 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
+      "bundleIdentifier": "com.unigram.mobile",
       "infoPlist": {
-        "UIStatusBarStyle": "UIStatusBarStyleLightContent"
+        "UIStatusBarStyle": "UIStatusBarStyleLightContent",
+        "NSCameraUsageDescription": "UniGram needs camera access to take photos and videos for posts and reels.",
+        "NSMicrophoneUsageDescription": "UniGram needs microphone access to record audio for videos and reels.",
+        "NSPhotoLibraryUsageDescription": "UniGram needs access to your photo library to share photos and videos.",
+        "NSPhotoLibraryAddUsageDescription": "UniGram needs permission to save media to your photo library.",
+        "NSLocationWhenInUseUsageDescription": "UniGram uses your location to tag posts and show nearby marketplace items.",
+        "NSUserNotificationsUsageDescription": "UniGram sends notifications for likes, comments, messages, and campus events."
       }
     },
     "android": {
@@ -23,19 +32,53 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
+      "package": "com.unigram.mobile",
       "edgeToEdgeEnabled": true,
+      "targetSdkVersion": 34,
+      "minSdkVersion": 24,
       "predictiveBackGestureEnabled": false,
       "statusBar": {
         "backgroundColor": "#000000",
         "barStyle": "light-content"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-font",
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      "expo-location",
+      "expo-camera",
+      "expo-media-library",
+      [
+        "expo-notifications",
+        {
+          "sounds": []
+        }
+      ],
+      "expo-image-picker",
+      "expo-video",
+      "expo-audio",
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "unigram-mobile"
+      }
+    }
   }
 }

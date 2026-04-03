@@ -1,30 +1,55 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  memo,
+} from 'react';
 import {
-  View, Text, FlatList, Image, TouchableOpacity,
-  StyleSheet, Dimensions, Alert, ActivityIndicator,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
-  ScrollView, RefreshControl, Animated,
+  View,
+  Text,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Alert,
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  RefreshControl,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { VerifiedBadge } from '../components/VerifiedBadge';
 import * as ImagePicker from 'expo-image-picker';
+import { VerifiedBadge } from '../components/VerifiedBadge';
+import { MarketSkeleton } from '../components/Skeleton';
+import { supabase } from '../lib/supabase';
 import {
-  getMarketItems, createMarketItem, markItemSold, deleteMarketItem,
-  getSavedItemIds, saveMarketItem, unsaveMarketItem, getMyListings,
+  getMarketItems,
+  getMyListings,
+  getSavedItems,
+  getSavedItemIds,
+  createMarketItem,
+  updateMarketItem,
+  deleteMarketItem,
+  markItemSold,
+  toggleSaveItem,
+  incrementViewCount,
+  MarketItem,
+  UpdateItemPayload,
 } from '../services/market';
 import { createDirectConversation } from '../services/messages';
-import { supabase } from '../lib/supabase';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const { width } = Dimensions.get('window');
 const CARD_W = (width - 38) / 2;
-
-function timeAgo(ts: string) {
-  const d = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-  return `${Math.floor(d / 86400)}d ago`;
-}
+const PAGE_SIZE = 20;
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: '🛍️' },
@@ -34,171 +59,465 @@ const CATEGORIES = [
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'furniture', label: 'Furniture', icon: '🪑' },
   { id: 'clothing', label: 'Clothing', icon: '👕' },
+  { id: 'services', label: 'Services', icon: '🔧' },
   { id: 'other', label: 'Other', icon: '📦' },
-];
+] as const;
 
-const CONDITIONS = ['new', 'like_new', 'good', 'fair'];
-const conditionLabel: Record<string, string> = { new: 'New', like_new: 'Like New', good: 'Good', fair: 'Fair' };
-const conditionColor: Record<string, string> = { new: '#22c55e', like_new: '#3b82f6', good: '#f59e0b', fair: '#ef4444' };
+const CONDITIONS = ['new', 'like_new', 'good', 'fair'] as const;
+type Condition = typeof CONDITIONS[number];
+
+const CONDITION_LABEL: Record<string, string> = {
+  new: 'New',
+  like_new: 'Like New',
+  good: 'Good',
+  fair: 'Fair',
+};
+
+const CONDITION_COLOR: Record<string, string> = {
+  new: '#22c55e',
+  like_new: '#3b82f6',
+  good: '#f59e0b',
+  fair: '#ef4444',
+};
 
 type Tab = 'browse' | 'saved' | 'mine';
 
-// ─── Item Detail Modal ────────────────────────────────────────────────────────
-const ItemDetailModal: React.FC<{
-  item: any;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function timeAgo(ts: string): string {
+  const secs = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  if (secs < 604800) return `${Math.floor(secs / 86400)}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function formatPrice(price: number): string {
+  return `$${Number(price).toLocaleString('en-US', {
+    minimumFractionDigits: price % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+// ─── Condition Badge ──────────────────────────────────────────────────────────
+
+const ConditionBadge: React.FC<{ condition: string; style?: object }> = ({
+  condition,
+  style,
+}) => {
+  const color = CONDITION_COLOR[condition] ?? '#888';
+  return (
+    <View
+      style={[
+        { backgroundColor: color + '30', borderColor: color + '60', borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+        style,
+      ]}
+    >
+      <Text style={{ color, fontSize: 9, fontWeight: 'bold', textTransform: 'capitalize' }}>
+        {CONDITION_LABEL[condition] ?? condition}
+      </Text>
+    </View>
+  );
+};
+
+// ─── Item Card ────────────────────────────────────────────────────────────────
+
+interface CardProps {
+  item: MarketItem;
   currentUserId: string;
   isSaved: boolean;
-  onToggleSave: () => void;
+  isOwn?: boolean;
+  onToggleSave: (id: string) => void;
+  onPress: (item: MarketItem) => void;
+  onMarkSold?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onEdit?: (item: MarketItem) => void;
+}
+
+const ItemCard = memo<CardProps>(({
+  item,
+  currentUserId,
+  isSaved,
+  isOwn = false,
+  onToggleSave,
+  onPress,
+  onMarkSold,
+  onDelete,
+  onEdit,
+}) => {
+  const seller = item.profiles;
+
+  const handleSavePress = useCallback(() => {
+    onToggleSave(item.id);
+  }, [item.id, onToggleSave]);
+
+  const handlePress = useCallback(() => {
+    onPress(item);
+  }, [item, onPress]);
+
+  return (
+    <TouchableOpacity
+      style={[styles.card, { width: CARD_W }]}
+      onPress={handlePress}
+      activeOpacity={0.85}
+    >
+      {/* Image */}
+      <View style={styles.imageWrap}>
+        {item.image_url ? (
+          <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
+        ) : (
+          <View style={[styles.itemImage, styles.imagePlaceholder]}>
+            <Ionicons name="image-outline" size={32} color="#333" />
+          </View>
+        )}
+
+        {/* Sold overlay */}
+        {item.is_sold && (
+          <View style={styles.soldOverlay}>
+            <Text style={styles.soldOverlayText}>SOLD</Text>
+          </View>
+        )}
+
+        {/* Bookmark (hide on own items in Browse/Saved) */}
+        {!isOwn && (
+          <TouchableOpacity style={styles.bookmarkBtn} onPress={handleSavePress}>
+            <Ionicons
+              name={isSaved ? 'bookmark' : 'bookmark-outline'}
+              size={17}
+              color={isSaved ? '#fbbf24' : '#fff'}
+            />
+          </TouchableOpacity>
+        )}
+
+        {/* Condition badge */}
+        {item.condition && (
+          <ConditionBadge
+            condition={item.condition}
+            style={{ position: 'absolute', bottom: 8, left: 8 }}
+          />
+        )}
+      </View>
+
+      {/* Info */}
+      <View style={styles.cardInfo}>
+        <Text style={styles.itemTitle} numberOfLines={2}>
+          {item.title}
+        </Text>
+        <Text style={styles.itemPrice}>{formatPrice(item.price)}</Text>
+
+        <View style={styles.sellerRow}>
+          {seller?.avatar_url ? (
+            <Image source={{ uri: seller.avatar_url }} style={styles.sellerAvatar} />
+          ) : (
+            <View style={[styles.sellerAvatar, { backgroundColor: '#222' }]} />
+          )}
+          <Text style={styles.sellerName} numberOfLines={1}>
+            {seller?.username ?? 'user'}
+          </Text>
+          <Text style={styles.dot}>·</Text>
+          <Text style={styles.postedAt}>{timeAgo(item.created_at)}</Text>
+        </View>
+
+        {/* Owner actions */}
+        {isOwn && (
+          <View style={styles.ownerActions}>
+            <TouchableOpacity
+              style={styles.ownerActionBtn}
+              onPress={() => onEdit?.(item)}
+            >
+              <Ionicons name="pencil-outline" size={12} color="#818cf8" />
+              <Text style={[styles.ownerActionText, { color: '#818cf8' }]}>Edit</Text>
+            </TouchableOpacity>
+
+            {!item.is_sold && (
+              <TouchableOpacity
+                style={[styles.ownerActionBtn, { borderColor: '#22c55e40' }]}
+                onPress={() => onMarkSold?.(item.id)}
+              >
+                <Ionicons name="checkmark-circle-outline" size={12} color="#22c55e" />
+                <Text style={[styles.ownerActionText, { color: '#22c55e' }]}>Sold</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.ownerActionBtn, { borderColor: '#ef444440' }]}
+              onPress={() => {
+                Alert.alert('Delete Listing', 'Remove this listing permanently?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => onDelete?.(item.id),
+                  },
+                ]);
+              }}
+            >
+              <Ionicons name="trash-outline" size={12} color="#ef4444" />
+              <Text style={[styles.ownerActionText, { color: '#ef4444' }]}>Del</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+// ─── Item Detail Modal ────────────────────────────────────────────────────────
+
+interface DetailModalProps {
+  item: MarketItem;
+  currentUserId: string;
+  isSaved: boolean;
+  onToggleSave: (id: string) => void;
   onClose: () => void;
   onSold: (id: string) => void;
   onDelete: (id: string) => void;
+  onEdit: (item: MarketItem) => void;
   onMessage: (sellerId: string) => void;
-}> = ({ item, currentUserId, isSaved, onToggleSave, onClose, onSold, onDelete, onMessage }) => {
+}
+
+const ItemDetailModal: React.FC<DetailModalProps> = ({
+  item,
+  currentUserId,
+  isSaved,
+  onToggleSave,
+  onClose,
+  onSold,
+  onDelete,
+  onEdit,
+  onMessage,
+}) => {
   const insets = useSafeAreaInsets();
-  const isOwn = item.seller_id === currentUserId || item.profiles?.id === currentUserId;
-  const [imageIdx, setImageIdx] = useState(0);
-  const [deleting, setDeleting] = useState(false);
+  const isOwn = item.seller_id === currentUserId;
   const [marking, setMarking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const seller = item.profiles;
-  const images: string[] = [
-    ...(item.image_url ? [item.image_url] : []),
-    ...(item.image_urls?.filter((u: string) => u !== item.image_url) ?? []),
-  ].filter(Boolean);
+
+  useEffect(() => {
+    incrementViewCount(item.id);
+  }, [item.id]);
+
+  const handleMarkSold = useCallback(async () => {
+    setMarking(true);
+    try {
+      await markItemSold(item.id, currentUserId);
+      onSold(item.id);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to mark as sold.');
+    } finally {
+      setMarking(false);
+    }
+  }, [item.id, currentUserId, onSold]);
+
+  const handleDelete = useCallback(() => {
+    Alert.alert('Delete Listing', 'Remove this listing permanently?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setDeleting(true);
+          try {
+            await deleteMarketItem(item.id, currentUserId);
+            onDelete(item.id);
+          } catch (e: any) {
+            Alert.alert('Error', e.message ?? 'Failed to delete listing.');
+            setDeleting(false);
+          }
+        },
+      },
+    ]);
+  }, [item.id, currentUserId, onDelete]);
+
+  const handleShare = useCallback(async () => {
+    try {
+      await Share.share({
+        title: item.title,
+        message: `Check out "${item.title}" for ${formatPrice(item.price)} on UniGram Campus Market!`,
+      });
+    } catch {
+      // User cancelled or share failed
+    }
+  }, [item.title, item.price]);
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal
+      visible
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
       <View style={[dtl.container, { paddingBottom: insets.bottom }]}>
-        {/* Image gallery */}
-        <View style={dtl.gallery}>
-          {images.length > 0 ? (
-            <>
-              <ScrollView
-                horizontal pagingEnabled showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={e => setImageIdx(Math.round(e.nativeEvent.contentOffset.x / width))}
-              >
-                {images.map((uri, i) => (
-                  <Image key={i} source={{ uri }} style={dtl.mainImage} resizeMode="cover" />
-                ))}
-              </ScrollView>
-              {images.length > 1 && (
-                <View style={dtl.dotRow}>
-                  {images.map((_, i) => (
-                    <View key={i} style={[dtl.dot, i === imageIdx && dtl.dotActive]} />
-                  ))}
-                </View>
-              )}
-            </>
+        {/* Hero Image */}
+        <View style={dtl.heroWrap}>
+          {item.image_url ? (
+            <Image source={{ uri: item.image_url }} style={dtl.heroImage} resizeMode="cover" />
           ) : (
-            <View style={[dtl.mainImage, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a1a' }]}>
-              <Ionicons name="image-outline" size={48} color="#333" />
+            <View style={[dtl.heroImage, dtl.heroPlaceholder]}>
+              <Ionicons name="image-outline" size={56} color="#333" />
             </View>
           )}
-          {/* Overlay buttons */}
-          <TouchableOpacity style={dtl.closeBtn} onPress={onClose}>
-            <Ionicons name="close" size={22} color="#fff" />
-          </TouchableOpacity>
-          {!isOwn && (
-            <TouchableOpacity style={dtl.saveBtn} onPress={onToggleSave}>
-              <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={20} color={isSaved ? '#fbbf24' : '#fff'} />
-            </TouchableOpacity>
-          )}
+
+          {/* Sold overlay */}
           {item.is_sold && (
             <View style={dtl.soldOverlay}>
               <Text style={dtl.soldText}>SOLD</Text>
             </View>
           )}
-          {item.condition && (
-            <View style={[dtl.condBadge, { backgroundColor: (conditionColor[item.condition] ?? '#888') + '30', borderColor: (conditionColor[item.condition] ?? '#888') + '80' }]}>
-              <Text style={[dtl.condText, { color: conditionColor[item.condition] ?? '#888' }]}>
-                {conditionLabel[item.condition] ?? item.condition}
-              </Text>
+
+          {/* Overlay buttons row */}
+          <View style={[dtl.overlayRow, { paddingTop: insets.top + 8 }]}>
+            <TouchableOpacity style={dtl.overlayBtn} onPress={onClose}>
+              <Ionicons name="close" size={20} color="#fff" />
+            </TouchableOpacity>
+
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={dtl.overlayBtn} onPress={handleShare}>
+                <Ionicons name="share-outline" size={20} color="#fff" />
+              </TouchableOpacity>
+
+              {!isOwn && (
+                <TouchableOpacity
+                  style={dtl.overlayBtn}
+                  onPress={() => onToggleSave(item.id)}
+                >
+                  <Ionicons
+                    name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                    size={20}
+                    color={isSaved ? '#fbbf24' : '#fff'}
+                  />
+                </TouchableOpacity>
+              )}
             </View>
+          </View>
+
+          {/* Condition badge on image */}
+          {item.condition && (
+            <ConditionBadge
+              condition={item.condition}
+              style={{ position: 'absolute', bottom: 14, left: 14 }}
+            />
           )}
         </View>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-          {/* Title & Price */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-            <Text style={dtl.title}>{item.title}</Text>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={dtl.price}>${Number(item.price).toLocaleString()}</Text>
-              {item.is_negotiable && <Text style={dtl.negotiable}>Negotiable</Text>}
-            </View>
+        {/* Scrollable content */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Title + Price */}
+          <View style={dtl.titleRow}>
+            <Text style={dtl.title} numberOfLines={3}>
+              {item.title}
+            </Text>
+            <Text style={dtl.price}>{formatPrice(item.price)}</Text>
           </View>
 
-          {/* Category & Date */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, marginBottom: 12 }}>
+          {/* Meta row */}
+          <View style={dtl.metaRow}>
             <View style={dtl.catBadge}>
               <Text style={dtl.catBadgeText}>
-                {CATEGORIES.find(c => c.id === item.category)?.icon ?? '📦'} {item.category}
+                {CATEGORIES.find(c => c.id === item.category)?.icon ?? '📦'}{' '}
+                {item.category}
               </Text>
             </View>
-            <Text style={dtl.meta}>{timeAgo(item.created_at)}</Text>
+            <Text style={dtl.metaText}>{timeAgo(item.created_at)}</Text>
+            {item.views_count > 0 && (
+              <>
+                <Text style={dtl.metaText}>·</Text>
+                <Ionicons name="eye-outline" size={13} color="rgba(255,255,255,0.35)" />
+                <Text style={dtl.metaText}>{item.views_count}</Text>
+              </>
+            )}
           </View>
 
           {/* Description */}
-          {item.description ? (
+          {!!item.description && (
             <>
               <Text style={dtl.sectionLabel}>Description</Text>
               <Text style={dtl.description}>{item.description}</Text>
             </>
-          ) : null}
+          )}
 
           {/* Seller */}
-          <Text style={[dtl.sectionLabel, { marginTop: 14 }]}>Seller</Text>
+          <Text style={[dtl.sectionLabel, { marginTop: 18 }]}>Seller</Text>
           <View style={dtl.sellerCard}>
-            {seller?.avatar_url
-              ? <Image source={{ uri: seller.avatar_url }} style={dtl.sellerAvatar} />
-              : <View style={[dtl.sellerAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="person" size={18} color="#555" />
-                </View>}
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={dtl.sellerName}>{seller?.full_name ?? seller?.username ?? 'Unknown'}</Text>
-                {seller?.is_verified && <VerifiedBadge type={seller.verification_type} size="sm" />}
+            {seller?.avatar_url ? (
+              <Image source={{ uri: seller.avatar_url }} style={dtl.sellerAvatar} />
+            ) : (
+              <View style={[dtl.sellerAvatar, dtl.sellerAvatarFallback]}>
+                <Ionicons name="person" size={20} color="#555" />
               </View>
-              <Text style={dtl.sellerMeta}>@{seller?.username} · {seller?.university ?? 'Campus'}</Text>
+            )}
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <Text style={dtl.sellerName}>
+                  {seller?.full_name ?? seller?.username ?? 'Unknown'}
+                </Text>
+                {seller?.is_verified && (
+                  <VerifiedBadge type={seller.verification_type as any} size="sm" />
+                )}
+              </View>
+              <Text style={dtl.sellerMeta}>
+                @{seller?.username}
+                {seller?.university ? ` · ${seller.university}` : ''}
+              </Text>
             </View>
           </View>
 
-          {/* CTA */}
+          {/* CTA — non-owner */}
           {!isOwn && !item.is_sold && (
-            <TouchableOpacity style={dtl.msgBtn} onPress={() => onMessage(seller?.id ?? item.seller_id)}>
+            <TouchableOpacity
+              style={dtl.primaryBtn}
+              onPress={() => onMessage(seller?.id ?? item.seller_id)}
+            >
               <Ionicons name="chatbubble-outline" size={18} color="#fff" />
-              <Text style={dtl.msgBtnText}>Message Seller</Text>
+              <Text style={dtl.primaryBtnText}>Message Seller</Text>
             </TouchableOpacity>
           )}
 
+          {/* CTA — owner */}
           {isOwn && (
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <View style={{ gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                style={[dtl.primaryBtn, { backgroundColor: '#1e1b4b', borderWidth: 1, borderColor: '#4f46e5' }]}
+                onPress={() => { onClose(); onEdit(item); }}
+              >
+                <Ionicons name="pencil-outline" size={18} color="#818cf8" />
+                <Text style={[dtl.primaryBtnText, { color: '#818cf8' }]}>Edit Listing</Text>
+              </TouchableOpacity>
+
               {!item.is_sold && (
                 <TouchableOpacity
-                  style={[dtl.ownerBtn, { backgroundColor: '#22c55e20', borderColor: '#22c55e50' }]}
-                  onPress={async () => {
-                    setMarking(true);
-                    try { await markItemSold(item.id); onSold(item.id); } catch { }
-                    setMarking(false);
-                  }}
+                  style={[dtl.primaryBtn, { backgroundColor: '#052e16', borderWidth: 1, borderColor: '#22c55e' }]}
+                  onPress={handleMarkSold}
                   disabled={marking}
                 >
-                  {marking ? <ActivityIndicator size="small" color="#22c55e" /> : (
-                    <><Ionicons name="checkmark-circle-outline" size={16} color="#22c55e" /><Text style={[dtl.ownerBtnText, { color: '#22c55e' }]}>Mark Sold</Text></>
+                  {marking ? (
+                    <ActivityIndicator size="small" color="#22c55e" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle-outline" size={18} color="#22c55e" />
+                      <Text style={[dtl.primaryBtnText, { color: '#22c55e' }]}>Mark as Sold</Text>
+                    </>
                   )}
                 </TouchableOpacity>
               )}
+
               <TouchableOpacity
-                style={[dtl.ownerBtn, { flex: item.is_sold ? 1 : undefined, backgroundColor: '#ef444420', borderColor: '#ef444450' }]}
-                onPress={() => Alert.alert('Delete Listing', 'Remove this listing?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: async () => {
-                    setDeleting(true);
-                    try { await deleteMarketItem(item.id); onDelete(item.id); } catch { setDeleting(false); }
-                  }},
-                ])}
+                style={[dtl.primaryBtn, { backgroundColor: '#450a0a', borderWidth: 1, borderColor: '#ef4444' }]}
+                onPress={handleDelete}
                 disabled={deleting}
               >
-                {deleting ? <ActivityIndicator size="small" color="#ef4444" /> : (
-                  <><Ionicons name="trash-outline" size={16} color="#ef4444" /><Text style={[dtl.ownerBtnText, { color: '#ef4444' }]}>Delete</Text></>
+                {deleting ? (
+                  <ActivityIndicator size="small" color="#ef4444" />
+                ) : (
+                  <>
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                    <Text style={[dtl.primaryBtnText, { color: '#ef4444' }]}>Delete Listing</Text>
+                  </>
                 )}
               </TouchableOpacity>
             </View>
@@ -209,225 +528,249 @@ const ItemDetailModal: React.FC<{
   );
 };
 
-// ─── Item Card ────────────────────────────────────────────────────────────────
-const ItemCard: React.FC<{
-  item: any;
-  currentUserId: string;
-  isSaved: boolean;
-  onToggleSave: () => void;
-  onPress: () => void;
-}> = ({ item, isSaved, onToggleSave, onPress }) => {
-  const seller = item.profiles;
-  return (
-    <TouchableOpacity style={[styles.card, { width: CARD_W }]} onPress={onPress} activeOpacity={0.85}>
-      <View style={styles.imageWrap}>
-        {item.image_url
-          ? <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
-          : <View style={[styles.itemImage, { backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="image-outline" size={32} color="#333" />
-            </View>}
-        {item.is_sold && (
-          <View style={styles.soldBadge}><Text style={styles.soldBadgeText}>SOLD</Text></View>
-        )}
-        <TouchableOpacity style={styles.saveBtn} onPress={onToggleSave}>
-          <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={17} color={isSaved ? '#fbbf24' : '#fff'} />
-        </TouchableOpacity>
-        {item.condition && (
-          <View style={[styles.conditionBadge, { backgroundColor: (conditionColor[item.condition] ?? '#888') + '30', borderColor: (conditionColor[item.condition] ?? '#888') + '60' }]}>
-            <Text style={[styles.conditionText, { color: conditionColor[item.condition] ?? '#888' }]}>
-              {conditionLabel[item.condition] ?? item.condition}
-            </Text>
-          </View>
-        )}
-        {item.image_urls?.length > 1 && (
-          <View style={styles.multiImgBadge}>
-            <Ionicons name="layers-outline" size={10} color="#fff" />
-            <Text style={styles.multiImgText}>{item.image_urls.length}</Text>
-          </View>
-        )}
-      </View>
-      <View style={styles.cardInfo}>
-        <Text style={styles.itemTitle} numberOfLines={2}>{item.title}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <Text style={styles.itemPrice}>${Number(item.price).toLocaleString()}</Text>
-          {item.is_negotiable && <Text style={styles.negotiableTag}>neg.</Text>}
-        </View>
-        <View style={styles.sellerRow}>
-          {seller?.avatar_url
-            ? <Image source={{ uri: seller.avatar_url }} style={styles.sellerAvatar} />
-            : <View style={[styles.sellerAvatar, { backgroundColor: '#222' }]} />}
-          <Text style={styles.sellerName} numberOfLines={1}>{seller?.username ?? 'user'}</Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.postedAt}>{timeAgo(item.created_at)}</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-};
+// ─── Sell / Edit Modal ────────────────────────────────────────────────────────
 
-// ─── Sell Modal ───────────────────────────────────────────────────────────────
-const SellModal: React.FC<{
+interface SellModalProps {
   visible: boolean;
   currentUserId: string;
+  editItem?: MarketItem | null;
   onClose: () => void;
-  onPosted: (item: any) => void;
-}> = ({ visible, currentUserId, onClose, onPosted }) => {
-  const [sellTitle, setSellTitle] = useState('');
-  const [sellPrice, setSellPrice] = useState('');
-  const [sellDesc, setSellDesc] = useState('');
-  const [sellCat, setSellCat] = useState('books');
-  const [sellCond, setSellCond] = useState('good');
-  const [images, setImages] = useState<string[]>([]);
-  const [isNegotiable, setIsNegotiable] = useState(false);
-  const [posting, setPosting] = useState(false);
+  onPosted: (item: MarketItem) => void;
+  onUpdated: (item: MarketItem) => void;
+}
 
-  const reset = () => {
-    setSellTitle(''); setSellPrice(''); setSellDesc('');
-    setSellCat('books'); setSellCond('good'); setImages([]);
-    setIsNegotiable(false);
-  };
+const SellModal: React.FC<SellModalProps> = ({
+  visible,
+  currentUserId,
+  editItem,
+  onClose,
+  onPosted,
+  onUpdated,
+}) => {
+  const isEdit = !!editItem;
 
-  const pickImages = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (perm.status !== 'granted') return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
-      selectionLimit: 4 - images.length,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets?.length > 0) {
-      setImages(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 4));
+  const [title, setTitle] = useState('');
+  const [price, setPrice] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('books');
+  const [condition, setCondition] = useState<Condition>('good');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Pre-fill when editing
+  useEffect(() => {
+    if (editItem) {
+      setTitle(editItem.title ?? '');
+      setPrice(String(editItem.price ?? ''));
+      setDescription(editItem.description ?? '');
+      setCategory(editItem.category ?? 'books');
+      setCondition((editItem.condition as Condition) ?? 'good');
+      setImageUri(editItem.image_url ?? null);
+    } else {
+      setTitle('');
+      setPrice('');
+      setDescription('');
+      setCategory('books');
+      setCondition('good');
+      setImageUri(null);
     }
-  };
+  }, [editItem, visible]);
 
-  const handlePost = async () => {
-    if (!sellTitle.trim() || !sellPrice) {
-      Alert.alert('Missing fields', 'Please fill in title and price.');
+  const pickImage = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (perm.status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow photo access to add images.');
       return;
     }
-    setPosting(true);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets?.length > 0) {
+      setImageUri(result.assets[0].uri);
+    }
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    const trimmedTitle = title.trim();
+    const parsedPrice = parseFloat(price);
+
+    if (!trimmedTitle) {
+      Alert.alert('Missing title', 'Please enter a title for your listing.');
+      return;
+    }
+    if (!price || isNaN(parsedPrice) || parsedPrice < 0) {
+      Alert.alert('Invalid price', 'Please enter a valid price.');
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const item = await createMarketItem(currentUserId, {
-        title: sellTitle.trim(),
-        description: sellDesc.trim(),
-        price: parseFloat(sellPrice),
-        category: sellCat,
-        condition: sellCond,
-        imageUri: images[0],
-        extraImageUris: images.slice(1),
-        isNegotiable,
-      });
-      reset();
-      onPosted(item);
+      if (isEdit && editItem) {
+        const updates: UpdateItemPayload = {
+          title: trimmedTitle,
+          description: description.trim(),
+          price: parsedPrice,
+          category,
+          condition,
+        };
+        const updated = await updateMarketItem(editItem.id, currentUserId, updates);
+        onUpdated(updated);
+      } else {
+        const item = await createMarketItem(currentUserId, {
+          title: trimmedTitle,
+          description: description.trim(),
+          price: parsedPrice,
+          category,
+          condition,
+          imageUris: imageUri ? [imageUri] : [],
+        });
+        onPosted(item);
+      }
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to post item.');
-    } finally { setPosting(false); }
-  };
+      Alert.alert('Error', e.message ?? 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    title, price, description, category, condition, imageUri,
+    isEdit, editItem, currentUserId, onPosted, onUpdated,
+  ]);
+
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={() => { reset(); onClose(); }}>
-            <Text style={{ color: '#818cf8', fontSize: 15 }}>Cancel</Text>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={handleClose}
+    >
+      <KeyboardAvoidingView
+        style={sell.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {/* Header */}
+        <View style={sell.header}>
+          <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={sell.cancelText}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>New Listing</Text>
-          <TouchableOpacity onPress={handlePost} disabled={posting}>
-            {posting ? <ActivityIndicator color="#818cf8" /> : <Text style={{ color: '#818cf8', fontSize: 15, fontWeight: '700' }}>Post</Text>}
+          <Text style={sell.headerTitle}>
+            {isEdit ? 'Edit Listing' : 'New Listing'}
+          </Text>
+          <TouchableOpacity onPress={handleSubmit} disabled={submitting}>
+            {submitting ? (
+              <ActivityIndicator size="small" color="#818cf8" />
+            ) : (
+              <Text style={sell.postText}>
+                {isEdit ? 'Update' : 'Post'}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }} showsVerticalScrollIndicator={false}>
-          {/* Images */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {images.map((uri, i) => (
-              <View key={i} style={{ position: 'relative' }}>
-                <Image source={{ uri }} style={{ width: 100, height: 100, borderRadius: 12 }} resizeMode="cover" />
-                <TouchableOpacity
-                  style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, padding: 2 }}
-                  onPress={() => setImages(prev => prev.filter((_, idx) => idx !== i))}
-                >
-                  <Ionicons name="close" size={14} color="#fff" />
-                </TouchableOpacity>
+        <ScrollView
+          contentContainerStyle={sell.body}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Image picker */}
+          <TouchableOpacity style={sell.imagePicker} onPress={pickImage} activeOpacity={0.75}>
+            {imageUri ? (
+              <>
+                <Image source={{ uri: imageUri }} style={sell.imagePreview} resizeMode="cover" />
+                <View style={sell.imageChangeOverlay}>
+                  <Ionicons name="camera" size={22} color="#fff" />
+                  <Text style={sell.imageChangeText}>Change</Text>
+                </View>
+              </>
+            ) : (
+              <View style={sell.imageEmpty}>
+                <Ionicons name="camera-outline" size={36} color="#444" />
+                <Text style={sell.imageEmptyText}>Tap to add photo</Text>
               </View>
-            ))}
-            {images.length < 4 && (
-              <TouchableOpacity style={styles.imagePicker} onPress={pickImages}>
-                <Ionicons name="camera-outline" size={28} color="#555" />
-                <Text style={{ color: '#555', fontSize: 11, marginTop: 4 }}>Add Photo</Text>
-                <Text style={{ color: '#444', fontSize: 10 }}>{images.length}/4</Text>
-              </TouchableOpacity>
             )}
-          </ScrollView>
+          </TouchableOpacity>
 
           {/* Title */}
           <TextInput
-            style={styles.modalInput}
-            placeholder="Title"
+            style={sell.input}
+            placeholder="Title *"
             placeholderTextColor="#555"
-            value={sellTitle}
-            onChangeText={setSellTitle}
+            value={title}
+            onChangeText={setTitle}
+            maxLength={120}
+            returnKeyType="next"
           />
 
-          {/* Price + Negotiable */}
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TextInput
-              style={[styles.modalInput, { flex: 1 }]}
-              placeholder="Price (e.g. 25.00)"
-              placeholderTextColor="#555"
-              value={sellPrice}
-              onChangeText={setSellPrice}
-              keyboardType="decimal-pad"
-            />
-            <TouchableOpacity
-              style={[styles.modalInput, { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12, gap: 4, flexDirection: 'row' }]}
-              onPress={() => setIsNegotiable(p => !p)}
-            >
-              <Ionicons name={isNegotiable ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={isNegotiable ? '#818cf8' : '#555'} />
-              <Text style={{ color: isNegotiable ? '#818cf8' : '#555', fontSize: 12 }}>Nego.</Text>
-            </TouchableOpacity>
-          </View>
+          {/* Price */}
+          <TextInput
+            style={sell.input}
+            placeholder="Price (e.g. 25.00) *"
+            placeholderTextColor="#555"
+            value={price}
+            onChangeText={setPrice}
+            keyboardType="decimal-pad"
+          />
 
           {/* Description */}
           <TextInput
-            style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
+            style={[sell.input, sell.textArea]}
             placeholder="Description (optional)"
             placeholderTextColor="#555"
-            value={sellDesc}
-            onChangeText={setSellDesc}
+            value={description}
+            onChangeText={setDescription}
             multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+            maxLength={1000}
           />
 
           {/* Category */}
-          <Text style={styles.modalLabel}>Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <Text style={sell.sectionLabel}>Category</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+          >
             {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
               <TouchableOpacity
                 key={cat.id}
-                style={[styles.catBtn, sellCat === cat.id && styles.catBtnActive]}
-                onPress={() => setSellCat(cat.id)}
+                style={[sell.chip, category === cat.id && sell.chipActive]}
+                onPress={() => setCategory(cat.id)}
               >
-                <Text style={styles.catEmoji}>{cat.icon}</Text>
-                <Text style={[styles.catLabel, sellCat === cat.id && styles.catLabelActive]}>{cat.label}</Text>
+                <Text style={sell.chipEmoji}>{cat.icon}</Text>
+                <Text style={[sell.chipLabel, category === cat.id && sell.chipLabelActive]}>
+                  {cat.label}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
           {/* Condition */}
-          <Text style={styles.modalLabel}>Condition</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {CONDITIONS.map(c => (
-              <TouchableOpacity
-                key={c}
-                style={[styles.condBtn, sellCond === c && { borderColor: conditionColor[c], backgroundColor: conditionColor[c] + '20' }]}
-                onPress={() => setSellCond(c)}
-              >
-                <Text style={[styles.condBtnText, sellCond === c && { color: conditionColor[c] }]}>
-                  {conditionLabel[c]}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <Text style={sell.sectionLabel}>Condition</Text>
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {CONDITIONS.map(c => {
+              const color = CONDITION_COLOR[c];
+              const active = condition === c;
+              return (
+                <TouchableOpacity
+                  key={c}
+                  style={[
+                    sell.condChip,
+                    active && { borderColor: color, backgroundColor: color + '20' },
+                  ]}
+                  onPress={() => setCondition(c)}
+                >
+                  <Text style={[sell.condChipText, active && { color }]}>
+                    {CONDITION_LABEL[c]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -435,198 +778,511 @@ const SellModal: React.FC<{
   );
 };
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
-export const MarketScreen: React.FC = () => {
+interface MarketScreenProps {
+  onMessagePress?: (convId: string, otherProfile: any) => void;
+}
+
+export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress }) => {
   const insets = useSafeAreaInsets();
+
+  // Auth
+  const [currentUserId, setCurrentUserId] = useState('');
+
+  // Navigation
   const [activeTab, setActiveTab] = useState<Tab>('browse');
+
+  // Filters
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
-  const [items, setItems] = useState<any[]>([]);
-  const [myItems, setMyItems] = useState<any[]>([]);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState('');
-  const [showSell, setShowSell] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<any | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
+  // Browse data
+  const [browseItems, setBrowseItems] = useState<MarketItem[]>([]);
+  const [browseOffset, setBrowseOffset] = useState(0);
+  const [browseHasMore, setBrowseHasMore] = useState(true);
+  const [browseLoading, setBrowseLoading] = useState(false);
+
+  // Saved data
+  const [savedItems, setSavedItems] = useState<MarketItem[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+
+  // My Listings data
+  const [myItems, setMyItems] = useState<MarketItem[]>([]);
+  const [myLoading, setMyLoading] = useState(false);
+
+  // Saved IDs for optimistic bookmark state
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+
+  // UI state
+  const [refreshing, setRefreshing] = useState(false);
+  const [showSell, setShowSell] = useState(false);
+  const [editItem, setEditItem] = useState<MarketItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null);
+
+  // ── Auth init ──
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) setCurrentUserId(data.user.id);
     });
   }, []);
 
-  const load = useCallback(async () => {
-    if (!currentUserId) return;
-    try {
-      const [itemsData, myData, savedData] = await Promise.all([
-        getMarketItems(category === 'all' ? undefined : category, search),
-        getMyListings(currentUserId),
-        getSavedItemIds(currentUserId),
-      ]);
-      setItems(itemsData);
-      setMyItems(myData);
-      setSavedIds(new Set(savedData));
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); setRefreshing(false); }
-  }, [category, search, currentUserId]);
-
-  useEffect(() => {
-    if (currentUserId) load();
-  }, [load, currentUserId]);
-
-  // Debounced search
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleSearch = (q: string) => {
+  // ── Debounced search ──
+  const handleSearchChange = useCallback((q: string) => {
     setSearch(q);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => load(), 400);
-  };
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(q);
+    }, 400);
+  }, []);
 
-  const toggleSave = async (itemId: string) => {
-    const isSaved = savedIds.has(itemId);
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      isSaved ? next.delete(itemId) : next.add(itemId);
-      return next;
-    });
-    try {
-      if (isSaved) await unsaveMarketItem(currentUserId, itemId);
-      else await saveMarketItem(currentUserId, itemId);
-    } catch {
-      setSavedIds(prev => {
-        const next = new Set(prev);
-        isSaved ? next.add(itemId) : next.delete(itemId);
-        return next;
-      });
-    }
-  };
-
-  const handleMessage = async (sellerId: string) => {
-    if (!currentUserId || sellerId === currentUserId) return;
-    try {
-      await createDirectConversation(currentUserId, sellerId);
-      Alert.alert('💬 Chat started', 'Head to Messages to continue the conversation.');
-    } catch (e: any) { Alert.alert('Error', e.message); }
-  };
-
-  const handleSold = (id: string) => {
-    setMyItems(prev => prev.map(m => m.id === id ? { ...m, is_sold: true } : m));
-    setSelectedItem(null);
-  };
-
-  const handleDelete = (id: string) => {
-    setMyItems(prev => prev.filter(m => m.id !== id));
-    setItems(prev => prev.filter(m => m.id !== id));
-    setSelectedItem(null);
-  };
-
-  const displayItems = activeTab === 'mine' ? myItems
-    : activeTab === 'saved' ? items.filter(i => savedIds.has(i.id))
-    : items;
-
-  const renderItem = ({ item }: { item: any }) => (
-    <ItemCard
-      item={item}
-      currentUserId={currentUserId}
-      isSaved={savedIds.has(item.id)}
-      onToggleSave={() => toggleSave(item.id)}
-      onPress={() => setSelectedItem(item)}
-    />
+  // ── Load browse items (first page or refresh) ──
+  const loadBrowse = useCallback(
+    async (hard = false) => {
+      if (!currentUserId) return;
+      setBrowseLoading(true);
+      try {
+        const cat = category === 'all' ? undefined : category;
+        const data = await getMarketItems(cat, debouncedSearch, PAGE_SIZE, 0);
+        setBrowseItems(data);
+        setBrowseOffset(data.length);
+        setBrowseHasMore(data.length === PAGE_SIZE);
+        if (hard) {
+          const savedData = await getSavedItemIds(currentUserId);
+          setSavedIds(new Set(savedData));
+        }
+      } catch (e) {
+        console.error('loadBrowse', e);
+      } finally {
+        setBrowseLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [currentUserId, category, debouncedSearch],
   );
 
+  // ── Load next page ──
+  const loadMoreBrowse = useCallback(async () => {
+    if (!currentUserId || browseLoading || !browseHasMore) return;
+    setBrowseLoading(true);
+    try {
+      const cat = category === 'all' ? undefined : category;
+      const data = await getMarketItems(cat, debouncedSearch, PAGE_SIZE, browseOffset);
+      setBrowseItems(prev => [...prev, ...data]);
+      setBrowseOffset(prev => prev + data.length);
+      setBrowseHasMore(data.length === PAGE_SIZE);
+    } catch (e) {
+      console.error('loadMoreBrowse', e);
+    } finally {
+      setBrowseLoading(false);
+    }
+  }, [currentUserId, browseLoading, browseHasMore, browseOffset, category, debouncedSearch]);
+
+  // ── Load saved tab ──
+  const loadSaved = useCallback(async () => {
+    if (!currentUserId) return;
+    setSavedLoading(true);
+    try {
+      const data = await getSavedItems(currentUserId);
+      setSavedItems(data);
+    } catch (e) {
+      console.error('loadSaved', e);
+    } finally {
+      setSavedLoading(false);
+      setRefreshing(false);
+    }
+  }, [currentUserId]);
+
+  // ── Load my listings tab ──
+  const loadMine = useCallback(async () => {
+    if (!currentUserId) return;
+    setMyLoading(true);
+    try {
+      const data = await getMyListings(currentUserId);
+      setMyItems(data);
+    } catch (e) {
+      console.error('loadMine', e);
+    } finally {
+      setMyLoading(false);
+      setRefreshing(false);
+    }
+  }, [currentUserId]);
+
+  // ── Initial load ──
+  useEffect(() => {
+    if (!currentUserId) return;
+    loadBrowse(true);
+    loadSaved();
+    loadMine();
+  }, [currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Reload browse when filters change ──
+  useEffect(() => {
+    if (!currentUserId) return;
+    loadBrowse(false);
+  }, [category, debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Pull-to-refresh ──
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    if (activeTab === 'browse') loadBrowse(true);
+    else if (activeTab === 'saved') loadSaved();
+    else loadMine();
+  }, [activeTab, loadBrowse, loadSaved, loadMine]);
+
+  // ── Toggle save (optimistic + DB) ──
+  const handleToggleSave = useCallback(
+    async (itemId: string) => {
+      if (!currentUserId) return;
+      const wasSaved = savedIds.has(itemId);
+
+      // Optimistic update
+      setSavedIds(prev => {
+        const next = new Set(prev);
+        wasSaved ? next.delete(itemId) : next.add(itemId);
+        return next;
+      });
+
+      // Update saved items list optimistically
+      if (wasSaved) {
+        setSavedItems(prev => prev.filter(i => i.id !== itemId));
+      }
+
+      try {
+        await toggleSaveItem(currentUserId, itemId);
+        // If we saved a new item, reload saved list so it appears
+        if (!wasSaved) {
+          loadSaved();
+        }
+      } catch (e) {
+        // Rollback
+        setSavedIds(prev => {
+          const next = new Set(prev);
+          wasSaved ? next.add(itemId) : next.delete(itemId);
+          return next;
+        });
+      }
+    },
+    [currentUserId, savedIds, loadSaved],
+  );
+
+  // ── Message seller ──
+  const handleMessage = useCallback(
+    async (sellerId: string) => {
+      if (!currentUserId || sellerId === currentUserId) return;
+      try {
+        const convId = await createDirectConversation(currentUserId, sellerId);
+        // We need the seller's profile. MarketItem has seller_id but maybe not full profile?
+        // Let's assume we can fetch it or just pass name if available.
+        // Looking at getMarketItems, it usually includes seller details.
+        const item = browseItems.find(i => i.seller_id === sellerId) || 
+                     savedItems.find(i => i.seller_id === sellerId) ||
+                     myItems.find(i => i.seller_id === sellerId);
+        
+        const sellerProfile = {
+          id: sellerId,
+          full_name: item?.profiles?.full_name ?? 'Seller',
+          username: item?.profiles?.username ?? 'seller',
+          avatar_url: item?.profiles?.avatar_url,
+          is_verified: item?.profiles?.is_verified ?? false,
+        };
+        onMessagePress?.(convId, sellerProfile);
+      } catch (e: any) {
+        Alert.alert('Error', e.message ?? 'Could not start conversation.');
+      }
+    },
+    [currentUserId, onMessagePress, browseItems, savedItems, myItems],
+  );
+
+  // ── Mark sold handlers ──
+  const handleSoldFromDetail = useCallback((id: string) => {
+    const update = (item: MarketItem) =>
+      item.id === id ? { ...item, is_sold: true } : item;
+    setMyItems(prev => prev.map(update));
+    setBrowseItems(prev => prev.map(update));
+    setSavedItems(prev => prev.map(update));
+    setSelectedItem(prev => (prev?.id === id ? { ...prev, is_sold: true } : prev));
+  }, []);
+
+  const handleSoldFromCard = useCallback(
+    async (itemId: string) => {
+      try {
+        await markItemSold(itemId, currentUserId);
+        handleSoldFromDetail(itemId);
+      } catch (e: any) {
+        Alert.alert('Error', e.message ?? 'Failed to mark as sold.');
+      }
+    },
+    [currentUserId, handleSoldFromDetail],
+  );
+
+  // ── Delete handlers ──
+  const handleDeleteFromDetail = useCallback((id: string) => {
+    setMyItems(prev => prev.filter(i => i.id !== id));
+    setBrowseItems(prev => prev.filter(i => i.id !== id));
+    setSavedItems(prev => prev.filter(i => i.id !== id));
+    setSelectedItem(null);
+  }, []);
+
+  const handleDeleteFromCard = useCallback(
+    async (itemId: string) => {
+      try {
+        await deleteMarketItem(itemId, currentUserId);
+        handleDeleteFromDetail(itemId);
+      } catch (e: any) {
+        Alert.alert('Error', e.message ?? 'Failed to delete listing.');
+      }
+    },
+    [currentUserId, handleDeleteFromDetail],
+  );
+
+  // ── Edit ──
+  const handleOpenEdit = useCallback((item: MarketItem) => {
+    setSelectedItem(null);
+    setEditItem(item);
+    setShowSell(true);
+  }, []);
+
+  const handleUpdated = useCallback((updated: MarketItem) => {
+    const replace = (item: MarketItem) => (item.id === updated.id ? updated : item);
+    setMyItems(prev => prev.map(replace));
+    setBrowseItems(prev => prev.map(replace));
+    setSavedItems(prev => prev.map(replace));
+    setEditItem(null);
+    setShowSell(false);
+  }, []);
+
+  // ── New listing posted ──
+  const handlePosted = useCallback((item: MarketItem) => {
+    setShowSell(false);
+    setEditItem(null);
+    setBrowseItems(prev => [item, ...prev]);
+    setMyItems(prev => [item, ...prev]);
+    setActiveTab('mine');
+  }, []);
+
+  // ── Close sell modal ──
+  const handleCloseSell = useCallback(() => {
+    setShowSell(false);
+    setEditItem(null);
+  }, []);
+
+  // ── Card press ──
+  const handleCardPress = useCallback((item: MarketItem) => {
+    setSelectedItem(item);
+  }, []);
+
+  // ── Render card ──
+  const renderBrowseCard = useCallback(
+    ({ item }: { item: MarketItem }) => (
+      <ItemCard
+        item={item}
+        currentUserId={currentUserId}
+        isSaved={savedIds.has(item.id)}
+        onToggleSave={handleToggleSave}
+        onPress={handleCardPress}
+      />
+    ),
+    [currentUserId, savedIds, handleToggleSave, handleCardPress],
+  );
+
+  const renderSavedCard = useCallback(
+    ({ item }: { item: MarketItem }) => (
+      <ItemCard
+        item={item}
+        currentUserId={currentUserId}
+        isSaved={true}
+        onToggleSave={handleToggleSave}
+        onPress={handleCardPress}
+      />
+    ),
+    [currentUserId, handleToggleSave, handleCardPress],
+  );
+
+  const renderMyCard = useCallback(
+    ({ item }: { item: MarketItem }) => (
+      <ItemCard
+        item={item}
+        currentUserId={currentUserId}
+        isSaved={savedIds.has(item.id)}
+        isOwn
+        onToggleSave={handleToggleSave}
+        onPress={handleCardPress}
+        onMarkSold={handleSoldFromCard}
+        onDelete={handleDeleteFromCard}
+        onEdit={handleOpenEdit}
+      />
+    ),
+    [currentUserId, savedIds, handleToggleSave, handleCardPress, handleSoldFromCard, handleDeleteFromCard, handleOpenEdit],
+  );
+
+  // ── Loading state (initial) ──
+  const isInitialLoading =
+    (activeTab === 'browse' && browseLoading && browseItems.length === 0) ||
+    (activeTab === 'saved' && savedLoading && savedItems.length === 0) ||
+    (activeTab === 'mine' && myLoading && myItems.length === 0);
+
+  const CARD_WIDTH = (width - 28) / 2;
+
+  // ── Active data + renderer ──
+  const activeData =
+    activeTab === 'browse' ? browseItems
+    : activeTab === 'saved' ? savedItems
+    : myItems;
+
+  const activeRenderer =
+    activeTab === 'browse' ? renderBrowseCard
+    : activeTab === 'saved' ? renderSavedCard
+    : renderMyCard;
+
+  const emptyMessage =
+    activeTab === 'saved'
+      ? 'Nothing saved yet — bookmark items to find them here'
+      : activeTab === 'mine'
+      ? "You haven't listed anything yet"
+      : 'No items found';
+
+  const emptyIcon =
+    activeTab === 'saved' ? 'bookmark-outline'
+    : activeTab === 'mine' ? 'storefront-outline'
+    : 'bag-outline';
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.title}>Campus Market</Text>
-        <TouchableOpacity style={styles.sellBtn} onPress={() => setShowSell(true)}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Campus Market</Text>
+        <TouchableOpacity
+          style={styles.sellBtn}
+          onPress={() => { setEditItem(null); setShowSell(true); }}
+        >
           <Ionicons name="add" size={16} color="#fff" />
           <Text style={styles.sellBtnText}>Sell</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Search */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={15} color="rgba(255,255,255,0.4)" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search listings…"
-          placeholderTextColor="rgba(255,255,255,0.3)"
-          value={search}
-          onChangeText={handleSearch}
-          returnKeyType="search"
-          autoCapitalize="none"
-        />
-        {search.length > 0 && (
-          <TouchableOpacity onPress={() => handleSearch('')}>
-            <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.3)" />
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Tabs */}
-      <View style={styles.tabRow}>
-        {([
-          { id: 'browse', label: 'Browse', icon: 'storefront-outline' },
-          { id: 'saved', label: 'Saved', icon: 'bookmark-outline' },
-          { id: 'mine', label: 'My Listings', icon: 'person-outline' },
-        ] as const).map(tab => (
+      {/* ── Tab bar ── */}
+      <View style={styles.tabBar}>
+        {(
+          [
+            { id: 'browse', label: 'Browse', icon: 'storefront-outline' },
+            { id: 'saved', label: 'Saved', icon: 'bookmark-outline' },
+            { id: 'mine', label: 'My Listings', icon: 'person-outline' },
+          ] as const
+        ).map(tab => (
           <TouchableOpacity
             key={tab.id}
             style={[styles.tabBtn, activeTab === tab.id && styles.tabBtnActive]}
             onPress={() => setActiveTab(tab.id)}
           >
-            <Ionicons name={tab.icon as any} size={14} color={activeTab === tab.id ? '#818cf8' : 'rgba(255,255,255,0.4)'} />
-            <Text style={[styles.tabLabel, activeTab === tab.id && styles.tabLabelActive]}>{tab.label}</Text>
+            <Ionicons
+              name={tab.icon}
+              size={14}
+              color={activeTab === tab.id ? '#818cf8' : 'rgba(255,255,255,0.4)'}
+            />
+            <Text
+              style={[
+                styles.tabLabel,
+                activeTab === tab.id && styles.tabLabelActive,
+              ]}
+            >
+              {tab.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Category pills (browse only) */}
+      {/* ── Category chips (Browse only) ── */}
       {activeTab === 'browse' && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ paddingHorizontal: 14, gap: 8 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.categoryScroll}
+          contentContainerStyle={{ paddingHorizontal: 14, gap: 8 }}
+        >
           {CATEGORIES.map(cat => (
             <TouchableOpacity
               key={cat.id}
+              style={[styles.chip, category === cat.id && styles.chipActive]}
               onPress={() => setCategory(cat.id)}
-              style={[styles.catBtn, category === cat.id && styles.catBtnActive]}
             >
-              <Text style={styles.catEmoji}>{cat.icon}</Text>
-              <Text style={[styles.catLabel, category === cat.id && styles.catLabelActive]}>{cat.label}</Text>
+              <Text style={styles.chipEmoji}>{cat.icon}</Text>
+              <Text style={[styles.chipLabel, category === cat.id && styles.chipLabelActive]}>
+                {cat.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       )}
 
-      {/* Grid */}
-      {loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color="#6366f1" size="large" />
+      {/* ── Search bar (Browse only) ── */}
+      {activeTab === 'browse' && (
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={15} color="rgba(255,255,255,0.35)" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search title or description…"
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            value={search}
+            onChangeText={handleSearchChange}
+            returnKeyType="search"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => handleSearchChange('')}>
+              <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.35)" />
+            </TouchableOpacity>
+          )}
         </View>
+      )}
+
+      {/* ── Content ── */}
+      {isInitialLoading ? (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContent}>
+          <MarketSkeleton cardWidth={CARD_WIDTH} />
+          <MarketSkeleton cardWidth={CARD_WIDTH} />
+        </ScrollView>
       ) : (
         <FlatList
-          data={displayItems}
-          keyExtractor={i => i.id}
+          data={activeData}
+          keyExtractor={item => item.id}
           numColumns={2}
-          columnWrapperStyle={{ gap: 8, paddingHorizontal: 11 }}
-          contentContainerStyle={{ paddingBottom: 100, paddingTop: 4, gap: 8 }}
+          columnWrapperStyle={styles.columnWrapper}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor="#6366f1" />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#6366f1"
+              colors={['#6366f1']}
+            />
           }
-          renderItem={renderItem}
+          renderItem={activeRenderer}
+          onEndReached={activeTab === 'browse' ? loadMoreBrowse : undefined}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            activeTab === 'browse' && browseLoading && browseItems.length > 0 ? (
+              <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                <ActivityIndicator color="#6366f1" />
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingVertical: 70 }}>
-              <Ionicons name={activeTab === 'saved' ? 'bookmark-outline' : activeTab === 'mine' ? 'storefront-outline' : 'bag-outline'} size={48} color="#333" />
-              <Text style={{ color: '#555', marginTop: 14, fontSize: 15 }}>
-                {activeTab === 'saved' ? 'Nothing saved yet' : activeTab === 'mine' ? 'You have no listings yet' : 'No items found'}
-              </Text>
-              {activeTab !== 'saved' && (
-                <TouchableOpacity style={[styles.sellBtn, { marginTop: 18 }]} onPress={() => setShowSell(true)}>
+            <View style={styles.emptyState}>
+              <Ionicons name={emptyIcon} size={52} color="#2a2a2a" />
+              <Text style={styles.emptyText}>{emptyMessage}</Text>
+              {(activeTab === 'browse' || activeTab === 'mine') && (
+                <TouchableOpacity
+                  style={[styles.sellBtn, { marginTop: 20 }]}
+                  onPress={() => { setEditItem(null); setShowSell(true); }}
+                >
                   <Ionicons name="add" size={16} color="#fff" />
                   <Text style={styles.sellBtnText}>
-                    {activeTab === 'mine' ? 'Create Listing' : 'Be the first to sell!'}
+                    {activeTab === 'mine' ? 'Create Listing' : 'Be first to sell'}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -635,30 +1291,31 @@ export const MarketScreen: React.FC = () => {
         />
       )}
 
-      {/* Sell Modal */}
+      {/* ── Sell / Edit Modal ── */}
       <SellModal
         visible={showSell}
         currentUserId={currentUserId}
-        onClose={() => setShowSell(false)}
-        onPosted={item => {
-          setShowSell(false);
-          setMyItems(prev => [item, ...prev]);
-          setItems(prev => [item, ...prev]);
-          setActiveTab('mine');
-        }}
+        editItem={editItem}
+        onClose={handleCloseSell}
+        onPosted={handlePosted}
+        onUpdated={handleUpdated}
       />
 
-      {/* Item Detail */}
+      {/* ── Item Detail Modal ── */}
       {selectedItem && (
         <ItemDetailModal
           item={selectedItem}
           currentUserId={currentUserId}
           isSaved={savedIds.has(selectedItem.id)}
-          onToggleSave={() => toggleSave(selectedItem.id)}
+          onToggleSave={handleToggleSave}
           onClose={() => setSelectedItem(null)}
-          onSold={handleSold}
-          onDelete={handleDelete}
-          onMessage={sellerId => { setSelectedItem(null); handleMessage(sellerId); }}
+          onSold={handleSoldFromDetail}
+          onDelete={handleDeleteFromDetail}
+          onEdit={handleOpenEdit}
+          onMessage={sellerId => {
+            setSelectedItem(null);
+            handleMessage(sellerId);
+          }}
         />
       )}
     </View>
@@ -666,80 +1323,547 @@ export const MarketScreen: React.FC = () => {
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingBottom: 8 },
-  title: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  sellBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#4f46e5', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 },
-  sellBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, marginHorizontal: 14, marginBottom: 10, paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
-  searchInput: { flex: 1, color: '#fff', fontSize: 14 },
-  tabRow: { flexDirection: 'row', marginHorizontal: 14, marginBottom: 10, gap: 8 },
-  tabBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  tabBtnActive: { backgroundColor: 'rgba(99,102,241,0.2)', borderColor: 'rgba(99,102,241,0.4)' },
-  tabLabel: { fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: '500' },
-  tabLabelActive: { color: '#818cf8', fontWeight: '600' },
-  catBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7 },
-  catBtnActive: { backgroundColor: 'rgba(99,102,241,0.2)', borderColor: 'rgba(99,102,241,0.4)' },
-  catEmoji: { fontSize: 13 },
-  catLabel: { fontSize: 12, color: 'rgba(255,255,255,0.6)', fontWeight: '500' },
-  catLabelActive: { color: '#818cf8' },
-  card: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
-  imageWrap: { position: 'relative' },
-  itemImage: { width: '100%', height: CARD_W, backgroundColor: '#111' },
-  saveBtn: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 14, padding: 5 },
-  conditionBadge: { position: 'absolute', bottom: 8, left: 8, borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
-  conditionText: { fontSize: 9, fontWeight: 'bold', textTransform: 'capitalize' },
-  soldBadge: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
-  soldBadgeText: { color: '#ef4444', fontWeight: 'bold', fontSize: 16, letterSpacing: 2 },
-  multiImgBadge: { position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2 },
-  multiImgText: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
-  cardInfo: { padding: 10 },
-  itemTitle: { fontSize: 12, fontWeight: '600', color: '#fff', marginBottom: 4, lineHeight: 16 },
-  itemPrice: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
-  negotiableTag: { fontSize: 9, color: '#818cf8', fontWeight: '600', backgroundColor: 'rgba(99,102,241,0.2)', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-  sellerRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
-  sellerAvatar: { width: 18, height: 18, borderRadius: 9 },
-  sellerName: { fontSize: 10, fontWeight: '600', color: 'rgba(255,255,255,0.5)', flex: 1 },
-  dot: { color: 'rgba(255,255,255,0.25)', fontSize: 10 },
-  postedAt: { fontSize: 9, color: 'rgba(255,255,255,0.3)' },
-  modal: { flex: 1, backgroundColor: '#0a0a0a' },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
-  modalTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  imagePicker: { width: 100, height: 100, backgroundColor: '#111', borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#222' },
-  modalInput: { backgroundColor: '#111', borderRadius: 12, borderWidth: 1, borderColor: '#222', paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 15 },
-  modalLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  condBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#333' },
-  condBtnText: { color: '#888', fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
+    letterSpacing: -0.3,
+  },
+  sellBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#4f46e5',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  sellBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // Tabs
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: 14,
+    marginBottom: 10,
+    gap: 8,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  tabBtnActive: {
+    backgroundColor: 'rgba(99,102,241,0.18)',
+    borderColor: 'rgba(99,102,241,0.4)',
+  },
+  tabLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '500',
+  },
+  tabLabelActive: {
+    color: '#818cf8',
+    fontWeight: '700',
+  },
+
+  // Category scroll
+  categoryScroll: {
+    marginBottom: 8,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  chipActive: {
+    backgroundColor: 'rgba(99,102,241,0.18)',
+    borderColor: 'rgba(99,102,241,0.4)',
+  },
+  chipEmoji: {
+    fontSize: 13,
+  },
+  chipLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '500',
+  },
+  chipLabelActive: {
+    color: '#818cf8',
+    fontWeight: '600',
+  },
+
+  // Search
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 12,
+    marginHorizontal: 14,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+  },
+
+  // List
+  columnWrapper: {
+    gap: 8,
+    paddingHorizontal: 11,
+  },
+  listContent: {
+    paddingBottom: 110,
+    paddingTop: 4,
+    gap: 8,
+  },
+
+  // Empty state
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 15,
+    textAlign: 'center',
+    marginTop: 16,
+    lineHeight: 22,
+  },
+
+  // Card
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  imageWrap: {
+    position: 'relative',
+  },
+  itemImage: {
+    width: '100%',
+    height: CARD_W,
+    backgroundColor: '#111',
+  },
+  imagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111',
+  },
+  soldOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  soldOverlayText: {
+    color: '#ef4444',
+    fontWeight: 'bold',
+    fontSize: 16,
+    letterSpacing: 3,
+  },
+  bookmarkBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 14,
+    padding: 5,
+  },
+  cardInfo: {
+    padding: 10,
+  },
+  itemTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+    lineHeight: 16,
+  },
+  itemPrice: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 6,
+  },
+  sellerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  sellerAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  sellerName: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.45)',
+    flex: 1,
+  },
+  dot: {
+    color: 'rgba(255,255,255,0.25)',
+    fontSize: 10,
+  },
+  postedAt: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.3)',
+  },
+
+  // Owner actions row inside card
+  ownerActions: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  ownerActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#818cf840',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  ownerActionText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#818cf8',
+  },
 });
 
+// Detail Modal Styles
 const dtl = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a' },
-  gallery: { position: 'relative' },
-  mainImage: { width, height: width * 0.85 },
-  dotRow: { position: 'absolute', bottom: 12, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 5 },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.35)' },
-  dotActive: { backgroundColor: '#fff', width: 18 },
-  closeBtn: { position: 'absolute', top: 16, left: 14, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 20, padding: 7 },
-  saveBtn: { position: 'absolute', top: 16, right: 14, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 20, padding: 7 },
-  soldOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' } as any,
-  soldText: { color: '#ef4444', fontSize: 24, fontWeight: 'bold', letterSpacing: 3 },
-  condBadge: { position: 'absolute', bottom: 14, left: 14, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  condText: { fontSize: 11, fontWeight: 'bold', textTransform: 'capitalize' },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#fff', flex: 1 },
-  price: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  negotiable: { fontSize: 11, color: '#818cf8', fontWeight: '600' },
-  catBadge: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
-  catBadgeText: { fontSize: 12, color: 'rgba(255,255,255,0.6)', textTransform: 'capitalize' },
-  meta: { fontSize: 12, color: 'rgba(255,255,255,0.35)' },
-  sectionLabel: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
-  description: { fontSize: 14, color: 'rgba(255,255,255,0.75)', lineHeight: 22 },
-  sellerCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  sellerAvatar: { width: 44, height: 44, borderRadius: 22 },
-  sellerName: { fontSize: 15, fontWeight: '600', color: '#fff' },
-  sellerMeta: { fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
-  msgBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#4f46e5', borderRadius: 14, paddingVertical: 14, marginTop: 14 },
-  msgBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  ownerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 12, borderWidth: 1, paddingVertical: 11, marginTop: 12 },
-  ownerBtnText: { fontSize: 13, fontWeight: '600' },
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  heroWrap: {
+    position: 'relative',
+  },
+  heroImage: {
+    width,
+    height: width * 0.78,
+    backgroundColor: '#111',
+  },
+  heroPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  soldOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  soldText: {
+    color: '#ef4444',
+    fontSize: 28,
+    fontWeight: 'bold',
+    letterSpacing: 4,
+  },
+  overlayRow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  overlayBtn: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 20,
+    padding: 8,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 10,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    flex: 1,
+    lineHeight: 28,
+  },
+  price: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+    flexWrap: 'wrap',
+  },
+  catBadge: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  catBadgeText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    textTransform: 'capitalize',
+  },
+  metaText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+  },
+  sectionLabel: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.4)',
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  description: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.75)',
+    lineHeight: 22,
+    marginBottom: 4,
+  },
+  sellerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 4,
+  },
+  sellerAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  sellerAvatarFallback: {
+    backgroundColor: '#1a1a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sellerName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  sellerMeta: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+    marginTop: 2,
+  },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#4f46e5',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginTop: 14,
+  },
+  primaryBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+});
+
+// Sell Modal Styles
+const sell = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a1a',
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  cancelText: {
+    color: '#818cf8',
+    fontSize: 15,
+  },
+  postText: {
+    color: '#818cf8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  body: {
+    padding: 16,
+    gap: 14,
+    paddingBottom: 60,
+  },
+
+  // Image picker
+  imagePicker: {
+    width: '100%',
+    height: 200,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#222',
+    position: 'relative',
+  },
+  imagePreview: {
+    width: '100%',
+    height: '100%',
+  },
+  imageChangeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  imageChangeText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  imageEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  imageEmptyText: {
+    color: '#444',
+    fontSize: 13,
+  },
+
+  // Inputs
+  input: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#222',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: '#fff',
+    fontSize: 15,
+  },
+  textArea: {
+    minHeight: 90,
+    textAlignVertical: 'top',
+  },
+
+  sectionLabel: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: -2,
+  },
+
+  // Chips (category)
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chipActive: {
+    backgroundColor: 'rgba(99,102,241,0.18)',
+    borderColor: '#4f46e5',
+  },
+  chipEmoji: {
+    fontSize: 14,
+  },
+  chipLabel: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '500',
+  },
+  chipLabelActive: {
+    color: '#818cf8',
+    fontWeight: '700',
+  },
+
+  // Condition chips
+  condChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  condChipText: {
+    color: '#666',
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
 });

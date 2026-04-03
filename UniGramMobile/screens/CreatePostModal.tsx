@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet,
-  TextInput, Image, ScrollView, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Alert, FlatList, Dimensions,
+  KeyboardAvoidingView, Platform, Alert, FlatList, Dimensions, DeviceEventEmitter,
+  ScrollView,
+  TextInput,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Audio } from 'expo-av';
+import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createPost } from '../services/posts';
 import { createStory } from '../services/stories';
@@ -22,7 +25,7 @@ interface Props {
   visible: boolean;
   userId: string;
   onClose: () => void;
-  onPosted?: () => void;
+  onPosted?: (optimisticPost?: any) => void;
   initialType?: PostType;
 }
 
@@ -55,7 +58,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const [musicSearching, setMusicSearching] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState('');
   const [playingTrackId, setPlayingTrackId] = useState<number | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const [previewTrack, setPreviewTrack] = useState<any>(null);
+  const player = useAudioPlayer(previewTrack?.previewUrl ?? '');
   const [posting, setPosting] = useState(false);
   const [selectedMediaIdx, setSelectedMediaIdx] = useState(0);
   const [activeMention, setActiveMention] = useState('');
@@ -83,42 +87,35 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   // Location is detected only when user taps the location field
 
-  // Stop any playing preview and unload the sound
-  const stopPreview = async () => {
-    if (soundRef.current) {
-      try { await soundRef.current.stopAsync(); } catch {}
-      try { await soundRef.current.unloadAsync(); } catch {}
-      soundRef.current = null;
-    }
+  // Stop any playing preview
+  const stopPreview = () => {
+    player.pause();
     setPlayingTrackId(null);
+    setPreviewTrack(null);
   };
 
   // Play/pause a 30-sec iTunes preview for the given track
-  const togglePreview = async (item: any) => {
+  const togglePreview = (item: any) => {
     if (playingTrackId === item.trackId) {
-      await stopPreview();
+      if (player.playing) {
+        player.pause();
+      } else {
+        player.play();
+      }
       return;
     }
-    await stopPreview();
-    if (!item.previewUrl) return;
-    try {
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: item.previewUrl },
-        { shouldPlay: true }
-      );
-      soundRef.current = sound;
-      setPlayingTrackId(item.trackId);
-      sound.setOnPlaybackStatusUpdate((status: any) => {
-        if (status.isLoaded && status.didJustFinish) {
-          soundRef.current = null;
-          setPlayingTrackId(null);
-        }
-      });
-    } catch {
-      setPlayingTrackId(null);
-    }
+    
+    setPreviewTrack(item);
+    setPlayingTrackId(item.trackId);
+    // useAudioPlayer will load the new URL automatically when previewTrack changes
+    // We just need to trigger play after a short delay or handle it in an effect
   };
+
+  useEffect(() => {
+    if (previewTrack && player) {
+      player.play();
+    }
+  }, [previewTrack, player]);
 
   // Stop preview whenever picker closes
   useEffect(() => {
@@ -254,7 +251,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   const removeTag = (username: string) => setTaggedUsers(prev => prev.filter(u => u !== username));
 
-  const handlePost = async () => {
+  const handlePost = () => {
     if (postType === 'thread' && !caption.trim()) {
       Alert.alert('Empty post', 'Write something first.');
       return;
@@ -263,32 +260,51 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       Alert.alert('No media', `Please select ${postType === 'reel' ? 'a video' : 'an image'}.`);
       return;
     }
-    setPosting(true);
-    try {
-      const fullCaption = [caption.trim(), hashtags.trim()].filter(Boolean).join('\n\n');
 
-      if (postType === 'story') {
-        await createStory(userId, mediaAssets[0].uri, fullCaption || undefined);
-      } else if (postType === 'reel') {
-        await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined);
-      } else {
-        const primaryAsset = mediaAssets[0];
-        const isVideoFromAsset = primaryAsset?.type === 'video' || ['mp4', 'mov', 'avi', 'webm'].includes(primaryAsset?.uri.split('.').pop()?.toLowerCase() ?? '');
-        const type = postType === 'thread' ? 'thread' : isVideoFromAsset ? 'video' : 'image';
-        await createPost(userId, fullCaption, type, primaryAsset?.uri ?? undefined, {
-          location: location || undefined,
-          song: song || undefined,
-          taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
-          mimeType: primaryAsset?.mimeType,
-        });
+    const fullCaption = [caption.trim(), hashtags.trim()].filter(Boolean).join('\n\n');
+    const primaryAsset = mediaAssets[0];
+    const isVideoFromAsset = primaryAsset?.type === 'video' || ['mp4', 'mov', 'avi', 'webm'].includes(primaryAsset?.uri.split('.').pop()?.toLowerCase() ?? '');
+    const type = postType === 'thread' ? 'thread' : isVideoFromAsset ? 'video' : 'image';
+
+    // Fire and forget upload process
+    const uploadTask = async () => {
+      try {
+        if (postType === 'story') {
+          await createStory(userId, mediaAssets[0].uri, fullCaption || undefined);
+        } else if (postType === 'reel') {
+          await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined);
+        } else {
+          await createPost(userId, fullCaption, type, primaryAsset?.uri ?? undefined, {
+            location: location || undefined,
+            song: song || undefined,
+            taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
+            mimeType: primaryAsset?.mimeType,
+          });
+        }
+      } catch (e: any) {
+        Alert.alert('Upload Failed', 'Your post could not be uploaded.');
       }
-      reset();
-      onPosted?.();
-      onClose();
-    } catch (e: any) {
-      Alert.alert('Failed to post', e.message ?? 'Something went wrong.');
-      setPosting(false);
-    }
+    };
+
+    const optPost = {
+      id: 'temp-' + Date.now(),
+      user_id: userId,
+      caption: fullCaption,
+      type: type,
+      media_url: primaryAsset?.uri, // Local URI
+      created_at: new Date().toISOString(),
+      likes_count: 0,
+      comments_count: 0,
+      profiles: { username: 'Posting...', avatar_url: null }
+    };
+
+    // Optimistic payload (to render in feed immediately)
+    DeviceEventEmitter.emit('new_post', optPost);
+    onPosted?.(optPost);
+
+    uploadTask();
+    reset();
+    onClose();
   };
 
   const typeOptions: Array<{ type: PostType; icon: string; label: string; sub: string; color: string }> = [
@@ -607,9 +623,9 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             >
                               <Ionicons
-                                name={isPlaying ? 'pause-circle' : 'play-circle-outline'}
+                                name={playingTrackId === item.trackId && player.playing ? 'pause-circle' : 'play-circle-outline'}
                                 size={24}
-                                color={isPlaying ? '#f43f5e' : 'rgba(255,255,255,0.45)'}
+                                color={playingTrackId === item.trackId && player.playing ? '#f43f5e' : 'rgba(255,255,255,0.45)'}
                               />
                             </TouchableOpacity>
                           )}

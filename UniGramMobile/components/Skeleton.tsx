@@ -104,3 +104,43 @@ export const MessagesSkeleton: React.FC = () => (
     ))}
   </View>
 );
+
+export const CommentsSkeleton: React.FC = () => (
+  <View style={{ padding: 14, gap: 16 }}>
+    {[1, 2, 3, 4].map(i => (
+      <View key={i} style={{ flexDirection: 'row', gap: 10 }}>
+        <Skeleton width={32} height={32} borderRadius={16} />
+        <View style={{ flex: 1, gap: 6 }}>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <Skeleton width={60} height={10} />
+            <Skeleton width={30} height={8} />
+          </View>
+          <Skeleton width={'90%' as any} height={12} />
+          <Skeleton width={'40%' as any} height={12} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
+
+export const ProfileHeaderSkeleton: React.FC = () => (
+  <View>
+    <Skeleton height={120} borderRadius={0} />
+    <View style={{ paddingHorizontal: 14, marginTop: -44 }}>
+      <Skeleton width={90} height={90} borderRadius={45} style={{ borderWidth: 4, borderColor: '#000' }} />
+      <View style={{ marginTop: 12, gap: 8 }}>
+        <Skeleton width={'40%' as any} height={18} />
+        <Skeleton width={'25%' as any} height={12} />
+        <View style={{ marginTop: 8, gap: 6 }}>
+          <Skeleton width={'85%' as any} height={13} />
+          <Skeleton width={'60%' as any} height={13} />
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 20, marginTop: 20 }}>
+        <Skeleton width={60} height={30} borderRadius={15} />
+        <Skeleton width={60} height={30} borderRadius={15} />
+        <Skeleton width={60} height={30} borderRadius={15} />
+      </View>
+    </View>
+  </View>
+);

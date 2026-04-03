@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { CommentsSkeleton } from './Skeleton';
 import { getPostComments, addPostComment, deletePostComment } from '../services/posts';
 import { getReelComments, addReelComment } from '../services/reels';
 
@@ -48,17 +49,28 @@ export const CommentSheet: React.FC<Props> = ({
     if (!text.trim() || sending) return;
     const t = text.trim();
     setText('');
-    setSending(true);
+    
+    // Optimistic update
+    const tempId = 'temp-' + Date.now();
+    const tempComment = {
+      id: tempId,
+      text: t,
+      user_id: currentUserId,
+      created_at: new Date().toISOString(),
+      profiles: { username: 'Sending...', avatar_url: null },
+    };
+    setComments(prev => [...prev, tempComment]);
+    onCountChange?.(1);
+
     try {
       const newComment = targetType === 'post'
         ? await addPostComment(targetId, currentUserId, t)
         : await addReelComment(targetId, currentUserId, t);
-      setComments(prev => [...prev, newComment]);
-      onCountChange?.(1);
+      setComments(prev => prev.map(c => c.id === tempId ? newComment : c));
     } catch (e) {
+      setComments(prev => prev.filter(c => c.id !== tempId));
+      onCountChange?.(-1);
       setText(t);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -94,9 +106,7 @@ export const CommentSheet: React.FC<Props> = ({
           </View>
 
           {loading ? (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
-              <ActivityIndicator color="#818cf8" />
-            </View>
+            <CommentsSkeleton />
           ) : (
             <FlatList
               data={comments}
