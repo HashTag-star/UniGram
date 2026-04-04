@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { updateProfile } from '../services/profiles';
+import { searchMajors } from '../constants/majors';
 
 interface Props {
   visible: boolean;
@@ -22,6 +23,9 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
   const [editPronouns, setEditPronouns] = useState('');
   const [editWebsite, setEditWebsite] = useState('');
   const [editMajor, setEditMajor] = useState('');
+  const [majorQuery, setMajorQuery] = useState('');
+  const [majorResults, setMajorResults] = useState<string[]>([]);
+  const [showMajorList, setShowMajorList] = useState(false);
   const [editYear, setEditYear] = useState('');
   const [editUniversity, setEditUniversity] = useState('');
   const [uniQuery, setUniQuery] = useState('');
@@ -37,6 +41,7 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
       setEditPronouns(profile.pronouns ?? '');
       setEditWebsite(profile.website ?? '');
       setEditMajor(profile.major ?? '');
+      setMajorQuery(profile.major ?? '');
       setEditYear(profile.year ?? '');
       setEditUniversity(profile.university ?? '');
       setUniQuery(profile.university ?? '');
@@ -70,6 +75,20 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
     setUniQuery(name);
     setUniResults([]);
     setShowUniList(false);
+  };
+
+  const handleMajorType = (text: string) => {
+    setMajorQuery(text);
+    setEditMajor(text);
+    setShowMajorList(true);
+    setMajorResults(searchMajors(text));
+  };
+
+  const selectMajor = (name: string) => {
+    setEditMajor(name);
+    setMajorQuery(name);
+    setMajorResults([]);
+    setShowMajorList(false);
   };
 
   const handleSave = async () => {
@@ -106,7 +125,8 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={[styles.container, { paddingTop: insets.top || 16 }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose}>
@@ -127,7 +147,6 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
             { label: 'Bio', value: editBio, onChange: setEditBio, placeholder: 'Write a bio...', multi: true },
             { label: 'Pronouns', value: editPronouns, onChange: setEditPronouns, placeholder: 'e.g. they/them' },
             { label: 'Website', value: editWebsite, onChange: setEditWebsite, placeholder: 'https://...', keyboard: 'url' as any },
-            { label: 'Major', value: editMajor, onChange: setEditMajor, placeholder: 'Your major' },
             { label: 'Year', value: editYear, onChange: setEditYear, placeholder: 'e.g. Senior, Graduate' },
           ].map(({ label, value, onChange, placeholder, multi, keyboard }) => (
             <View key={label} style={styles.field}>
@@ -144,6 +163,42 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
               />
             </View>
           ))}
+
+          {/* Major with autocomplete */}
+          <View style={styles.field}>
+            <Text style={styles.label}>Major</Text>
+            <TextInput
+              style={styles.input}
+              value={majorQuery}
+              onChangeText={handleMajorType}
+              placeholder="Search your major..."
+              placeholderTextColor="rgba(255,255,255,0.25)"
+              onFocus={() => { setShowMajorList(true); setMajorResults(searchMajors(majorQuery)); }}
+              autoCapitalize="words"
+            />
+            {showMajorList && majorResults.length > 0 && (
+              <View style={styles.uniDropdown}>
+                <FlatList
+                  data={majorResults}
+                  keyExtractor={(item, i) => `${item}-${i}`}
+                  style={{ maxHeight: 180 }}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.uniRow} onPress={() => selectMajor(item)}>
+                      <Text style={styles.uniRowText} numberOfLines={1}>{item}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
+            {showMajorList && majorQuery.length > 0 && majorResults.length === 0 && (
+              <View style={styles.uniDropdown}>
+                <TouchableOpacity style={styles.uniRow} onPress={() => selectMajor(majorQuery)}>
+                  <Text style={[styles.uniRowText, { color: '#818cf8' }]}>Use "{majorQuery}"</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
 
           {/* University with search */}
           <View style={styles.field}>

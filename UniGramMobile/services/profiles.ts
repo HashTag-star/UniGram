@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { SocialSync } from './social_sync';
 import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 
@@ -120,6 +121,7 @@ export async function followUser(followerId: string, followingId: string) {
     .from('follows')
     .insert({ follower_id: followerId, following_id: followingId });
   if (error) throw error;
+  SocialSync.emit('FOLLOW_CHANGE', { targetId: followingId, isActive: true });
 }
 
 export async function unfollowUser(followerId: string, followingId: string) {
@@ -131,4 +133,13 @@ export async function unfollowUser(followerId: string, followingId: string) {
     .eq('follower_id', followerId)
     .eq('following_id', followingId);
   if (error) throw error;
+  SocialSync.emit('FOLLOW_CHANGE', { targetId: followingId, isActive: false });
+}
+
+export async function updateActiveStatus(userId: string) {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('id', userId);
+  if (error) console.error('Error updating active status', error);
 }

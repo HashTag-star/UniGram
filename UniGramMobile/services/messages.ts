@@ -91,8 +91,10 @@ export async function sendMessage(
   conversationId: string,
   senderId: string,
   text: string,
-  type: 'text' | 'image' | 'gif' = 'text',
+  type: 'text' | 'image' | 'gif' | 'audio' | 'share' = 'text',
   mediaUrl?: string,
+  replyToId?: string,
+  duration?: number,
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
@@ -105,18 +107,14 @@ export async function sendMessage(
       text,
       type,
       media_url: mediaUrl ?? null,
+      reply_to_message_id: replyToId ?? null,
+      duration: duration ?? null,
     })
     .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
     .single();
   if (error) throw error;
 
-  // Update conversation's last_message snapshot
-  const preview = type === 'text' ? (text.slice(0, 100) || '') : type === 'image' ? '📷 Photo' : '🎬 GIF';
-  await supabase
-    .from('conversations')
-    .update({ last_message: preview, last_message_at: data.created_at })
-    .eq('id', conversationId);
-
+  // The conversation last_message is now updated via DB trigger for consistency.
   return data;
 }
 
@@ -124,12 +122,43 @@ export async function sendImageMessage(
   conversationId: string,
   senderId: string,
   imageUri: string,
+  replyToId?: string,
 ) {
   const ext = imageUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${senderId}/${Date.now()}.${ext}`;
   const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
   const publicUrl = await uploadFile('message-media', path, imageUri, mimeType);
-  return sendMessage(conversationId, senderId, '', 'image', publicUrl);
+  return sendMessage(conversationId, senderId, '', 'image', publicUrl, replyToId);
+}
+
+export async function sendVoiceMessage(
+  conversationId: string,
+  senderId: string,
+  audioUri: string,
+  duration: number,
+  replyToId?: string,
+) {
+  const path = `${senderId}/${Date.now()}.m4a`;
+  const publicUrl = await uploadFile('message-media', path, audioUri, 'audio/m4a');
+  return sendMessage(conversationId, senderId, '', 'audio', publicUrl, replyToId, duration);
+}
+
+export async function unsendMessage(messageId: string, userId: string) {
+  const { error } = await supabase
+    .from('messages')
+    .update({ is_deleted: true, text: 'Message unsent', media_url: null, type: 'text' })
+    .eq('id', messageId)
+    .eq('sender_id', userId);
+  if (error) throw error;
+}
+
+export async function sendSharedContent(
+  conversationId: string,
+  senderId: string,
+  content: { type: 'post' | 'reel' | 'profile'; id: string; previewUrl?: string; title?: string },
+) {
+  const text = JSON.stringify(content);
+  return sendMessage(conversationId, senderId, text, 'share', content.previewUrl);
 }
 
 export async function markMessagesRead(conversationId: string, userId: string) {
@@ -180,24 +209,32 @@ export async function getReactions(messageIds: string[]) {
 export function subscribeToMessages(
   conversationId: string,
   onMessage: (msg: any) => void,
+  onUpdate: (msg: any) => void,
 ): RealtimeChannel {
   return supabase
     .channel(`messages:${conversationId}`)
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*', // Listen to INSERT, UPDATE, DELETE
         schema: 'public',
         table: 'messages',
         filter: `conversation_id=eq.${conversationId}`,
       },
       async (payload) => {
+        const messageId = (payload.new as any)?.id || (payload.old as any)?.id;
+        if (!messageId) return;
         const { data } = await supabase
           .from('messages')
           .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
-          .eq('id', payload.new.id)
+          .eq('id', messageId)
           .single();
-        if (data) onMessage(data);
+        if (!data) return;
+        if (payload.eventType === 'INSERT') {
+          onMessage(data);
+        } else {
+          onUpdate(data);
+        }
       },
     )
     .subscribe();

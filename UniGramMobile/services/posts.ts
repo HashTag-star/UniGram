@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { SocialSync } from './social_sync';
 import { uploadFile } from './upload';
 
 export async function getFeedPosts(limit = 20, offset = 0) {
@@ -93,9 +94,8 @@ export async function likePost(postId: string, userId: string) {
   if (error && error.code !== '23505') throw error; // ignore duplicate
   try {
     await supabase.rpc('increment_post_likes', { p_post_id: postId });
-  } catch (e) {
-    // fallback - count stays via DB trigger
-  }
+  } catch (e) {}
+  SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: true });
 }
 
 export async function unlikePost(postId: string, userId: string) {
@@ -107,6 +107,7 @@ export async function unlikePost(postId: string, userId: string) {
     .eq('post_id', postId)
     .eq('user_id', userId);
   if (error) throw error;
+  SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: false });
 }
 
 export async function savePost(postId: string, userId: string) {

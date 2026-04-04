@@ -17,6 +17,7 @@ import { getUserReels } from '../services/reels';
 import { FeedPost } from './FeedScreen';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
+import { useSocialFollow } from '../hooks/useSocialSync';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -48,7 +49,7 @@ export const ProfileScreen: React.FC<Props> = ({
   const [savedPosts, setSavedPosts] = useState<any[]>([]);
   const [followers, setFollowers] = useState<any[]>([]);
   const [following, setFollowing] = useState<any[]>([]);
-  const [isFollowingUser, setIsFollowingUser] = useState(false);
+  const [isFollowingUser, setIsFollowingUser] = useSocialFollow(propUserId ?? '', false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'tagged' | 'saved' | 'threads'>('posts');

@@ -15,12 +15,14 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
+import { ShareSheet } from '../components/ShareSheet';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
+import { useSocialLike } from '../hooks/useSocialSync';
 
 const { width } = Dimensions.get('window');
 
@@ -693,12 +695,12 @@ export const FeedPost: React.FC<{
   onCommentCountChange?: (postId: string, delta: number) => void;
   onDeleted?: (postId: string) => void;
 }> = React.memo(({ post, currentUserId, isLiked: initLiked, isSaved: initSaved, isActive, isMuted, setIsMuted, onCommentCountChange, onDeleted }) => {
-  const [liked, setLiked] = useState(initLiked);
-  const [likes, setLikes] = useState(post.likes_count ?? 0);
+  const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(post.id, 'POST', initLiked ?? false, post.likes_count ?? 0);
   const [saved, setSaved] = useState(initSaved);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
   const [showComments, setShowComments] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [songLoading, setSongLoading] = useState(false);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
@@ -924,7 +926,10 @@ export const FeedPost: React.FC<{
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
             <Ionicons name="chatbubble-outline" size={24} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn}>
+          <TouchableOpacity 
+            style={styles.actionBtn}
+            onPress={() => setShowShare(true)}
+          >
             <Ionicons name="paper-plane-outline" size={23} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -963,6 +968,17 @@ export const FeedPost: React.FC<{
         currentUserId={currentUserId}
         onClose={() => setShowComments(false)}
         onCountChange={handleCommentChange}
+      />
+
+      <ShareSheet
+        visible={showShare}
+        onClose={() => setShowShare(false)}
+        content={{
+          type: 'post',
+          id: post.id,
+          thumbnail: post.media_url,
+          username: profile?.username,
+        }}
       />
     </View>
   );

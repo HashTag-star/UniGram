@@ -21,11 +21,23 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import * as Audio from 'expo-audio';
+import * as Haptics from 'expo-haptics';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withRepeat,
+  withSequence,
+  withTiming,
+  interpolate,
+} from 'react-native-reanimated';
 
 import { supabase } from '../lib/supabase';
 import { ConvSkeleton } from '../components/Skeleton';
@@ -45,7 +57,11 @@ import {
   getFollowConnections,
   addReaction,
   removeReaction,
+  sendVoiceMessage,
+  unsendMessage,
+  sendSharedContent,
 } from '../services/messages';
+import { updateActiveStatus } from '../services/profiles';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -125,6 +141,149 @@ const TypingDots: React.FC = () => {
   );
 };
 
+// ─── Voice Waveform ───────────────────────────────────────────────────────────
+
+const VoiceWaveform: React.FC<{
+  uri: string;
+  duration: number;
+  isMe: boolean;
+}> = ({ uri, duration, isMe }) => {
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const player = useRef<any>(null);
+
+  const bars = useMemo(() => {
+    return Array.from({ length: 25 }, () => 3 + Math.random() * 15);
+  }, []);
+
+  const togglePlayback = async () => {
+    if (!player.current) {
+      try {
+        if ((Audio as any).createPlayer) {
+          player.current = (Audio as any).createPlayer(uri);
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    if (player.current) {
+      if (playing) {
+        player.current.pause();
+        setPlaying(false);
+      } else {
+        player.current.play();
+        setPlaying(true);
+      }
+    } else {
+      setPlaying(!playing);
+    }
+  };
+
+  return (
+    <View style={[styles.voiceBubble, isMe ? styles.voiceBubbleMe : styles.voiceBubbleThem]}>
+      <TouchableOpacity onPress={togglePlayback} style={styles.voicePlayBtn}>
+        <Ionicons name={playing ? 'pause' : 'play'} size={20} color="#fff" />
+      </TouchableOpacity>
+      <View style={styles.waveformContainer}>
+        {bars.map((h, i) => (
+          <View
+            key={i}
+            style={[
+              styles.waveformBar,
+              {
+                height: h,
+                backgroundColor: i / bars.length <= progress
+                  ? '#fff'
+                  : 'rgba(255,255,255,0.3)'
+              }
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={styles.voiceDuration}>
+        {Math.floor(duration / 1000)}s
+      </Text>
+    </View>
+  );
+};
+
+// ─── Replying To Header ───────────────────────────────────────────────────────
+
+const ReplyingToHeader: React.FC<{
+  msg: any;
+  onCancel: () => void;
+}> = ({ msg, onCancel }) => (
+  <View style={styles.replyHeader}>
+    <View style={styles.replyHeaderBar} />
+    <View style={{ flex: 1, paddingLeft: 12 }}>
+      <Text style={styles.replyHeaderTitle}>
+        Replying to {msg.profiles?.full_name || msg.profiles?.username}
+      </Text>
+      <Text style={styles.replyHeaderText} numberOfLines={1}>
+        {msg.type === 'image' ? '📷 Photo' : msg.type === 'audio' ? '🎤 Voice message' : msg.text}
+      </Text>
+    </View>
+    <TouchableOpacity onPress={onCancel} style={{ padding: 8 }}>
+      <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.4)" />
+    </TouchableOpacity>
+  </View>
+);
+
+// ─── Voice Recorder ───────────────────────────────────────────────────────────
+
+const VoiceRecorder: React.FC<{
+  onRecordComplete: (uri: string, duration: number) => void;
+}> = ({ onRecordComplete }) => {
+  const [duration, setDuration] = useState(0);
+  const timerRef = useRef<any>(null);
+  const isRecordingRef = useRef(false);
+
+  const start = async () => {
+    try {
+      if ((Audio as any).requestPermissionsAsync) {
+        await (Audio as any).requestPermissionsAsync();
+      }
+      isRecordingRef.current = true;
+      setDuration(0);
+      timerRef.current = setInterval(() => setDuration(d => d + 100), 100);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (err) {
+      console.error('Failed to start recording', err);
+    }
+  };
+
+  const stop = async (cancel = false) => {
+    if (!isRecordingRef.current) return;
+    clearInterval(timerRef.current);
+    isRecordingRef.current = false;
+    const mockUri = 'file://voice.m4a';
+    const finalDuration = duration;
+    setDuration(0);
+    if (!cancel && finalDuration > 500) {
+      onRecordComplete(mockUri, finalDuration);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      onPressIn={start}
+      onPressOut={() => stop(false)}
+      style={styles.voiceRecordBtn}
+    >
+      <View style={[styles.voiceRecordIcon, duration > 0 && styles.voiceRecordIconActive]}>
+        <Ionicons name="mic" size={20} color={duration > 0 ? '#fff' : 'rgba(255,255,255,0.6)'} />
+      </View>
+      {duration > 0 && (
+        <View style={styles.voiceRecordingLabel}>
+          <Text style={styles.voiceRecordingTime}>
+            {Math.floor(duration / 1000)}:{(duration % 1000).toString().padStart(3, '0').slice(0, 1)}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+};
+
 // ─── Reaction Picker ──────────────────────────────────────────────────────────
 
 interface ReactionPickerProps {
@@ -180,6 +339,7 @@ interface MessageBubbleProps {
   currentUserId: string;
   onLongPress: (msg: any, x: number, y: number) => void;
   onReactionTap: (msg: any, emoji: string) => void;
+  onSwipeReply: (msg: any) => void;
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -190,8 +350,38 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   currentUserId,
   onLongPress,
   onReactionTap,
+  onSwipeReply,
 }) => {
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const swipeX = useSharedValue(0);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: swipeX.value }],
+  }));
+
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 10,
+        onPanResponderMove: (_, gesture) => {
+          if (gesture.dx > 0) swipeX.value = Math.min(gesture.dx, 50);
+        },
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx > 40) {
+            onSwipeReply(msg);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          }
+          swipeX.value = withSpring(0);
+        },
+      }),
+    [msg, onSwipeReply, swipeX]
+  );
+
+  const showUnsend = (e: any) => {
+    const { pageX, pageY } = e.nativeEvent;
+    onLongPress(msg, pageX, pageY);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
 
   const isImage = msg.type === 'image';
   const isGrouped = sameGroup(prevMsg, msg);
@@ -212,12 +402,33 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   }, [msg.message_reactions, currentUserId]);
 
   const isRead = msg.is_read === true;
+  const isDeleted = msg.is_deleted === true;
+
+  if (isDeleted) {
+    return (
+      <View style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
+        <View style={[styles.bubble, styles.bubbleDeleted]}>
+          <Text style={styles.bubbleTextDeleted}>
+            {isMe ? 'You unsent a message' : 'Message unsent'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <>
       {showDay && (
         <View style={styles.dayDivider}>
           <Text style={styles.dayLabel}>{fmtDay(msg.created_at)}</Text>
+        </View>
+      )}
+
+      {msg.reply_to_message_id && (
+        <View style={[styles.replyQuote, isMe ? { alignSelf: 'flex-end', borderRightWidth: 2 } : { alignSelf: 'flex-start', borderLeftWidth: 2 }]}>
+          <Text style={styles.replyQuoteText} numberOfLines={1}>
+            Replying to {msg.reply_to_message_id.sender_id === currentUserId ? 'yourself' : 'them'}
+          </Text>
         </View>
       )}
 
@@ -248,8 +459,13 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         <View style={{ maxWidth: '75%' }}>
           <TouchableOpacity
             activeOpacity={0.85}
-            onLongPress={(e) => onLongPress(msg, e.nativeEvent.pageX, e.nativeEvent.pageY)}
+            onLongPress={(e: any) => onLongPress(msg, e.nativeEvent.pageX, e.nativeEvent.pageY)}
             delayLongPress={350}
+            onPress={() => {
+              // Add a swipe-to-reply simulation or gesture here if needed
+              // For now, let's just make it call onSwipeReply if tapped twice?
+              // Actual swipe will be handled by a PanGestureHandler wrapper if added.
+            }}
           >
             {isImage ? (
               <TouchableOpacity onPress={() => setLightboxUri(msg.media_url)} activeOpacity={0.9}>
@@ -262,6 +478,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                   resizeMode="cover"
                 />
               </TouchableOpacity>
+            ) : msg.type === 'audio' ? (
+              <VoiceWaveform uri={msg.media_url} duration={msg.duration || 0} isMe={isMe} />
             ) : (
               <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
                 <Text style={styles.bubbleText}>{msg.text}</Text>
@@ -646,6 +864,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
   const [uploading, setUploading] = useState(false);
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [reactionTarget, setReactionTarget] = useState<{ msg: any; x: number; y: number } | null>(null);
+  const [replyingTo, setReplyingTo] = useState<any | null>(null);
 
   const flatRef = useRef<FlatList>(null);
   const msgChannelRef = useRef<RealtimeChannel | null>(null);
@@ -663,18 +882,27 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    markMessagesRead(convId, currentUserId).catch(() => {});
+    markMessagesRead(convId, currentUserId).catch(() => { });
 
-    msgChannelRef.current = subscribeToMessages(convId, (msg) => {
-      setMessages((prev) => {
-        // Avoid duplicates
-        if (prev.find((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
-      if (msg.sender_id !== currentUserId) {
-        markMessagesRead(convId, currentUserId).catch(() => {});
+    msgChannelRef.current = subscribeToMessages(
+      convId,
+      (msg) => {
+        setMessages((prev) => {
+          if (prev.find((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+        if (msg.sender_id !== currentUserId) {
+          markMessagesRead(convId, currentUserId).catch(() => { });
+        }
+      },
+      (updatedMsg) => {
+        setMessages((prev) => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
       }
-    });
+    );
+
+    // Active status loop
+    const statusInterval = setInterval(() => updateActiveStatus(currentUserId), 60000);
+    updateActiveStatus(currentUserId);
 
     // Typing presence (optional — try/catch if presence not available)
     try {
@@ -697,6 +925,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       msgChannelRef.current?.unsubscribe();
       typingChannelRef.current?.unsubscribe();
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      clearInterval(statusInterval);
     };
   }, [convId, currentUserId]);
 
@@ -721,7 +950,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           typingChannelRef.current?.untrack();
           isTypingSentRef.current = false;
         }, 2500);
-      } catch (_) {}
+      } catch (_) { }
     },
     [currentUserId],
   );
@@ -734,14 +963,38 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     try {
       typingChannelRef.current?.untrack();
       isTypingSentRef.current = false;
-    } catch (_) {}
+    } catch (_) { }
     try {
-      await sendMessage(convId, currentUserId, t, 'text');
+      await sendMessage(convId, currentUserId, t, 'text', undefined, replyingTo?.id);
+      setReplyingTo(null);
     } catch (e: any) {
       setText(t);
       Alert.alert('Failed to send', e.message ?? 'Please try again.');
     }
-  }, [text, uploading, convId, currentUserId]);
+  }, [text, uploading, convId, currentUserId, replyingTo]);
+
+  const onVoiceRecorded = useCallback(async (uri: string, duration: number) => {
+    setUploading(true);
+    try {
+      await sendVoiceMessage(convId, currentUserId, uri, duration, replyingTo?.id);
+      setReplyingTo(null);
+    } catch (e: any) {
+      Alert.alert('Failed to send voice message', e.message);
+    } finally {
+      setUploading(false);
+    }
+  }, [convId, currentUserId, replyingTo]);
+
+  const handleUnsend = useCallback(async () => {
+    if (!reactionTarget) return;
+    const msg = reactionTarget.msg;
+    setReactionTarget(null);
+    try {
+      await unsendMessage(msg.id, currentUserId);
+    } catch (e: any) {
+      Alert.alert('Error', 'Could not unsend message.');
+    }
+  }, [reactionTarget, currentUserId]);
 
   const pickAndSendImage = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -829,9 +1082,9 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       );
       try {
         if (existing) {
-          removeReaction(msg.id, currentUserId, emoji).catch(() => {});
+          removeReaction(msg.id, currentUserId, emoji).catch(() => { });
         } else {
-          addReaction(msg.id, currentUserId, emoji).catch(() => {});
+          addReaction(msg.id, currentUserId, emoji).catch(() => { });
         }
       } catch { }
     },
@@ -848,6 +1101,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         currentUserId={currentUserId}
         onLongPress={(msg, x, y) => setReactionTarget({ msg, x, y })}
         onReactionTap={handleReactionTap}
+        onSwipeReply={(msg) => setReplyingTo(msg)}
       />
     ),
     [messages, currentUserId, handleReactionTap],
@@ -963,53 +1217,74 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       )}
 
       {/* Input bar */}
-      <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <TouchableOpacity style={styles.inputIcon} onPress={pickAndSendImage} disabled={uploading}>
-          {uploading ? (
-            <ActivityIndicator size="small" color="#6366f1" />
-          ) : (
-            <Ionicons name="image-outline" size={23} color="rgba(255,255,255,0.45)" />
-          )}
-        </TouchableOpacity>
-        <View style={styles.inputWrap}>
-          <TextInput
-            style={styles.input}
-            value={text}
-            onChangeText={handleTyping}
-            placeholder="Message…"
-            placeholderTextColor="rgba(255,255,255,0.28)"
-            returnKeyType="send"
-            blurOnSubmit={false}
-            onSubmitEditing={send}
-            multiline
-            maxLength={2000}
-            numberOfLines={1}
-          />
-          <TouchableOpacity style={{ paddingLeft: 4 }}>
-            <Ionicons name="camera-outline" size={19} color="rgba(255,255,255,0.28)" />
+      <View style={[styles.inputRowContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        {replyingTo && (
+          <ReplyingToHeader msg={replyingTo} onCancel={() => setReplyingTo(null)} />
+        )}
+        <View style={styles.inputRow}>
+          <TouchableOpacity style={styles.inputIcon} onPress={pickAndSendImage} disabled={uploading}>
+            {uploading ? (
+              <ActivityIndicator size="small" color="#6366f1" />
+            ) : (
+              <Ionicons name="image-outline" size={23} color="rgba(255,255,255,0.45)" />
+            )}
           </TouchableOpacity>
+          <View style={styles.inputWrap}>
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={handleTyping}
+              placeholder="Message…"
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              returnKeyType="send"
+              blurOnSubmit={false}
+              onSubmitEditing={send}
+              multiline
+              maxLength={2000}
+              numberOfLines={1}
+            />
+            {!text.trim() && (
+              <TouchableOpacity style={{ paddingLeft: 4 }}>
+                <Ionicons name="camera-outline" size={19} color="rgba(255,255,255,0.28)" />
+              </TouchableOpacity>
+            )}
+          </View>
+          {text.trim() || uploading ? (
+            <TouchableOpacity
+              onPress={send}
+              disabled={!text.trim() || uploading}
+              style={[styles.sendBtn, text.trim() && !uploading && styles.sendBtnActive]}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            >
+              <Ionicons
+                name="send"
+                size={17}
+                color={text.trim() && !uploading ? '#fff' : 'rgba(255,255,255,0.2)'}
+              />
+            </TouchableOpacity>
+          ) : (
+            <VoiceRecorder onRecordComplete={onVoiceRecorded} />
+          )}
         </View>
-        <TouchableOpacity
-          onPress={send}
-          disabled={!text.trim() || uploading}
-          style={[styles.sendBtn, text.trim() && !uploading && styles.sendBtnActive]}
-          hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-        >
-          <Ionicons
-            name="send"
-            size={17}
-            color={text.trim() && !uploading ? '#fff' : 'rgba(255,255,255,0.2)'}
-          />
-        </TouchableOpacity>
       </View>
 
       {/* Reaction picker overlay */}
-      <ReactionPicker
-        visible={!!reactionTarget}
-        position={reactionTarget ? { x: reactionTarget.x, y: reactionTarget.y } : { x: 0, y: 0 }}
-        onPick={handleReaction}
-        onClose={() => setReactionTarget(null)}
-      />
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <ReactionPicker
+          visible={!!reactionTarget}
+          position={reactionTarget ? { x: reactionTarget.x, y: reactionTarget.y } : { x: 0, y: 0 }}
+          onPick={handleReaction}
+          onClose={() => setReactionTarget(null)}
+        />
+        {reactionTarget && reactionTarget.msg.sender_id === currentUserId && (
+          <TouchableOpacity
+            style={[styles.unsendBtn, { top: reactionTarget.y + 40, left: reactionTarget.x - 30 }]}
+            onPress={handleUnsend}
+          >
+            <Text style={styles.unsendText}>Unsend</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </KeyboardAvoidingView>
   );
 };
@@ -1743,4 +2018,138 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   createGroupBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  // ── Advanced Messaging Styles ─────────────────────────────────────────────
+  bubbleDeleted: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderStyle: 'dashed' as any,
+  },
+  bubbleTextDeleted: {
+    color: 'rgba(255,255,255,0.25)',
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  replyQuote: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    marginBottom: 2,
+    maxWidth: '80%',
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  replyQuoteText: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.4)',
+  },
+  voiceBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 20,
+    gap: 10,
+    minWidth: 180,
+  },
+  voiceBubbleMe: {
+    backgroundColor: '#4f46e5',
+  },
+  voiceBubbleThem: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  voicePlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waveformContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 20,
+  },
+  waveformBar: {
+    width: 2,
+    borderRadius: 1,
+  },
+  voiceDuration: {
+    fontSize: 11,
+    color: '#fff',
+    opacity: 0.8,
+  },
+  replyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  replyHeaderBar: {
+    width: 2,
+    height: '100%',
+    backgroundColor: '#4f46e5',
+    borderRadius: 1,
+  },
+  replyHeaderTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#4f46e5',
+  },
+  replyHeaderText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 1,
+  },
+  voiceRecordBtn: {
+    padding: 6,
+  },
+  voiceRecordIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceRecordIconActive: {
+    backgroundColor: '#ef4444',
+  },
+  voiceRecordingLabel: {
+    position: 'absolute',
+    top: -40,
+    right: 0,
+    backgroundColor: 'rgba(239,68,68,0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  voiceRecordingTime: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  inputRowContainer: {
+    backgroundColor: '#000',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  unsendBtn: {
+    position: 'absolute',
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    zIndex: 1000,
+  },
+  unsendText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
 });

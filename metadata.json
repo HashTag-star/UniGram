@@ -1,8 +1,0 @@
-{
-  "name": "UniGram - University Social Network",
-  "description": "A high-fidelity university-exclusive social media platform combining Instagram-style social features with academic collaboration, campus marketplaces, and course-based communities.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
-}

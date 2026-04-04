@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Animated, ActivityIndicator, Alert, FlatList,
+  ScrollView, Animated, ActivityIndicator, Alert,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { updateProfileSetup } from '../../../services/onboarding';
 import { uploadAvatar } from '../../../services/profiles';
 import { useHaptics } from '../../../hooks/useHaptics';
+import { searchMajors } from '../../../constants/majors';
 
 const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'PhD', 'Faculty'];
 
@@ -23,6 +25,9 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
   const [uniSearching, setUniSearching] = useState(false);
   const [showUniList, setShowUniList] = useState(false);
   const [major, setMajor] = useState('');
+  const [majorQuery, setMajorQuery] = useState('');
+  const [majorResults, setMajorResults] = useState<string[]>([]);
+  const [showMajorList, setShowMajorList] = useState(false);
   const [year, setYear] = useState('');
   const [bio, setBio] = useState('');
   const [pronouns, setPronouns] = useState('');
@@ -67,6 +72,21 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
     light();
   };
 
+  const handleMajorType = (text: string) => {
+    setMajorQuery(text);
+    setMajor(text);
+    setShowMajorList(true);
+    setMajorResults(searchMajors(text));
+  };
+
+  const selectMajor = (name: string) => {
+    setMajor(name);
+    setMajorQuery(name);
+    setMajorResults([]);
+    setShowMajorList(false);
+    light();
+  };
+
   const handleNext = async () => {
     await light();
     if (!university.trim() || !major.trim()) {
@@ -93,148 +113,183 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="rgba(255,255,255,0.6)" />
-        </TouchableOpacity>
-        <View>
-          <Text style={styles.stepLabel}>Step 2 of 5</Text>
-          <Text style={styles.title}>Set up your profile</Text>
-        </View>
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
-        <Text style={styles.subtitle}>Tell your campus community about yourself.</Text>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={22} color="rgba(255,255,255,0.6)" />
+          </TouchableOpacity>
+          <View>
+            <Text style={styles.stepLabel}>Step 2 of 5</Text>
+            <Text style={styles.title}>Set up your profile</Text>
+          </View>
+        </View>
 
-        {/* University search */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>University *</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="school-outline" size={16} color="#555" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              value={uniQuery}
-              onChangeText={handleUniType}
-              placeholder="Search your university..."
-              placeholderTextColor="#444"
-              onFocus={() => setShowUniList(true)}
-              returnKeyType="search"
-            />
-            {uniSearching
-              ? <ActivityIndicator size="small" color="#4f46e5" />
-              : university
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.subtitle}>Tell your campus community about yourself.</Text>
+
+          {/* University search */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>University *</Text>
+            <View style={styles.inputWrap}>
+              <Ionicons name="school-outline" size={16} color="#555" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                value={uniQuery}
+                onChangeText={handleUniType}
+                placeholder="Search your university..."
+                placeholderTextColor="#444"
+                onFocus={() => setShowUniList(true)}
+                returnKeyType="search"
+              />
+              {uniSearching
+                ? <ActivityIndicator size="small" color="#4f46e5" />
+                : university
+                  ? <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
+                  : null
+              }
+            </View>
+            {showUniList && uniResults.length > 0 && (
+              <View style={styles.uniDropdown}>
+                <ScrollView
+                  style={{ maxHeight: 200 }}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
+                  {uniResults.map((item, i) => (
+                    <TouchableOpacity key={`${item}-${i}`} style={styles.uniRow} onPress={() => selectUniversity(item)}>
+                      <Ionicons name="school-outline" size={14} color="#555" />
+                      <Text style={styles.uniRowText} numberOfLines={1}>{item}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+            {showUniList && !uniSearching && uniQuery.length >= 3 && uniResults.length === 0 && (
+              <View style={styles.uniDropdown}>
+                <TouchableOpacity
+                  style={styles.uniRow}
+                  onPress={() => { selectUniversity(uniQuery); }}
+                >
+                  <Ionicons name="add-circle-outline" size={14} color="#4f46e5" />
+                  <Text style={[styles.uniRowText, { color: '#818cf8' }]}>Use "{uniQuery}"</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {/* Major */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Major *</Text>
+            <View style={styles.inputWrap}>
+              <Ionicons name="book-outline" size={16} color="#555" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                value={majorQuery}
+                onChangeText={handleMajorType}
+                placeholder="Search your major..."
+                placeholderTextColor="#444"
+                onFocus={() => { setShowMajorList(true); setMajorResults(searchMajors(majorQuery)); }}
+              />
+              {major && majorQuery === major
                 ? <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
                 : null
-            }
+              }
+            </View>
+            {showMajorList && majorResults.length > 0 && (
+              <View style={styles.uniDropdown}>
+                <ScrollView
+                  style={{ maxHeight: 200 }}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
+                  {majorResults.map((item, i) => (
+                    <TouchableOpacity key={`${item}-${i}`} style={styles.uniRow} onPress={() => selectMajor(item)}>
+                      <Ionicons name="book-outline" size={14} color="#555" />
+                      <Text style={styles.uniRowText} numberOfLines={1}>{item}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+            {showMajorList && majorQuery.length > 0 && majorResults.length === 0 && (
+              <View style={styles.uniDropdown}>
+                <TouchableOpacity style={styles.uniRow} onPress={() => selectMajor(majorQuery)}>
+                  <Ionicons name="add-circle-outline" size={14} color="#4f46e5" />
+                  <Text style={[styles.uniRowText, { color: '#818cf8' }]}>Use "{majorQuery}"</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-          {showUniList && uniResults.length > 0 && (
-            <View style={styles.uniDropdown}>
-              <FlatList
-                data={uniResults}
-                keyExtractor={(item, i) => `${item}-${i}`}
-                style={{ maxHeight: 200 }}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={styles.uniRow} onPress={() => selectUniversity(item)}>
-                    <Ionicons name="school-outline" size={14} color="#555" />
-                    <Text style={styles.uniRowText} numberOfLines={1}>{item}</Text>
-                  </TouchableOpacity>
-                )}
+
+          {/* Pronouns */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Pronouns</Text>
+            <View style={styles.inputWrap}>
+              <Ionicons name="person-outline" size={16} color="#555" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                value={pronouns}
+                onChangeText={setPronouns}
+                placeholder="e.g. he/him, she/her, they/them"
+                placeholderTextColor="#444"
               />
             </View>
-          )}
-          {showUniList && !uniSearching && uniQuery.length >= 3 && uniResults.length === 0 && (
-            <View style={styles.uniDropdown}>
-              <TouchableOpacity
-                style={styles.uniRow}
-                onPress={() => { selectUniversity(uniQuery); }}
-              >
-                <Ionicons name="add-circle-outline" size={14} color="#4f46e5" />
-                <Text style={[styles.uniRowText, { color: '#818cf8' }]}>Use "{uniQuery}"</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Major */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Major *</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="book-outline" size={16} color="#555" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              value={major}
-              onChangeText={setMajor}
-              placeholder="e.g. Computer Science"
-              placeholderTextColor="#444"
-            />
           </View>
-        </View>
 
-        {/* Pronouns */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Pronouns</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="person-outline" size={16} color="#555" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              value={pronouns}
-              onChangeText={setPronouns}
-              placeholder="e.g. he/him, she/her, they/them"
-              placeholderTextColor="#444"
-            />
+          {/* Year */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Year</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {YEARS.map(y => (
+                <TouchableOpacity
+                  key={y}
+                  style={[styles.chip, year === y && styles.chipActive]}
+                  onPress={() => { setYear(y); light(); }}
+                >
+                  <Text style={[styles.chipText, year === y && styles.chipTextActive]}>{y}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-        </View>
 
-        {/* Year */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Year</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {YEARS.map(y => (
-              <TouchableOpacity
-                key={y}
-                style={[styles.chip, year === y && styles.chipActive]}
-                onPress={() => { setYear(y); light(); }}
-              >
-                <Text style={[styles.chipText, year === y && styles.chipTextActive]}>{y}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+          {/* Bio */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Bio</Text>
+            <TextInput
+              style={[styles.input, styles.bioInput]}
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Tell people about yourself..."
+              placeholderTextColor="#444"
+              multiline
+              maxLength={150}
+            />
+            <Text style={styles.charCount}>{bio.length}/150</Text>
+          </View>
+        </ScrollView>
 
-        {/* Bio */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Bio</Text>
-          <TextInput
-            style={[styles.input, styles.bioInput]}
-            value={bio}
-            onChangeText={setBio}
-            placeholder="Tell people about yourself..."
-            placeholderTextColor="#444"
-            multiline
-            maxLength={150}
-          />
-          <Text style={styles.charCount}>{bio.length}/150</Text>
+        <View style={styles.bottom}>
+          <TouchableOpacity style={styles.btn} onPress={handleNext} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Text style={styles.btnText}>Continue</Text>
+                <Ionicons name="arrow-forward" size={18} color="#fff" />
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onNext}>
+            <Text style={styles.skipText}>Skip for now</Text>
+          </TouchableOpacity>
         </View>
-      </ScrollView>
-
-      <View style={styles.bottom}>
-        <TouchableOpacity style={styles.btn} onPress={handleNext} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : (
-            <>
-              <Text style={styles.btnText}>Continue</Text>
-              <Ionicons name="arrow-forward" size={18} color="#fff" />
-            </>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onNext}>
-          <Text style={styles.skipText}>Skip for now</Text>
-        </TouchableOpacity>
-      </View>
+      </KeyboardAvoidingView>
     </Animated.View>
   );
 }

@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { SocialSync } from './social_sync';
 import { uploadFile } from './upload';
 
 export async function getReels(limit = 20, offset = 0) {
@@ -54,6 +55,7 @@ export async function createReel(
 export async function likeReel(reelId: string, userId: string) {
   const { error } = await supabase.from('reel_likes').insert({ reel_id: reelId, user_id: userId });
   if (error && error.code !== '23505') throw error;
+  SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reelId, isActive: true });
 }
 
 export async function unlikeReel(reelId: string, userId: string) {
@@ -63,6 +65,7 @@ export async function unlikeReel(reelId: string, userId: string) {
     .eq('reel_id', reelId)
     .eq('user_id', userId);
   if (error) throw error;
+  SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reelId, isActive: false });
 }
 
 export async function getLikedReelIds(userId: string): Promise<string[]> {

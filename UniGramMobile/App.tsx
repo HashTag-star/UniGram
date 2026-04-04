@@ -2,8 +2,9 @@ import './global.css';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  StatusBar, Animated,
+  StatusBar, Animated, ActivityIndicator,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { FeedScreen } from './screens/FeedScreen';
@@ -22,6 +23,7 @@ import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
+import { ThemeProvider } from './context/ThemeContext';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
@@ -37,37 +39,163 @@ const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> 
 
 // ─── Splash screen ────────────────────────────────────────────────────────────
 const LoadingScreen: React.FC = () => {
-  const scale = useRef(new Animated.Value(0.8)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const logoScale = useRef(new Animated.Value(0)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+
+  const ring1Scale = useRef(new Animated.Value(0.4)).current;
+  const ring1Opacity = useRef(new Animated.Value(0)).current;
+  const ring2Scale = useRef(new Animated.Value(0.4)).current;
+  const ring2Opacity = useRef(new Animated.Value(0)).current;
+  const ring3Scale = useRef(new Animated.Value(0.4)).current;
+  const ring3Opacity = useRef(new Animated.Value(0)).current;
+
+  const textSlide = useRef(new Animated.Value(16)).current;
+  const textOpacity = useRef(new Animated.Value(0)).current;
+  const indicatorOpacity = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
-    Animated.parallel([
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+    // Entrance sequence
+    Animated.sequence([
+      // Logo springs in
+      Animated.parallel([
+        Animated.spring(logoScale, { toValue: 1, tension: 65, friction: 7, useNativeDriver: true }),
+        Animated.timing(logoOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+      ]),
+      // Rings cascade out
+      Animated.stagger(80, [
+        Animated.parallel([
+          Animated.spring(ring1Scale, { toValue: 1, tension: 50, friction: 9, useNativeDriver: true }),
+          Animated.timing(ring1Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.spring(ring2Scale, { toValue: 1, tension: 45, friction: 9, useNativeDriver: true }),
+          Animated.timing(ring2Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.spring(ring3Scale, { toValue: 1, tension: 40, friction: 9, useNativeDriver: true }),
+          Animated.timing(ring3Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]),
+      ]),
+      // Text slides up
+      Animated.parallel([
+        Animated.spring(textSlide, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 320, useNativeDriver: true }),
+      ]),
+      // Spinner
+      Animated.timing(indicatorOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
     ]).start();
+
+    // Outer ring breathes independently after entrance
+    setTimeout(() => {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(ring3Scale, { toValue: 1.12, duration: 1600, useNativeDriver: true }),
+          Animated.timing(ring3Scale, { toValue: 1, duration: 1600, useNativeDriver: true }),
+        ])
+      ).start();
+    }, 900);
   }, []);
+
   return (
     <View style={loadStyles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
-      <Animated.View style={[loadStyles.logoWrap, { transform: [{ scale }], opacity }]}>
-        <View style={loadStyles.logo}>
+      <StatusBar barStyle="light-content" backgroundColor="#05050a" />
+
+      {/* Background gradient */}
+      <LinearGradient
+        colors={['rgba(99,102,241,0.22)', 'rgba(67,56,202,0.1)', 'transparent']}
+        style={[loadStyles.bgGrad, { pointerEvents: 'none' }]}
+      />
+      <LinearGradient
+        colors={['transparent', 'rgba(79,70,229,0.1)', 'rgba(109,40,217,0.06)']}
+        style={[loadStyles.bgGradBottom, { pointerEvents: 'none' }]}
+      />
+
+      {/* Concentric rings */}
+      <Animated.View style={[loadStyles.ring, loadStyles.ring3, {
+        transform: [{ scale: ring3Scale }],
+        opacity: ring3Opacity,
+      }]} />
+      <Animated.View style={[loadStyles.ring, loadStyles.ring2, {
+        transform: [{ scale: ring2Scale }],
+        opacity: ring2Opacity,
+      }]} />
+      <Animated.View style={[loadStyles.ring, loadStyles.ring1, {
+        transform: [{ scale: ring1Scale }],
+        opacity: ring1Opacity,
+      }]} />
+
+      {/* Logo */}
+      <Animated.View style={[loadStyles.logoWrap, {
+        transform: [{ scale: logoScale }],
+        opacity: logoOpacity,
+      }]}>
+        <LinearGradient
+          colors={['#818cf8', '#6366f1', '#4338ca']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={loadStyles.logo}
+        >
           <Text style={loadStyles.logoText}>U</Text>
-        </View>
+        </LinearGradient>
       </Animated.View>
-      <Animated.View style={{ opacity, alignItems: 'center' }}>
+
+      {/* Wordmark + tagline */}
+      <Animated.View style={[loadStyles.textWrap, {
+        opacity: textOpacity,
+        transform: [{ translateY: textSlide }],
+      }]}>
         <Text style={loadStyles.appName}>UniGram</Text>
         <Text style={loadStyles.tagline}>Your campus, connected.</Text>
+      </Animated.View>
+
+      {/* Spinner */}
+      <Animated.View style={[loadStyles.indicatorWrap, { opacity: indicatorOpacity }]}>
+        <ActivityIndicator size="small" color="rgba(129,140,248,0.55)" />
       </Animated.View>
     </View>
   );
 };
 
 const loadStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  logoWrap: { marginBottom: 20 },
-  logo: { width: 80, height: 80, borderRadius: 22, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', shadowColor: '#4f46e5', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20, elevation: 20 },
-  logoText: { fontSize: 48, fontWeight: '900', color: '#fff' },
-  appName: { fontSize: 28, fontWeight: 'bold', color: '#fff', textAlign: 'center' },
-  tagline: { fontSize: 14, color: 'rgba(255,255,255,0.4)', textAlign: 'center', marginTop: 4 },
+  container: { flex: 1, backgroundColor: '#05050a', alignItems: 'center', justifyContent: 'center' },
+
+  bgGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: '55%' },
+  bgGradBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '35%' },
+
+  ring: {
+    position: 'absolute',
+    borderRadius: 9999,
+    borderWidth: 1,
+  },
+  ring1: {
+    width: 148, height: 148,
+    borderColor: 'rgba(99,102,241,0.4)',
+    backgroundColor: 'rgba(79,70,229,0.07)',
+  },
+  ring2: {
+    width: 210, height: 210,
+    borderColor: 'rgba(99,102,241,0.2)',
+    backgroundColor: 'transparent',
+  },
+  ring3: {
+    width: 284, height: 284,
+    borderColor: 'rgba(99,102,241,0.1)',
+    backgroundColor: 'transparent',
+  },
+
+  logoWrap: { zIndex: 10, marginBottom: 28 },
+  logo: {
+    width: 90, height: 90, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.75, shadowRadius: 30, elevation: 30,
+  },
+  logoText: { fontSize: 54, fontWeight: '900', color: '#fff', letterSpacing: -2 },
+
+  textWrap: { alignItems: 'center', gap: 7 },
+  appName: { fontSize: 32, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
+  tagline: { fontSize: 13, color: 'rgba(255,255,255,0.32)', letterSpacing: 0.3 },
+
+  indicatorWrap: { position: 'absolute', bottom: 64 },
 });
 
 // ─── App shell ────────────────────────────────────────────────────────────────
@@ -292,9 +420,11 @@ function AppShell() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AppShell />
-    </SafeAreaProvider>
+    <ThemeProvider>
+      <SafeAreaProvider>
+        <AppShell />
+      </SafeAreaProvider>
+    </ThemeProvider>
   );
 }
 

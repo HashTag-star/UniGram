@@ -1,0 +1,27 @@
+● You already have a preview profile configured for APK builds. You just need EAS
+   CLI and an Expo account. Run these steps in order:
+
+  1. Install EAS CLI
+  npm install -g eas-cli
+
+  2. Log in to Expo (create a free account at expo.dev if you don't have one)    
+  eas login
+
+  3. Link your project to Expo (one-time setup)
+  eas build:configure
+
+  4. Build the APK (runs in the cloud, takes ~5-10 min)
+  eas build --platform android --profile preview
+
+  When the build finishes, EAS gives you a download link for the .apk file.      
+  Transfer it to your Android device and install it (you'll need to allow        
+  "Install from unknown sources" in your Android settings).
+
+  ---
+  Note: The preview profile in your eas.json already has "buildType": "apk" and  
+  "distribution": "internal" set correctly — you don't need to change anything.  
+
+  If you want to build completely offline/locally without EAS (requires Android  
+  Studio + SDK installed), the alternative is:
+  npx expo run:android --variant release
+  But EAS cloud build is much easier and doesn't require Android Studio.

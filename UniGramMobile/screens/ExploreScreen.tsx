@@ -13,6 +13,7 @@ import { getTrendingHashtags } from '../services/algorithm';
 import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
+import { useSocialFollow } from '../hooks/useSocialSync';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 3) / 3;
@@ -167,7 +168,18 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   // ── Sub-components ────────────────────────────────────────────────────────
   const UserRow = useCallback(({ user }: { user: any }) => {
     const isSelf = user.id === currentUserId;
-    const following = followingIds.has(user.id);
+    const [following, setFollowing] = useSocialFollow(user.id, followingIds.has(user.id));
+
+    const handleToggle = async () => {
+      const next = !following;
+      setFollowing(next);
+      selection();
+      try {
+        if (next) await followUser(currentUserId, user.id);
+        else await unfollowUser(currentUserId, user.id);
+      } catch { setFollowing(!next); }
+    };
+
     return (
       <TouchableOpacity style={styles.userRow} onPress={() => onUserPress?.(user)} activeOpacity={0.75}>
         {user.avatar_url
@@ -188,7 +200,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         {!isSelf && (
           <TouchableOpacity
             style={[styles.followBtn, following && styles.followBtnActive]}
-            onPress={() => toggleFollow(user.id)}
+            onPress={handleToggle}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={[styles.followBtnText, following && { color: '#818cf8' }]}>
@@ -198,7 +210,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         )}
       </TouchableOpacity>
     );
-  }, [currentUserId, followingIds, toggleFollow, onUserPress]);
+  }, [currentUserId, followingIds, onUserPress, selection]);
 
   // ── Search result tabs ────────────────────────────────────────────────────
   const SEARCH_TABS: Array<{ id: SearchTab; label: string }> = [
@@ -423,7 +435,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.trendTag}>{tag}</Text>
-                      <Text style={styles.trendMeta}>{count.toLocaleString()} posts</Text>
+                      <Text style={styles.trendMeta}>{(count ?? 0).toLocaleString()} posts</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.2)" />
                   </TouchableOpacity>

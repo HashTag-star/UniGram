@@ -143,7 +143,7 @@ const OverviewTab: React.FC<{
       const [p, m, v] = await Promise.all([
         supabase.from('posts').select('*, profiles(username)').order('created_at', { ascending: false }).limit(5),
         supabase.from('market_items').select('*, profiles(username)').order('created_at', { ascending: false }).limit(5),
-        supabase.from('verification_requests').select('*, profiles(username, avatar_url)').eq('status', 'pending').limit(5)
+        supabase.from('verification_requests').select('*, profiles(username, avatar_url)').eq('status', 'pending').order('submitted_at', { ascending: false }).limit(5)
       ]);
       setRecentPosts(((p.data || []).map(x => ({ ...x, profiles: Array.isArray(x.profiles) ? x.profiles[0] : x.profiles })) as any));
       setRecentMarket(((m.data || []).map(x => ({ ...x, profiles: Array.isArray(x.profiles) ? x.profiles[0] : x.profiles })) as any));
@@ -179,7 +179,7 @@ const OverviewTab: React.FC<{
             <View style={[styles.statIconWrap, { backgroundColor: card.color + '22' }]}>
               <Ionicons name={card.icon as any} size={22} color={card.color} />
             </View>
-            <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
+            <Text style={styles.statValue}>{(card.value ?? 0).toLocaleString()}</Text>
             <Text style={styles.statLabel}>{card.label}</Text>
           </View>
         ))}
