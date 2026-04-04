@@ -387,6 +387,7 @@ export const ProfileScreen: React.FC<Props> = ({
                   post={post} 
                   currentUserId={currentUserId} 
                   isLiked={likedIds.has(post.id)}
+                  isActive={isVisible}
                   isMuted={true}
                   setIsMuted={() => {}}
                 />
@@ -421,6 +422,7 @@ export const ProfileScreen: React.FC<Props> = ({
                   post={focusedPost} 
                   currentUserId={currentUserId} 
                   isLiked={likedIds.has(focusedPost.id)}
+                  isActive={isVisible}
                   isMuted={false}
                   setIsMuted={() => {}}
                 />

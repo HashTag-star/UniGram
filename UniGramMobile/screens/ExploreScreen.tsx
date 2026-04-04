@@ -476,6 +476,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
           isSaved={savedIds.has(detailPost.id)}
           isMuted={isMuted}
           setIsMuted={setIsMuted}
+          isVisible={isVisible}
           onClose={() => setDetailPost(null)}
         />
       )}
@@ -491,8 +492,9 @@ const PostDetailModal: React.FC<{
   isSaved: boolean;
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
+  isVisible?: boolean;
   onClose: () => void;
-}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, onClose }) => (
+}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, isVisible, onClose }) => (
   <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
     <View style={{ flex: 1, backgroundColor: '#0a0a0a' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
@@ -509,7 +511,7 @@ const PostDetailModal: React.FC<{
           currentUserId={currentUserId}
           isLiked={isLiked}
           isSaved={isSaved}
-          isActive={true}
+          isActive={isVisible}
           isMuted={isMuted}
           setIsMuted={setIsMuted}
         />

@@ -704,11 +704,14 @@ export const FeedPost: React.FC<{
   const [songLoading, setSongLoading] = useState(false);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
-  const songPlayer = useAudioPlayer(songPreviewUrl ?? '');
+  const songPlayer = useAudioPlayer(songPreviewUrl ?? '', {
+    loop: true,
+  });
 
   useEffect(() => {
     if (songPlayer) {
       songPlayer.muted = isMuted;
+      songPlayer.loop = true; // redundancy to ensure it stays looped
     }
   }, [songPlayer, isMuted]);
 
@@ -1244,7 +1247,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
             currentUserId={currentUserId}
             isLiked={likedIds.has(item.id)}
             isSaved={savedIds.has(item.id)}
-            isActive={activePostId === item.id}
+            isActive={isVisible && activePostId === item.id}
             isMuted={isMuted}
             setIsMuted={setIsMuted}
             onCommentCountChange={handleCommentCountChange}

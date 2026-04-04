@@ -45,7 +45,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#4338ca"
+        "backgroundColor": "#05050a"
       },
       "package": "com.unigram.mobile",
       "edgeToEdgeEnabled": true,

@@ -6,7 +6,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
+import * as Font from 'expo-font';
 import { FeedScreen } from './screens/FeedScreen';
 import { ExploreScreen } from './screens/ExploreScreen';
 import { ReelsScreen } from './screens/ReelsScreen';
@@ -215,6 +216,11 @@ function AppShell() {
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const notifChannelRef = useRef<any>(null);
+  const showNotifsRef = useRef(false);
+
+  useEffect(() => {
+    showNotifsRef.current = showNotifications;
+  }, [showNotifications]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -250,13 +256,9 @@ function AppShell() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
         () => {
-          // Use functional updater on setActiveTab to read current value without stale closure
-          setActiveTab(currentTab => {
-            if (currentTab !== 'notifications') {
-              setNotifBadge(b => b + 1);
-            }
-            return currentTab; // don't change tab
-          });
+          if (!showNotifsRef.current) {
+            setNotifBadge(b => b + 1);
+          }
         }
       )
       .subscribe();
@@ -303,6 +305,10 @@ function AppShell() {
   // Helper: style that hides a screen without unmounting it
   const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
 
+  // Each screen should only be "active" (playing media) if its tab is active
+  // AND no full-screen overlays (like Notifications) are currently visible.
+  const isMainVisible = !showNotifications;
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#000" translucent={false} />
@@ -310,11 +316,11 @@ function AppShell() {
       {/* ── Screens container (flex:1 → tab bar is pushed to bottom) ── */}
       <View style={styles.screensContainer}>
         {/* Each screen uses absoluteFill inside the container so they overlap
-            each other but NOT the tab bar. display:none hides without unmounting. */}
+            each other but NOT the tab bar. display:none hides without unmount. */}
         <View style={[styles.screen, hide('feed')]}>
           <FeedScreen
             refreshKey={feedRefreshKey}
-            isVisible={activeTab === 'feed'}
+            isVisible={activeTab === 'feed' && isMainVisible}
             onCreateStory={() => setShowCreate(true)}
             onNotifPress={openNotifications}
             notifBadge={notifBadge}
@@ -322,16 +328,16 @@ function AppShell() {
         </View>
         <View style={[styles.screen, hide('explore')]}>
           <ExploreScreen
-            isVisible={activeTab === 'explore'}
+            isVisible={activeTab === 'explore' && isMainVisible}
             onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
           />
         </View>
         <View style={[styles.screen, hide('market')]}>
-          <MarketScreen isVisible={activeTab === 'market'} onMessagePress={navigateToMessages} />
+          <MarketScreen isVisible={activeTab === 'market' && isMainVisible} onMessagePress={navigateToMessages} />
         </View>
         <View style={[styles.screen, hide('messages')]}>
           <MessagesScreen
-            isVisible={activeTab === 'messages'}
+            isVisible={activeTab === 'messages' && isMainVisible}
             onChatStateChange={setHideTabBar}
             initialConv={initialConv}
           />
@@ -340,7 +346,7 @@ function AppShell() {
           <ProfileScreen
             userId={viewedUserId ?? session.user.id}
             isOwn={!viewedUserId}
-            isVisible={activeTab === 'profile'}
+            isVisible={activeTab === 'profile' && isMainVisible}
             onVerifyPress={() => setShowVerification(true)}
             onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
             onMessagePress={navigateToMessages}
@@ -419,6 +425,15 @@ function AppShell() {
 }
 
 export default function App() {
+  const [fontsLoaded] = Font.useFonts({
+    ...Ionicons.font,
+    ...AntDesign.font,
+    ...MaterialIcons.font,
+    ...FontAwesome.font,
+  });
+
+  if (!fontsLoaded) return <LoadingScreen />;
+
   return (
     <ThemeProvider>
       <SafeAreaProvider>
