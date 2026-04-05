@@ -415,7 +415,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     return (
       <View style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
         <View style={[styles.bubble, styles.bubbleDeleted]}>
-          <Text style={styles.bubbleTextDeleted}>
+          <Text style={[styles.bubbleTextDeleted, { color: colors.textMuted }]}>
             {isMe ? 'You unsent a message' : 'Message unsent'}
           </Text>
         </View>
