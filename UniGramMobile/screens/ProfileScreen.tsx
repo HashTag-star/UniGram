@@ -20,6 +20,7 @@ import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
+import { recordProfileView } from '../services/algorithm';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -109,6 +110,7 @@ export const ProfileScreen: React.FC<Props> = ({
       if (!own) {
         const following = await isFollowing(user.id, targetId);
         setIsFollowingUser(following);
+        recordProfileView(user.id, targetId).catch(() => {});
       }
     } catch (e) {
       console.error('Profile load error', e);

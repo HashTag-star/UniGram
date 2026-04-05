@@ -19,7 +19,10 @@ export async function signUp(email: string, password: string, username: string, 
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { username, full_name: fullName } },
+    options: {
+      data: { username, full_name: fullName },
+      emailRedirectTo: 'unigram://auth-callback',
+    },
   });
   if (error) throw error;
   return data;
@@ -49,7 +52,9 @@ export async function signInWithGoogle() {
 }
 
 export async function sendPasswordReset(email: string) {
-  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+    redirectTo: 'unigram://auth-callback',
+  });
   if (error) throw error;
 }
 

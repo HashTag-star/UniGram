@@ -1071,6 +1071,15 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
       {user.full_name ? (
         <Text style={[feedInjStyles.suggFullName, { color: colors.textMuted }]} numberOfLines={1}>{user.full_name}</Text>
       ) : null}
+      <View style={{ height: 32, alignItems: 'center', justifyContent: 'center' }}>
+        {user.follows_me && !following ? (
+          <Text style={[feedInjStyles.suggMiniText, { color: '#818cf8', fontWeight: '700' }]}>Follows you</Text>
+        ) : user.mutual_friends > 0 ? (
+          <Text style={[feedInjStyles.suggMiniText, { color: colors.textSub }]}>{user.mutual_friends} mutual friends</Text>
+        ) : user.major ? (
+          <Text style={[feedInjStyles.suggMiniText, { color: colors.textSub }]}>{user.major}</Text>
+        ) : null}
+      </View>
       <TouchableOpacity
         style={[feedInjStyles.suggFollowBtn, following && { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border }]}
         onPress={handleFollow}
@@ -1114,7 +1123,8 @@ const feedInjStyles = StyleSheet.create({
   suggAvatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   suggUsername: { fontSize: 13, fontWeight: '700' },
   suggFullName: { fontSize: 12, marginTop: 2 },
-  suggFollowBtn: { marginTop: 10, backgroundColor: '#6366f1', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 6, width: '100%', alignItems: 'center' },
+  suggMiniText: { fontSize: 10, textAlign: 'center' },
+  suggFollowBtn: { marginTop: 4, backgroundColor: '#6366f1', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 6, width: '100%', alignItems: 'center' },
   suggFollowText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 });
 

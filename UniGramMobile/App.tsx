@@ -4,6 +4,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet,
   StatusBar, Animated, ActivityIndicator,
 } from 'react-native';
+import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ import { VerificationScreen } from './screens/VerificationScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
+import ResetPasswordScreen from './screens/auth/ResetPasswordScreen';
 import { OnboardingNavigator } from './screens/onboarding/OnboardingNavigator';
 import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
@@ -217,6 +219,7 @@ function AppShell() {
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const notifChannelRef = useRef<any>(null);
   const showNotifsRef = useRef(false);
 
@@ -231,6 +234,37 @@ function AppShell() {
       setOnboardingDone(null);
     });
     return () => listener.subscription.unsubscribe();
+  }, []);
+
+  // Handle deep links from auth emails (confirmation & password reset)
+  useEffect(() => {
+    const handleUrl = async (url: string) => {
+      if (!url.includes('auth-callback')) return;
+
+      // Tokens arrive in the hash fragment for the implicit flow
+      const hash = url.split('#')[1];
+      if (!hash) return;
+
+      const params: Record<string, string> = {};
+      hash.split('&').forEach(pair => {
+        const [k, v] = pair.split('=');
+        if (k) params[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
+      });
+
+      const { access_token, refresh_token, type } = params;
+      if (!access_token || !refresh_token) return;
+
+      const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (error) return;
+
+      if (type === 'recovery') {
+        setResetPasswordMode(true);
+      }
+    };
+
+    Linking.getInitialURL().then(url => { if (url) handleUrl(url); });
+    const sub = Linking.addEventListener('url', ({ url }) => handleUrl(url));
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -279,6 +313,9 @@ function AppShell() {
   if (!session) {
     if (authScreen === 'signup') return <SignupScreen onNavigateLogin={() => setAuthScreen('login')} />;
     return <LoginScreen onNavigateSignup={() => setAuthScreen('signup')} />;
+  }
+  if (resetPasswordMode) {
+    return <ResetPasswordScreen onDone={() => { setResetPasswordMode(false); supabase.auth.signOut(); }} />;
   }
   if (!onboardingDone) {
     return <OnboardingNavigator userId={session.user.id} onComplete={() => setOnboardingDone(true)} />;

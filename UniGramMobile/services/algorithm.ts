@@ -39,3 +39,11 @@ export async function getTrendingHashtags(limit = 10) {
   if (error) return [];
   return data ?? [];
 }
+export async function recordProfileView(actorId: string, targetId: string) {
+  if (actorId === targetId) return;
+  await supabase.rpc('update_rel_strength', {
+    p_actor: actorId,
+    p_target: targetId,
+    p_delta: 1.0 // 1 pt for a profile view
+  });
+}
