@@ -19,7 +19,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
-import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
+import { getPersonalizedFeed, recordImpression, recordShare } from '../services/algorithm';
 import { getReels } from '../services/reels';
 import { getSuggestedUsers } from '../services/onboarding';
 import { followUser, unfollowUser } from '../services/profiles';
@@ -797,6 +797,7 @@ export const FeedPost: React.FC<{
     try {
       if (next) await likePost(post.id, currentUserId);
       else await unlikePost(post.id, currentUserId);
+      // rel-strength signal handled automatically by trg_algo_post_like trigger
     } catch {
       setLiked(!next);
       setLikes(likes);
@@ -811,6 +812,7 @@ export const FeedPost: React.FC<{
     try {
       if (next) await savePost(post.id, currentUserId);
       else await unsavePost(post.id, currentUserId);
+      // rel-strength signal handled automatically by trg_algo_post_save trigger
     } catch { setSaved(!next); }
   };
 
@@ -938,12 +940,18 @@ export const FeedPost: React.FC<{
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowShare(true)}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => {
+            setShowShare(true);
+            recordShare(post.id, post.user_id, currentUserId).catch(() => {});
+          }}>
             <Ionicons name="repeat-outline" size={26} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionBtn}
-            onPress={() => setShowShare(true)}
+            onPress={() => {
+              setShowShare(true);
+              recordShare(post.id, post.user_id, currentUserId).catch(() => {});
+            }}
           >
             <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
           </TouchableOpacity>

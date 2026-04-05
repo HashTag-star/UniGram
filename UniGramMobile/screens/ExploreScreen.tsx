@@ -8,8 +8,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { FeedPost } from './FeedScreen';
 import { searchUsers, followUser, unfollowUser, getFollowing } from '../services/profiles';
-import { getFeedPosts, searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';
-import { getTrendingHashtags } from '../services/algorithm';
+import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';
+import { getTrendingHashtags, getPersonalizedExplorePosts, getFollowSuggestions } from '../services/algorithm';
 import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
@@ -72,26 +72,21 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
       const uid = data.user.id;
       setCurrentUserId(uid);
 
-      const [posts, liked, saved, follows] = await Promise.all([
-        getFeedPosts(18),
+      const [posts, liked, saved, follows, sugg] = await Promise.all([
+        getPersonalizedExplorePosts(uid, 18, 0),
         getLikedPostIds(uid),
         getSavedPostIds(uid),
         getFollowing(uid),
+        getFollowSuggestions(uid, 10).catch(() => [] as any[]),
       ]);
       setGridPosts(posts);
       setLikedIds(new Set(liked));
       setSavedIds(new Set(saved));
-      setFollowingIds(new Set(follows.map((f: any) => f.id)));
-
-      // suggested users (not already following, not self)
       const followingSet = new Set(follows.map((f: any) => f.id));
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('*')
-        .neq('id', uid)
-        .order('follower_count', { ascending: false })
-        .limit(20);
-      setSuggested((prof ?? []).filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
+      setFollowingIds(followingSet);
+
+      // Filter out already-following users from suggestions
+      setSuggested(sugg.filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
     });
 
     getTrendingHashtags(8).then(tags => {
@@ -213,6 +208,11 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         <Text style={[styles.cardMeta, { color: colors.textMuted }]} numberOfLines={1}>
           {user.full_name}
         </Text>
+        {user.reason ? (
+          <Text style={[styles.cardReason, { color: colors.textMuted }]} numberOfLines={1}>
+            {user.reason}
+          </Text>
+        ) : null}
 
         <TouchableOpacity
           style={[
@@ -657,8 +657,14 @@ const styles = StyleSheet.create({
   },
   cardMeta: {
     fontSize: 11,
-    marginBottom: 12,
+    marginBottom: 4,
     textAlign: 'center',
+  },
+  cardReason: {
+    fontSize: 10,
+    marginBottom: 10,
+    textAlign: 'center',
+    opacity: 0.6,
   },
   cardFollowBtn: {
     width: '100%',
