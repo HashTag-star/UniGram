@@ -20,9 +20,13 @@ import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPo
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
+import { getReels } from '../services/reels';
+import { getSuggestedUsers } from '../services/onboarding';
+import { followUser, unfollowUser } from '../services/profiles';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialLike } from '../hooks/useSocialSync';
+import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
@@ -783,8 +787,10 @@ export const FeedPost: React.FC<{
   const doLike = async (forceLike?: boolean) => {
     const next = forceLike ?? !liked;
     if (liked === next) return;
+    const newCount = likes + (next ? 1 : -1);
     setLiked(next);
-    setLikes((n: number) => next ? n + 1 : n - 1);
+    setLikes(newCount);
+    SocialSync.emit('POST_LIKE_CHANGE', { targetId: post.id, isActive: next, newCount });
     bounceHeart();
     if (next) await medium();
     else await selection();
@@ -793,7 +799,8 @@ export const FeedPost: React.FC<{
       else await unlikePost(post.id, currentUserId);
     } catch {
       setLiked(!next);
-      setLikes((n: number) => next ? n - 1 : n + 1);
+      setLikes(likes);
+      SocialSync.emit('POST_LIKE_CHANGE', { targetId: post.id, isActive: !next, newCount: likes });
     }
   };
 
@@ -931,6 +938,9 @@ export const FeedPost: React.FC<{
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowShare(true)}>
+            <Ionicons name="repeat-outline" size={26} color={colors.text} />
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionBtn}
             onPress={() => setShowShare(true)}
@@ -945,7 +955,9 @@ export const FeedPost: React.FC<{
 
       <View style={styles.postInfo}>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
-          <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
+          {likes > 0 && (
+            <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
+          )}
           {commentCount > 0 && (
             <TouchableOpacity onPress={() => setShowComments(true)}>
               <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>
@@ -989,6 +1001,123 @@ export const FeedPost: React.FC<{
   );
 });
 
+// ─── Reel Strip Row ───────────────────────────────────────────────────────────
+
+const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; colors: any }> = React.memo(({ reels, onSeeAll, colors }) => (
+  <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+    <View style={feedInjStyles.sectionHeader}>
+      <Text style={[feedInjStyles.sectionTitle, { color: colors.text }]}>Reels for you</Text>
+      <TouchableOpacity onPress={onSeeAll}>
+        <Text style={feedInjStyles.seeAll}>See all</Text>
+      </TouchableOpacity>
+    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
+      {reels.map(reel => (
+        <TouchableOpacity key={reel.id} style={feedInjStyles.reelThumb} onPress={onSeeAll} activeOpacity={0.85}>
+          {reel.thumbnail_url
+            ? <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
+            : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name="film-outline" size={28} color="#444" />
+              </View>
+          }
+          <View style={feedInjStyles.reelPlayOverlay}>
+            <Ionicons name="play" size={20} color="#fff" />
+          </View>
+          {reel.profiles?.username && (
+            <View style={feedInjStyles.reelUsernameWrap}>
+              <Text style={feedInjStyles.reelUsername} numberOfLines={1}>@{reel.profiles.username}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  </View>
+));
+
+// ─── Suggestion Row ───────────────────────────────────────────────────────────
+
+const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u: any) => void; colors: any }> = ({ user, currentUserId, onPress, colors }) => {
+  const [following, setFollowing] = useSocialFollow(user.id, false);
+
+  const handleFollow = async () => {
+    const next = !following;
+    setFollowing(next);
+    SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
+    try {
+      if (next) await followUser(currentUserId, user.id);
+      else await unfollowUser(currentUserId, user.id);
+    } catch {
+      setFollowing(!next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      style={[feedInjStyles.suggCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+      onPress={() => onPress?.(user)}
+      activeOpacity={0.85}
+    >
+      {user.avatar_url
+        ? <CachedImage uri={user.avatar_url} style={feedInjStyles.suggAvatar} />
+        : <View style={[feedInjStyles.suggAvatar, feedInjStyles.suggAvatarPlaceholder, { backgroundColor: colors.bg2 }]}>
+            <Ionicons name="person" size={24} color={colors.textMuted} />
+          </View>
+      }
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 8 }}>
+        <Text style={[feedInjStyles.suggUsername, { color: colors.text }]} numberOfLines={1}>@{user.username}</Text>
+        {user.is_verified && <VerifiedBadge type={user.verification_type} size={12} />}
+      </View>
+      {user.full_name ? (
+        <Text style={[feedInjStyles.suggFullName, { color: colors.textMuted }]} numberOfLines={1}>{user.full_name}</Text>
+      ) : null}
+      <TouchableOpacity
+        style={[feedInjStyles.suggFollowBtn, following && { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border }]}
+        onPress={handleFollow}
+        activeOpacity={0.8}
+      >
+        <Text style={[feedInjStyles.suggFollowText, following && { color: colors.text }]}>
+          {following ? 'Following' : 'Follow'}
+        </Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+};
+
+const SuggestionRow: React.FC<{ users: any[]; currentUserId: string; onUserPress?: (u: any) => void; colors: any }> = React.memo(({ users, currentUserId, onUserPress, colors }) => (
+  <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+    <View style={feedInjStyles.sectionHeader}>
+      <Text style={[feedInjStyles.sectionTitle, { color: colors.text }]}>Suggested for you</Text>
+      <TouchableOpacity onPress={() => {}}>
+        <Text style={feedInjStyles.seeAll}>See all</Text>
+      </TouchableOpacity>
+    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10, paddingBottom: 12 }}>
+      {users.map(user => (
+        <SuggestionCard key={user.id} user={user} currentUserId={currentUserId} onPress={onUserPress} colors={colors} />
+      ))}
+    </ScrollView>
+  </View>
+));
+
+const feedInjStyles = StyleSheet.create({
+  section: { borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, paddingTop: 12, marginBottom: 4 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
+  sectionTitle: { fontSize: 15, fontWeight: '700' },
+  seeAll: { fontSize: 13, color: '#6366f1', fontWeight: '600' },
+  reelThumb: { width: 110, height: 170, borderRadius: 10, overflow: 'hidden', position: 'relative' },
+  reelPlayOverlay: { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 4 },
+  reelUsernameWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
+  reelUsername: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  suggCard: { width: 140, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 12, alignItems: 'center', paddingBottom: 10 },
+  suggAvatar: { width: 64, height: 64, borderRadius: 32 },
+  suggAvatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  suggUsername: { fontSize: 13, fontWeight: '700' },
+  suggFullName: { fontSize: 12, marginTop: 2 },
+  suggFollowBtn: { marginTop: 10, backgroundColor: '#6366f1', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 6, width: '100%', alignItems: 'center' },
+  suggFollowText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+});
+
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
 const FEED_PAGE = 12; // posts per page
 const FEED_TTL = 2 * 60 * 1000; // 2 minutes before a background refresh
@@ -999,9 +1128,11 @@ interface FeedScreenProps {
   onCreateStory?: () => void;
   onNotifPress?: () => void;
   notifBadge?: number;
+  onReelPress?: () => void;
+  onUserPress?: (user: any) => void;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0 }) => {
+export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0, onReelPress, onUserPress }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
@@ -1018,6 +1149,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
   const [isMuted, setIsMuted] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [previewReels, setPreviewReels] = useState<any[]>([]);
+  const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
   const pageRef = useRef(0);
   const lastLoadedRef = useRef(0);
   const appStateRef = useRef(AppState.currentState);
@@ -1056,7 +1189,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       setCurrentUserId(user.id);
 
       // Fetch first page + supporting data in parallel
-      const [postsData, storiesData, likedData, savedData, viewedData, prof] = await Promise.all([
+      const [postsData, storiesData, likedData, savedData, viewedData, prof, reelsData, usersData] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
         getLikedPostIds(user.id),
@@ -1065,9 +1198,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
         supabase.from('profiles')
           .select('id, username, full_name, avatar_url, is_verified, verification_type')
           .eq('id', user.id).single().then(r => r.data),
+        getReels(6, 0).catch(() => []),
+        getSuggestedUsers(user.id, 8).catch(() => []),
       ]);
 
       setCurrentProfile(prof);
+      setPreviewReels(reelsData ?? []);
+      setSuggestedUsers(usersData ?? []);
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
@@ -1171,6 +1308,22 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
 
   const onRefresh = () => { setRefreshing(true); load(true); };
 
+  // Inject reel strip (after 3rd post) and suggestion cards (after 8th post)
+  const feedItems = React.useMemo(() => {
+    if (!posts.length) return posts;
+    const items: any[] = [];
+    posts.forEach((p, i) => {
+      items.push(p);
+      if (i === 2 && previewReels.length > 0) {
+        items.push({ id: '__reels_strip__', _type: 'reels_strip', reels: previewReels });
+      }
+      if (i === 7 && suggestedUsers.length > 0) {
+        items.push({ id: '__suggestions__', _type: 'suggestions', users: suggestedUsers });
+      }
+    });
+    return items;
+  }, [posts, previewReels, suggestedUsers]);
+
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1215,7 +1368,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       <BackgroundUploadIndicator />
 
       <FlatList
-        data={loading ? [] : posts}
+        data={loading ? [] : feedItems}
         keyExtractor={p => p.id}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -1244,19 +1397,34 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
             <Text style={{ color: colors.textMuted, marginTop: 12, fontSize: 15 }}>Follow people to see their posts!</Text>
           </View>
         )}
-        renderItem={({ item }) => (
-          <FeedPost
-            post={item}
-            currentUserId={currentUserId}
-            isLiked={likedIds.has(item.id)}
-            isSaved={savedIds.has(item.id)}
-            isActive={isVisible && activePostId === item.id}
-            isMuted={isMuted}
-            setIsMuted={setIsMuted}
-            onCommentCountChange={handleCommentCountChange}
-            onDeleted={handlePostDeleted}
-          />
-        )}
+        renderItem={({ item }) => {
+          if (item._type === 'reels_strip') {
+            return <ReelStripRow reels={item.reels} onSeeAll={onReelPress} colors={colors} />;
+          }
+          if (item._type === 'suggestions') {
+            return (
+              <SuggestionRow
+                users={item.users}
+                currentUserId={currentUserId}
+                onUserPress={onUserPress}
+                colors={colors}
+              />
+            );
+          }
+          return (
+            <FeedPost
+              post={item}
+              currentUserId={currentUserId}
+              isLiked={likedIds.has(item.id)}
+              isSaved={savedIds.has(item.id)}
+              isActive={isVisible && activePostId === item.id}
+              isMuted={isMuted}
+              setIsMuted={setIsMuted}
+              onCommentCountChange={handleCommentCountChange}
+              onDeleted={handlePostDeleted}
+            />
+          );
+        }}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}

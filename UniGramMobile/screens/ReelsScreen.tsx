@@ -10,8 +10,9 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds } from '../services/reels';
-import { followUser, unfollowUser, isFollowing } from '../services/profiles';
+import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
+import { SocialSync } from '../services/social_sync';
 import { supabase } from '../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
@@ -30,10 +31,8 @@ function timeAgo(ts: string) {
   return `${Math.floor(d / 86400)}d`;
 }
 
-/**
- * Sub-component to manage the actual VideoPlayer instance.
- * Conditionally rendered to save resources.
- */
+// ─── Video sub-component ──────────────────────────────────────────────────────
+
 const ReelVideo: React.FC<{
   videoUrl: string;
   isActive: boolean;
@@ -44,17 +43,21 @@ const ReelVideo: React.FC<{
 }> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady }) => {
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
+    p.muted = muted;
     if (isActive && !isPaused) p.play();
   });
 
   useEffect(() => {
     player.muted = muted;
-  }, [muted, player]);
+  }, [muted]);
 
   useEffect(() => {
-    if (isActive && !isPaused) player.play();
-    else player.pause();
-  }, [isActive, isPaused, player]);
+    if (isActive && !isPaused) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, isPaused]);
 
   useEffect(() => {
     const sub = player.addListener('timeUpdate', (event) => {
@@ -76,19 +79,24 @@ const ReelVideo: React.FC<{
   );
 };
 
+// ─── Reel item ────────────────────────────────────────────────────────────────
+
 const ReelItem: React.FC<{
   reel: any;
   currentUserId: string;
   isLiked: boolean;
+  isFollowingUser: boolean;
   isActive: boolean;
   isAdjacent?: boolean;
-}> = ({ reel, currentUserId, isLiked: initLiked, isActive, isAdjacent }) => {
+  muted: boolean;
+  onMuteToggle: () => void;
+  itemHeight: number;
+}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
-  const [following, setFollowing] = useSocialFollow(reel.profiles?.id, false);
+  const [following, setFollowing] = useSocialFollow(reel.profiles?.id ?? '', initFollowing);
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  const [muted, setMuted] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -98,32 +106,47 @@ const ReelItem: React.FC<{
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
+  const seekBarRef = useRef<View>(null);
   const profile = reel.profiles;
+
+  // Reset pause state when reel becomes inactive
+  useEffect(() => {
+    if (!isActive) setIsPaused(false);
+  }, [isActive]);
 
   const toggleLike = async () => {
     const next = !liked;
+    const newCount = likes + (next ? 1 : -1);
     setLiked(next);
-    setLikes((n: number) => next ? n + 1 : n - 1);
+    setLikes(newCount);
+    SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reel.id, isActive: next, newCount });
     try {
       if (next) await likeReel(reel.id, currentUserId);
       else await unlikeReel(reel.id, currentUserId);
-    } catch { setLiked(!next); setLikes((n: number) => next ? n - 1 : n + 1); }
+    } catch {
+      setLiked(!next);
+      setLikes(likes);
+      SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reel.id, isActive: !next, newCount: likes });
+    }
   };
 
   const toggleFollow = async () => {
     if (!currentUserId || !profile?.id) return;
     const next = !following;
     setFollowing(next);
+    SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: next });
     try {
       if (next) await followUser(currentUserId, profile.id);
       else await unfollowUser(currentUserId, profile.id);
-    } catch { setFollowing(!next); }
+    } catch {
+      setFollowing(!next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: !next });
+    }
   };
 
   const showHeartAnim = () => {
     heartScale.setValue(0);
     heartOpacity.setValue(0);
-    
     Animated.parallel([
       Animated.sequence([
         Animated.spring(heartScale, { toValue: 1.2, friction: 3, tension: 40, useNativeDriver: true }),
@@ -138,21 +161,22 @@ const ReelItem: React.FC<{
     ]).start();
   };
 
+  const scheduleHideControls = () => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    hideControlsTimer.current = setTimeout(() => setShowControls(false), 3000);
+  };
+
   const handleTap = (e: any) => {
     const now = Date.now();
     const { locationX: x } = e.nativeEvent;
-    
     if (now - lastTapRef.current < 300) {
       handleDoubleTap(x);
       lastTapRef.current = 0;
       return;
     }
     lastTapRef.current = now;
-
     setTimeout(() => {
-      if (lastTapRef.current === now) {
-        handleSingleTap();
-      }
+      if (lastTapRef.current === now) handleSingleTap();
     }, 300);
   };
 
@@ -160,15 +184,14 @@ const ReelItem: React.FC<{
     const nextPaused = !isPaused;
     setIsPaused(nextPaused);
     setShowControls(true);
-    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
-    hideControlsTimer.current = setTimeout(() => setShowControls(false), 3000);
+    if (!nextPaused) scheduleHideControls();
+    else if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
   };
 
   const handleDoubleTap = (x: number) => {
     if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     const player = playerRef.current;
     if (!player) return;
-
     if (x < width * 0.35) {
       player.seekBy(-10);
       setSeekFeedback('back');
@@ -186,13 +209,27 @@ const ReelItem: React.FC<{
     }
   };
 
-  const heartAnimatedStyle = {
-    transform: [{ scale: heartScale }],
-    opacity: heartOpacity,
+  // Seek bar touch — only active when paused
+  const handleSeekBarPress = (e: any) => {
+    const player = playerRef.current;
+    if (!player || !isPaused) return;
+    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
+    const targetTime = ratio * (player.duration ?? 0);
+    player.seekBy(targetTime - (player.currentTime ?? 0));
+    setProgress(ratio);
+  };
+
+  const handleSeekBarMove = (e: any) => {
+    const player = playerRef.current;
+    if (!player || !isPaused) return;
+    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
+    const targetTime = ratio * (player.duration ?? 0);
+    player.seekBy(targetTime - (player.currentTime ?? 0));
+    setProgress(ratio);
   };
 
   return (
-    <View style={[styles.reelContainer, { height: ITEM_HEIGHT }]}>
+    <View style={[styles.reelContainer, { height: itemHeight }]}>
       <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
         {(isActive || isAdjacent) && reel.video_url ? (
           <ReelVideo
@@ -211,11 +248,12 @@ const ReelItem: React.FC<{
           </View>
         )}
       </Pressable>
+
       <View style={styles.gradient} pointerEvents="none" />
 
-      {/* Center Heart Anim */}
+      {/* Center overlays */}
       <View style={styles.centerOverlay} pointerEvents="none">
-        <Animated.View style={heartAnimatedStyle}>
+        <Animated.View style={{ transform: [{ scale: heartScale }], opacity: heartOpacity }}>
           <Ionicons name="heart" size={100} color="#fff" />
         </Animated.View>
         {isPaused && showControls && (
@@ -241,23 +279,21 @@ const ReelItem: React.FC<{
       <View style={styles.rightActions}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#ef4444' : '#fff'} />
-          <Text style={styles.actionCount}>{fmtCount(likes)}</Text>
+          {likes > 0 && <Text style={styles.actionCount}>{fmtCount(likes)}</Text>}
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)}>
           <Ionicons name="chatbubble-outline" size={28} color="#fff" />
-          <Text style={styles.actionCount}>{fmtCount(commentCount)}</Text>
+          {commentCount > 0 && <Text style={styles.actionCount}>{fmtCount(commentCount)}</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.actionItem}
-          onPress={() => setShowShare(true)}
-        >
+        <TouchableOpacity style={styles.actionItem} onPress={() => setShowShare(true)}>
           <Ionicons name="paper-plane-outline" size={26} color="#fff" />
-          <Text style={styles.actionCount}>{fmtCount(reel.shares_count ?? 0)}</Text>
+          {(reel.shares_count ?? 0) > 0 && <Text style={styles.actionCount}>{fmtCount(reel.shares_count)}</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionItem} onPress={() => setMuted(m => !m)}>
+        {/* Global mute toggle */}
+        <TouchableOpacity style={styles.actionItem} onPress={onMuteToggle}>
           <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
         </TouchableOpacity>
 
@@ -298,9 +334,20 @@ const ReelItem: React.FC<{
         </Text>
       </View>
 
-      {/* Bottom Seek Bar */}
-      <View style={[styles.seekBarWrap, showControls && { opacity: 1 }]}>
+      {/* Seek bar — interactive when paused, always visible */}
+      <View
+        ref={seekBarRef}
+        style={[styles.seekBarWrap, showControls && styles.seekBarVisible]}
+        onStartShouldSetResponder={() => isPaused}
+        onMoveShouldSetResponder={() => isPaused}
+        onResponderGrant={handleSeekBarPress}
+        onResponderMove={handleSeekBarMove}
+      >
         <View style={[styles.seekBarProgress, { width: `${progress * 100}%` }]} />
+        {/* Scrubber thumb — visible when paused */}
+        {isPaused && showControls && (
+          <View style={[styles.seekThumb, { left: `${progress * 100}%` as any }]} />
+        )}
       </View>
 
       <CommentSheet
@@ -326,14 +373,19 @@ const ReelItem: React.FC<{
   );
 };
 
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [reels, setReels] = useState<any[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [muted, setMuted] = useState(false); // global mute for all reels
+  const [containerHeight, setContainerHeight] = useState(height); // measured on layout
 
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
       setActiveIndex(viewableItems[0].index ?? 0);
@@ -345,9 +397,14 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setCurrentUserId(user.id);
-        const [reelsData, likedData] = await Promise.all([getReels(), getLikedReelIds(user.id)]);
+        const [reelsData, likedData, followingData] = await Promise.all([
+          getReels(),
+          getLikedReelIds(user.id),
+          getFollowing(user.id),
+        ]);
         setReels(reelsData);
         setLikedIds(new Set(likedData));
+        setFollowingIds(new Set(followingData.map((p: any) => p.id)));
       }
     } catch (e) {
       console.error('Reels load error', e);
@@ -357,6 +414,12 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: containerHeight,
+    offset: containerHeight * index,
+    index,
+  }), [containerHeight]);
 
   if (loading) {
     return (
@@ -391,30 +454,38 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden />
-      <FlatList
-        data={reels}
-        keyExtractor={r => r.id}
-        renderItem={({ item, index }) => (
-          <ReelItem
-            reel={item}
-            currentUserId={currentUserId}
-            isLiked={likedIds.has(item.id)}
-            isActive={index === activeIndex}
-            isAdjacent={Math.abs(index - activeIndex) <= 1}
-          />
-        )}
-        pagingEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={ITEM_HEIGHT}
-        decelerationRate="fast"
-        windowSize={3}
-        maxToRenderPerBatch={2}
-        initialNumToRender={1}
-        removeClippedSubviews={true}
-        viewabilityConfig={viewabilityConfig}
-        onViewableItemsChanged={onViewableItemsChanged}
-      />
+      <StatusBar hidden={false} translucent backgroundColor="transparent" />
+      <View
+        style={{ flex: 1 }}
+        onLayout={e => setContainerHeight(e.nativeEvent.layout.height)}
+      >
+        <FlatList
+          data={reels}
+          keyExtractor={r => r.id}
+          renderItem={({ item, index }) => (
+            <ReelItem
+              reel={item}
+              currentUserId={currentUserId}
+              isLiked={likedIds.has(item.id)}
+              isFollowingUser={followingIds.has(item.profiles?.id)}
+              isActive={index === activeIndex}
+              isAdjacent={Math.abs(index - activeIndex) <= 2}
+              muted={muted}
+              onMuteToggle={() => setMuted(m => !m)}
+              itemHeight={containerHeight}
+            />
+          )}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          windowSize={5}
+          maxToRenderPerBatch={3}
+          initialNumToRender={2}
+          removeClippedSubviews={false}
+          getItemLayout={getItemLayout}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
+        />
+      </View>
       {onBack && (
         <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -434,10 +505,11 @@ const reelNavStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   reelContainer: { width, position: 'relative', overflow: 'hidden' },
-  gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 350 },
+  gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 350, backgroundColor: 'transparent' },
   centerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
   pauseOverlay: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.1)', padding: 20, borderRadius: 50 },
   seekFeedback: {
+    position: 'absolute',
     padding: 20,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 50,
@@ -445,27 +517,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   seekFeedbackText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 4,
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    color: '#fff', fontSize: 14, fontWeight: '700', marginTop: 4,
+    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
-  seekBarWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.2)', opacity: 0.4 },
+  seekBarWrap: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)', opacity: 0.5,
+  },
+  seekBarVisible: { opacity: 1, height: 4 },
   seekBarProgress: { height: '100%', backgroundColor: '#fff' },
+  seekThumb: {
+    position: 'absolute', top: -5, width: 14, height: 14,
+    borderRadius: 7, backgroundColor: '#fff', marginLeft: -7,
+  },
   rightActions: { position: 'absolute', right: 12, bottom: 100, alignItems: 'center', gap: 18 },
   actionItem: { alignItems: 'center', gap: 3 },
-  actionCount: { color: '#fff', fontSize: 12, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  actionCount: {
+    color: '#fff', fontSize: 12, fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
   bottomInfo: { position: 'absolute', bottom: 30, left: 14, right: 70 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   reelAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#fff' },
-  reelUsername: { color: '#fff', fontWeight: 'bold', fontSize: 14, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  reelUsername: {
+    color: '#fff', fontWeight: 'bold', fontSize: 14,
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
   followBtn: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
   followingBtn: { borderColor: 'rgba(255,255,255,0.2)' },
   followBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  reelCaption: { color: '#fff', fontSize: 13, lineHeight: 18, marginBottom: 8, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  reelCaption: {
+    color: '#fff', fontSize: 13, lineHeight: 18, marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
+  },
   songRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   songText: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   viewCount: { color: 'rgba(255,255,255,0.5)', fontSize: 11 },

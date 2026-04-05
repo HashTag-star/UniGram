@@ -18,6 +18,7 @@ import { FeedPost } from './FeedScreen';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
+import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
@@ -128,6 +129,7 @@ export const ProfileScreen: React.FC<Props> = ({
     if (!profile) return;
     const next = !isFollowingUser;
     setIsFollowingUser(next);
+    SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: next });
     setProfile((p: any) => ({ ...p, followers_count: next ? p.followers_count + 1 : p.followers_count - 1 }));
     try {
       if (next) await followUser(currentUserId, profile.id);
@@ -136,6 +138,7 @@ export const ProfileScreen: React.FC<Props> = ({
     } catch (e: any) {
       Alert.alert('Error', 'Failed to update follow status');
       setIsFollowingUser(!next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: !next });
     }
   };
 

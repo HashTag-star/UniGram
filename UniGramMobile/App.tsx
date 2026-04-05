@@ -305,7 +305,7 @@ function AppShell() {
   // Reels is full-screen video — unmount when not active to free GPU/memory.
   // All other tabs stay permanently mounted so switching is instant (display:none trick).
   const isReels = activeTab === 'reels';
-  const showTabBar = !isReels && !hideTabBar;
+  const showTabBar = !hideTabBar; // navbar stays visible on Reels too
   const TAB_BAR_HEIGHT = 58;
 
   // Helper: style that hides a screen without unmounting it
@@ -330,6 +330,8 @@ function AppShell() {
             onCreateStory={() => setShowCreate(true)}
             onNotifPress={openNotifications}
             notifBadge={notifBadge}
+            onReelPress={() => setActiveTab('reels')}
+            onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
           />
         </View>
         <View style={[styles.screen, hide('explore')]}>
@@ -368,8 +370,8 @@ function AppShell() {
         )}
       </View>
 
-      {/* Floating "+" create button — only when tab bar is visible */}
-      {showTabBar && (
+      {/* Floating "+" create button — hide on Reels */}
+      {showTabBar && !isReels && (
         <TouchableOpacity
           style={[styles.fab, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}
           onPress={() => setShowCreate(true)}

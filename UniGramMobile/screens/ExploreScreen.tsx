@@ -14,6 +14,7 @@ import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
+import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
@@ -138,20 +139,23 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   const toggleFollow = useCallback(async (targetId: string) => {
     if (!currentUserId) return;
     const isNowFollowing = followingIds.has(targetId);
+    const next = !isNowFollowing;
     setFollowingIds(prev => {
-      const next = new Set(prev);
-      if (isNowFollowing) next.delete(targetId); else next.add(targetId);
-      return next;
+      const s = new Set(prev);
+      if (isNowFollowing) s.delete(targetId); else s.add(targetId);
+      return s;
     });
+    SocialSync.emit('FOLLOW_CHANGE', { targetId, isActive: next });
     try {
       if (isNowFollowing) await unfollowUser(currentUserId, targetId);
       else await followUser(currentUserId, targetId);
     } catch {
       setFollowingIds(prev => {
-        const next = new Set(prev);
-        if (!isNowFollowing) next.delete(targetId); else next.add(targetId);
-        return next;
+        const s = new Set(prev);
+        if (!isNowFollowing) s.delete(targetId); else s.add(targetId);
+        return s;
       });
+      SocialSync.emit('FOLLOW_CHANGE', { targetId, isActive: isNowFollowing });
     }
     selection();
   }, [currentUserId, followingIds, selection]);
@@ -177,11 +181,15 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
     const handleToggle = async () => {
       const next = !following;
       setFollowing(next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
       selection();
       try {
         if (next) await followUser(currentUserId, user.id);
         else await unfollowUser(currentUserId, user.id);
-      } catch { setFollowing(!next); }
+      } catch {
+        setFollowing(!next);
+        SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
+      }
     };
 
     return (
@@ -229,11 +237,15 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
     const handleToggle = async () => {
       const next = !following;
       setFollowing(next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
       selection();
       try {
         if (next) await followUser(currentUserId, user.id);
         else await unfollowUser(currentUserId, user.id);
-      } catch { setFollowing(!next); }
+      } catch {
+        setFollowing(!next);
+        SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
+      }
     };
 
     return (
