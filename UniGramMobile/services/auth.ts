@@ -34,7 +34,7 @@ export async function signIn(email: string, password: string) {
   return data;
 }
 
-export async function signInWithGoogle() {
+export async function signInWithGoogle(): Promise<'success' | 'cancelled'> {
   const redirectTo = Linking.createURL('auth-callback');
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -42,13 +42,21 @@ export async function signInWithGoogle() {
     options: { redirectTo, skipBrowserRedirect: true },
   });
   if (error) throw error;
-  if (!data.url) throw new Error('No OAuth URL returned from Supabase.');
+  if (!data.url) throw new Error('Google sign-in is not configured yet. Please contact support.');
 
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+  if (result.type === 'cancel' || result.type === 'dismiss') {
+    return 'cancelled';
+  }
+
   if (result.type === 'success' && result.url) {
     const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
     if (sessionError) throw sessionError;
+    return 'success';
   }
+
+  return 'cancelled';
 }
 
 export async function sendPasswordReset(email: string) {
