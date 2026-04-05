@@ -212,7 +212,9 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
   const handleGoogle = async () => {
     setGoogleLoading(true);
     try {
-      await signInWithGoogle();
+      const result = await signInWithGoogle();
+      // 'cancelled' means user closed the browser — no alert needed
+      if (result === 'cancelled') return;
     } catch (err: any) {
       Alert.alert('Google sign in failed', err.message ?? 'Could not sign in with Google.');
     } finally {
