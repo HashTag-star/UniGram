@@ -25,7 +25,7 @@ import { getSuggestedUsers } from '../services/onboarding';
 import { followUser, unfollowUser } from '../services/profiles';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
-import { useSocialLike } from '../hooks/useSocialSync';
+import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 
@@ -1066,7 +1066,7 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
       }
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 8 }}>
         <Text style={[feedInjStyles.suggUsername, { color: colors.text }]} numberOfLines={1}>@{user.username}</Text>
-        {user.is_verified && <VerifiedBadge type={user.verification_type} size={12} />}
+        {user.is_verified && <VerifiedBadge type={user.verification_type} size="sm" />}
       </View>
       {user.full_name ? (
         <Text style={[feedInjStyles.suggFullName, { color: colors.textMuted }]} numberOfLines={1}>{user.full_name}</Text>
