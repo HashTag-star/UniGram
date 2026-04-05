@@ -18,6 +18,7 @@ import { FeedPost } from './FeedScreen';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
+import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -40,6 +41,7 @@ export const ProfileScreen: React.FC<Props> = ({
   onMessagePress,
 }) => {
   const insets = useSafeAreaInsets();
+  const { colors, theme } = useTheme();
   const { selection, success, medium } = useHaptics();
 
   const [profile, setProfile] = useState<any>(null);
@@ -202,16 +204,16 @@ export const ProfileScreen: React.FC<Props> = ({
   };
 
   if (loading) return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <ProfileHeaderSkeleton />
       <ProfilePostsSkeleton colSize={COL} />
     </View>
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
       >
         {/* Cover & Header Section */}
         <View style={styles.coverSection}>
@@ -236,7 +238,7 @@ export const ProfileScreen: React.FC<Props> = ({
         <View style={styles.infoSection}>
           <View style={styles.avatarRow}>
             <View style={styles.avatarContainer}>
-              <View style={[styles.avatarRing, profile?.is_verified && { borderColor: '#818cf8' }]}>
+              <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
                 <Image source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.avatar} />
                 {isOwn && (
                   <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
@@ -255,8 +257,8 @@ export const ProfileScreen: React.FC<Props> = ({
               <View style={styles.actionRow}>
                 {isOwn ? (
                   <>
-                    <TouchableOpacity style={styles.editBtn} onPress={openEdit}>
-                      <Text style={styles.btnText}>Edit Profile</Text>
+                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
+                      <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
                     </TouchableOpacity>
                     {!profile?.is_verified && (
                       <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
@@ -268,13 +270,18 @@ export const ProfileScreen: React.FC<Props> = ({
                 ) : (
                   <>
                     <TouchableOpacity 
-                      style={[styles.followBtn, isFollowingUser && styles.followingBtn]} 
+                      style={[
+                        styles.followBtn, 
+                        isFollowingUser ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: '#6366f1' }
+                      ]} 
                       onPress={toggleFollow}
                     >
-                      <Text style={styles.followBtnText}>{isFollowingUser ? 'Following' : 'Follow'}</Text>
+                      <Text style={[styles.followBtnText, isFollowingUser && { color: colors.text }]}>
+                        {isFollowingUser ? 'Following' : 'Follow'}
+                      </Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.msgBtn} onPress={() => {/* message logic */}}>
-                      <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+                    <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}}>
+                      <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
                     </TouchableOpacity>
                   </>
                 )}
@@ -283,50 +290,50 @@ export const ProfileScreen: React.FC<Props> = ({
           </View>
 
           <View style={{ marginTop: 12 }}>
-            <Text style={styles.nameText}>{profile?.full_name}</Text>
-            <Text style={styles.usernameText}>@{profile?.username}</Text>
-            {profile?.bio && <Text style={styles.bioText}>{profile.bio}</Text>}
+            <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
+            <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
+            {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
             <View style={styles.metaRow}>
               {profile?.major && (
                 <View style={styles.majorTag}>
                   <Text style={styles.majorTagText}>{profile.major}</Text>
                 </View>
               )}
-              {profile?.university && <Text style={styles.metaLabel}>{profile.university}</Text>}
+              {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
             </View>
           </View>
 
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}><Text style={styles.statVal}>{posts.length}</Text><Text style={styles.statLab}>Posts</Text></View>
-            <View style={styles.statItem}><Text style={styles.statVal}>{profile?.followers_count || 0}</Text><Text style={styles.statLab}>Followers</Text></View>
-            <View style={styles.statItem}><Text style={styles.statVal}>{profile?.following_count || 0}</Text><Text style={styles.statLab}>Following</Text></View>
+          <View style={[styles.statsRow, { borderColor: colors.border }]}>
+            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
+            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text></View>
+            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text></View>
           </View>
         </View>
 
         {/* Tabs — must be a plain View, direct child of ScrollView for stickyHeaderIndices to work */}
-        <View style={styles.tabHeader}>
+        <View style={[styles.tabHeader, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
           <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('posts'); }}>
-            <Ionicons name={activeTab === 'posts' ? 'apps' : 'apps-outline'} size={22} color={activeTab === 'posts' ? '#fff' : 'rgba(255,255,255,0.35)'} />
-            {activeTab === 'posts' && <View style={styles.tabActiveBar} />}
+            <Ionicons name={activeTab === 'posts' ? 'apps' : 'apps-outline'} size={22} color={activeTab === 'posts' ? colors.text : colors.textMuted} />
+            {activeTab === 'posts' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
           <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('reels'); }}>
-            <Ionicons name={activeTab === 'reels' ? 'film' : 'film-outline'} size={22} color={activeTab === 'reels' ? '#fff' : 'rgba(255,255,255,0.35)'} />
-            {activeTab === 'reels' && <View style={styles.tabActiveBar} />}
+            <Ionicons name={activeTab === 'reels' ? 'film' : 'film-outline'} size={22} color={activeTab === 'reels' ? colors.text : colors.textMuted} />
+            {activeTab === 'reels' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
           <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('threads'); }}>
-            <Ionicons name={activeTab === 'threads' ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={activeTab === 'threads' ? '#fff' : 'rgba(255,255,255,0.35)'} />
-            {activeTab === 'threads' && <View style={styles.tabActiveBar} />}
+            <Ionicons name={activeTab === 'threads' ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={activeTab === 'threads' ? colors.text : colors.textMuted} />
+            {activeTab === 'threads' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
           {isOwn && (
             <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('saved'); }}>
-              <Ionicons name={activeTab === 'saved' ? 'bookmark' : 'bookmark-outline'} size={22} color={activeTab === 'saved' ? '#fff' : 'rgba(255,255,255,0.35)'} />
-              {activeTab === 'saved' && <View style={styles.tabActiveBar} />}
+              <Ionicons name={activeTab === 'saved' ? 'bookmark' : 'bookmark-outline'} size={22} color={activeTab === 'saved' ? colors.text : colors.textMuted} />
+              {activeTab === 'saved' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
             </TouchableOpacity>
           )}
           {isOwn && (
             <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('tagged'); }}>
-              <Ionicons name={activeTab === 'tagged' ? 'person-add' : 'person-add-outline'} size={22} color={activeTab === 'tagged' ? '#fff' : 'rgba(255,255,255,0.35)'} />
-              {activeTab === 'tagged' && <View style={styles.tabActiveBar} />}
+              <Ionicons name={activeTab === 'tagged' ? 'person-add' : 'person-add-outline'} size={22} color={activeTab === 'tagged' ? colors.text : colors.textMuted} />
+              {activeTab === 'tagged' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
             </TouchableOpacity>
           )}
         </View>
@@ -406,13 +413,13 @@ export const ProfileScreen: React.FC<Props> = ({
       <Modal visible={!!focusedPost} transparent animationType="fade" onRequestClose={() => setFocusedPost(null)}>
         <View style={styles.focusContainer}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setFocusedPost(null)} />
-          <View style={[styles.focusContent, { marginTop: insets.top + 10 }]}>
-            <View style={styles.focusHeader}>
-              <TouchableOpacity onPress={() => setFocusedPost(null)}><Ionicons name="chevron-back" size={28} color="#fff" /></TouchableOpacity>
-              <Text style={styles.focusTitle}>Post</Text>
+          <View style={[styles.focusContent, { marginTop: insets.top + 10, backgroundColor: colors.bg }]}>
+            <View style={[styles.focusHeader, { borderBottomColor: colors.border }]}>
+              <TouchableOpacity onPress={() => setFocusedPost(null)}><Ionicons name="chevron-back" size={28} color={colors.text} /></TouchableOpacity>
+              <Text style={[styles.focusTitle, { color: colors.text }]}>Post</Text>
               {focusedPost?.user_id === currentUserId ? (
                 <TouchableOpacity onPress={initiateEditPost}>
-                  <Text style={{ color: '#818cf8', fontWeight: 'bold' }}>Edit</Text>
+                  <Text style={{ color: colors.accent, fontWeight: 'bold' }}>Edit</Text>
                 </TouchableOpacity>
               ) : <View style={{ width: 28 }} />}
             </View>
@@ -435,16 +442,16 @@ export const ProfileScreen: React.FC<Props> = ({
       {/* Edit Post Caption Modal */}
       <Modal visible={showEditPost} transparent animationType="slide">
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.editPostContainer}>
-           <View style={styles.editPostContent}>
+           <View style={[styles.editPostContent, { backgroundColor: colors.bg2 }]}>
               <View style={styles.editPostHeader}>
-                <TouchableOpacity onPress={() => setShowEditPost(false)}><Text style={{ color: '#fff' }}>Cancel</Text></TouchableOpacity>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>Edit Caption</Text>
+                <TouchableOpacity onPress={() => setShowEditPost(false)}><Text style={{ color: colors.text }}>Cancel</Text></TouchableOpacity>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: 'bold' }}>Edit Caption</Text>
                 <TouchableOpacity onPress={handlePostUpdate} disabled={saving}>
-                  <Text style={{ color: '#6366f1', fontWeight: 'bold' }}>{saving ? '...' : 'Done'}</Text>
+                  <Text style={{ color: colors.accent, fontWeight: 'bold' }}>{saving ? '...' : 'Done'}</Text>
                 </TouchableOpacity>
               </View>
               <TextInput
-                style={styles.editPostInput}
+                style={[styles.editPostInput, { color: colors.text, backgroundColor: colors.bg }]}
                 value={editPostCaption}
                 onChangeText={setEditPostCaption}
                 multiline
@@ -461,7 +468,7 @@ export const ProfileScreen: React.FC<Props> = ({
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1 },
   coverSection: { height: 160, position: 'relative' },
   cover: { width: '100%', height: '100%' },
   coverOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' },
@@ -473,7 +480,7 @@ const styles = StyleSheet.create({
   avatarContainer: { position: 'relative' },
   avatarRing: { 
     width: 86, height: 86, borderRadius: 43, 
-    borderWidth: 3, borderColor: '#000', overflow: 'hidden',
+    borderWidth: 3, overflow: 'hidden',
     backgroundColor: '#1a1a1a',
   },
   avatar: { width: '100%', height: '100%' },
@@ -486,18 +493,18 @@ const styles = StyleSheet.create({
   
   profileActions: { alignItems: 'center', marginBottom: 6 },
   actionRow: { flexDirection: 'row', gap: 8 },
-  editBtn: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  editBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1 },
   verifyBtn: { backgroundColor: 'rgba(129, 140, 248, 0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: 'rgba(129, 140, 248, 0.3)' },
   verifyText: { color: '#818cf8', fontWeight: '600', fontSize: 13 },
-  btnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  btnText: { fontSize: 13, fontWeight: '600' },
   followBtn: { backgroundColor: '#6366f1', borderRadius: 10, paddingHorizontal: 24, paddingVertical: 8 },
   followingBtn: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   followBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  msgBtn: { width: 38, height: 38, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  msgBtn: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
 
-  nameText: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  usernameText: { fontSize: 14, color: 'rgba(255,255,255,0.5)', marginTop: 2 },
-  bioText: { color: 'rgba(255,255,255,0.8)', marginTop: 10, lineHeight: 20, fontSize: 14 },
+  nameText: { fontSize: 20, fontWeight: '800' },
+  usernameText: { fontSize: 14, marginTop: 2 },
+  bioText: { marginTop: 10, lineHeight: 20, fontSize: 14 },
   metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   majorTag: { backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
   majorTagText: { color: '#818cf8', fontSize: 12, fontWeight: '700' },
@@ -510,19 +517,16 @@ const styles = StyleSheet.create({
     paddingVertical: 14, 
     borderTopWidth: 1, 
     borderBottomWidth: 1, 
-    borderColor: 'rgba(255,255,255,0.06)',
     width: '100%',
   },
   statItem: { alignItems: 'center' },
-  statVal: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  statLab: { color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 2 },
+  statVal: { fontSize: 18, fontWeight: 'bold' },
+  statLab: { fontSize: 11, marginTop: 2 },
 
   tabHeader: {
     flexDirection: 'row',
     width: '100%',
-    backgroundColor: '#000',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
   },
   tabBtn: {
     flex: 1,
@@ -537,7 +541,6 @@ const styles = StyleSheet.create({
     left: '20%',
     right: '20%',
     height: 2,
-    backgroundColor: '#fff',
     borderRadius: 1,
   },
   tabContent: { flex: 1 },
@@ -548,11 +551,11 @@ const styles = StyleSheet.create({
   reelMeta: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 },
   reelMetaText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   focusContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' },
-  focusContent: { flex: 1, backgroundColor: '#000', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
-  focusHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
-  focusTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  focusContent: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
+  focusHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1 },
+  focusTitle: { fontSize: 16, fontWeight: 'bold' },
   editPostContainer: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  editPostContent: { backgroundColor: '#111', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  editPostContent: { padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
   editPostHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  editPostInput: { color: '#fff', fontSize: 15, backgroundColor: '#222', borderRadius: 10, padding: 12, height: 120, textAlignVertical: 'top' },
+  editPostInput: { fontSize: 15, borderRadius: 10, padding: 12, height: 120, textAlignVertical: 'top' },
 });

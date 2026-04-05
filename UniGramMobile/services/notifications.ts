@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { sendPushToUser } from './pushNotifications';
 
 export async function getNotifications(userId: string) {
   const { data, error } = await supabase
@@ -38,6 +39,12 @@ export async function getUnreadNotificationCount(userId: string): Promise<number
   return count ?? 0;
 }
 
+const PUSH_TITLES: Record<string, string> = {
+  verification_approved: '✅ Verification Approved',
+  verification_rejected: '❌ Verification Update',
+  announcement: '📢 UniGram Announcement',
+};
+
 /** Admin sends a notification to one user or all users */
 export async function sendAdminNotification(
   adminId: string,
@@ -46,21 +53,27 @@ export async function sendAdminNotification(
   targetUserId?: string,  // undefined = broadcast to all
 ) {
   if (targetUserId) {
-    await supabase.from('notifications').insert({
+    const { error } = await supabase.from('notifications').insert({
       user_id: targetUserId,
       actor_id: adminId,
       type,
       text: message,
       is_read: false,
     });
+    if (error) throw error;
+
+    // Send device push notification
+    const pushTitle = PUSH_TITLES[type] ?? 'UniGram';
+    sendPushToUser(targetUserId, pushTitle, message, { type }).catch(() => {});
+
   } else {
-    // Broadcast: fetch all user IDs and insert in batch
+    // Broadcast: fetch all user IDs (including the admin so they can verify delivery)
     const { data: users } = await supabase
       .from('profiles')
       .select('id')
-      .neq('id', adminId)
       .limit(5000);
     if (!users?.length) return;
+
     const rows = users.map((u: any) => ({
       user_id: u.id,
       actor_id: adminId,
@@ -68,9 +81,16 @@ export async function sendAdminNotification(
       text: message,
       is_read: false,
     }));
-    // Insert in chunks of 500 to stay within Supabase limits
+
+    // Insert in chunks of 500
     for (let i = 0; i < rows.length; i += 500) {
-      await supabase.from('notifications').insert(rows.slice(i, i + 500));
+      const { error } = await supabase.from('notifications').insert(rows.slice(i, i + 500));
+      if (error) throw error;
     }
+
+    // Push to all (best-effort, no await to avoid blocking)
+    users.forEach((u: any) => {
+      sendPushToUser(u.id, PUSH_TITLES[type] ?? 'UniGram', message, { type }).catch(() => {});
+    });
   }
 }

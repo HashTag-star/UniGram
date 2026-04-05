@@ -138,7 +138,77 @@ CREATE POLICY "Anyone can view message media"
   USING (bucket_id = 'message-media');
 
 -- ────────────────────────────────────────────────────────────
--- 7. Trigger: update conversation last_message on insert
+-- 7. Create verification_requests table + RLS
+-- ────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS verification_requests (
+  id               UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id          UUID        REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  type             TEXT        NOT NULL
+    CHECK (type IN ('student', 'professor', 'club', 'influencer', 'staff')),
+  status           TEXT        DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected')),
+  full_name        TEXT        NOT NULL,
+  email            TEXT        NOT NULL,
+  reason           TEXT        NOT NULL,
+  document_urls    TEXT[]      DEFAULT '{}',
+  submitted_at     TIMESTAMPTZ DEFAULT now(),
+  rejection_reason TEXT
+);
+
+ALTER TABLE verification_requests ENABLE ROW LEVEL SECURITY;
+
+-- Users can submit their own request
+DROP POLICY IF EXISTS "Users can insert own verification requests" ON verification_requests;
+CREATE POLICY "Users can insert own verification requests"
+  ON verification_requests FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Users can view their own requests (to check status)
+DROP POLICY IF EXISTS "Users can view own verification requests" ON verification_requests;
+CREATE POLICY "Users can view own verification requests"
+  ON verification_requests FOR SELECT
+  USING (auth.uid() = user_id);
+
+-- Admins can view ALL requests
+DROP POLICY IF EXISTS "Admins can view all verification requests" ON verification_requests;
+CREATE POLICY "Admins can view all verification requests"
+  ON verification_requests FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE id = auth.uid() AND is_admin = true
+    )
+  );
+
+-- Admins can update requests (approve / reject)
+DROP POLICY IF EXISTS "Admins can update verification requests" ON verification_requests;
+CREATE POLICY "Admins can update verification requests"
+  ON verification_requests FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE id = auth.uid() AND is_admin = true
+    )
+  );
+
+-- Storage bucket for verification documents (public read, auth upload)
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('verifications', 'verifications', true, 10485760)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Authenticated users can upload verification docs" ON storage.objects;
+CREATE POLICY "Authenticated users can upload verification docs"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'verifications');
+
+DROP POLICY IF EXISTS "Anyone can view verification docs" ON storage.objects;
+CREATE POLICY "Anyone can view verification docs"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'verifications');
+
+-- ────────────────────────────────────────────────────────────
+-- 8. Trigger: update conversation last_message on insert
 -- ────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION update_conversation_last_message()
@@ -167,4 +237,5 @@ CREATE TRIGGER on_message_insert
 
 -- ────────────────────────────────────────────────────────────
 -- Done. All migrations applied successfully.
+-- ────────────────────────────────────────────────────────────
 -- ────────────────────────────────────────────────────────────

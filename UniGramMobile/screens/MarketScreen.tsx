@@ -44,6 +44,7 @@ import {
   UpdateItemPayload,
 } from '../services/market';
 import { createDirectConversation } from '../services/messages';
+import { useTheme } from '../context/ThemeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ const ItemCard = memo<CardProps>(({
   onDelete,
   onEdit,
 }) => {
+  const { colors } = useTheme();
   const seller = item.profiles;
 
   const handleSavePress = useCallback(() => {
@@ -164,7 +166,7 @@ const ItemCard = memo<CardProps>(({
 
   return (
     <TouchableOpacity
-      style={[styles.card, { width: CARD_W }]}
+      style={[styles.card, { width: CARD_W, backgroundColor: colors.bg2, borderColor: colors.border }]}
       onPress={handlePress}
       activeOpacity={0.85}
     >
@@ -173,8 +175,8 @@ const ItemCard = memo<CardProps>(({
         {item.image_url ? (
           <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
         ) : (
-          <View style={[styles.itemImage, styles.imagePlaceholder]}>
-            <Ionicons name="image-outline" size={32} color="#333" />
+          <View style={[styles.itemImage, styles.imagePlaceholder, { backgroundColor: colors.bg }]}>
+            <Ionicons name="image-outline" size={32} color={colors.textMuted} />
           </View>
         )}
 
@@ -207,22 +209,22 @@ const ItemCard = memo<CardProps>(({
 
       {/* Info */}
       <View style={styles.cardInfo}>
-        <Text style={styles.itemTitle} numberOfLines={2}>
+        <Text style={[styles.itemTitle, { color: colors.text }]} numberOfLines={2}>
           {item.title}
         </Text>
-        <Text style={styles.itemPrice}>{formatPrice(item.price)}</Text>
+        <Text style={[styles.itemPrice, { color: colors.text }]}>{formatPrice(item.price)}</Text>
 
         <View style={styles.sellerRow}>
           {seller?.avatar_url ? (
             <Image source={{ uri: seller.avatar_url }} style={styles.sellerAvatar} />
           ) : (
-            <View style={[styles.sellerAvatar, { backgroundColor: '#222' }]} />
+            <View style={[styles.sellerAvatar, { backgroundColor: colors.bg }]} />
           )}
-          <Text style={styles.sellerName} numberOfLines={1}>
+          <Text style={[styles.sellerName, { color: colors.textSub }]} numberOfLines={1}>
             {seller?.username ?? 'user'}
           </Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.postedAt}>{timeAgo(item.created_at)}</Text>
+          <Text style={[styles.dot, { color: colors.textMuted }]}>·</Text>
+          <Text style={[styles.postedAt, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
         </View>
 
         {/* Owner actions */}
@@ -294,6 +296,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
   onEdit,
   onMessage,
 }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const isOwn = item.seller_id === currentUserId;
   const [marking, setMarking] = useState(false);
@@ -354,7 +357,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={[dtl.container, { paddingBottom: insets.bottom }]}>
+      <View style={[dtl.container, { paddingBottom: insets.bottom, backgroundColor: colors.bg }]}>
         {/* Hero Image */}
         <View style={dtl.heroWrap}>
           {item.image_url ? (
@@ -415,26 +418,26 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
         >
           {/* Title + Price */}
           <View style={dtl.titleRow}>
-            <Text style={dtl.title} numberOfLines={3}>
+            <Text style={[dtl.title, { color: colors.text }]} numberOfLines={3}>
               {item.title}
             </Text>
-            <Text style={dtl.price}>{formatPrice(item.price)}</Text>
+            <Text style={[dtl.price, { color: colors.text }]}>{formatPrice(item.price)}</Text>
           </View>
 
           {/* Meta row */}
           <View style={dtl.metaRow}>
-            <View style={dtl.catBadge}>
-              <Text style={dtl.catBadgeText}>
+            <View style={[dtl.catBadge, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+              <Text style={[dtl.catBadgeText, { color: colors.textSub }]}>
                 {CATEGORIES.find(c => c.id === item.category)?.icon ?? '📦'}{' '}
                 {item.category}
               </Text>
             </View>
-            <Text style={dtl.metaText}>{timeAgo(item.created_at)}</Text>
+            <Text style={[dtl.metaText, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
             {item.views_count > 0 && (
               <>
-                <Text style={dtl.metaText}>·</Text>
-                <Ionicons name="eye-outline" size={13} color="rgba(255,255,255,0.35)" />
-                <Text style={dtl.metaText}>{item.views_count}</Text>
+                <Text style={[dtl.metaText, { color: colors.textMuted }]}>·</Text>
+                <Ionicons name="eye-outline" size={13} color={colors.textMuted} />
+                <Text style={[dtl.metaText, { color: colors.textMuted }]}>{item.views_count}</Text>
               </>
             )}
           </View>
@@ -442,31 +445,31 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
           {/* Description */}
           {!!item.description && (
             <>
-              <Text style={dtl.sectionLabel}>Description</Text>
-              <Text style={dtl.description}>{item.description}</Text>
+              <Text style={[dtl.sectionLabel, { color: colors.textMuted }]}>Description</Text>
+              <Text style={[dtl.description, { color: colors.textSub }]}>{item.description}</Text>
             </>
           )}
 
           {/* Seller */}
-          <Text style={[dtl.sectionLabel, { marginTop: 18 }]}>Seller</Text>
-          <View style={dtl.sellerCard}>
+          <Text style={[dtl.sectionLabel, { marginTop: 18, color: colors.textMuted }]}>Seller</Text>
+          <View style={[dtl.sellerCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
             {seller?.avatar_url ? (
               <Image source={{ uri: seller.avatar_url }} style={dtl.sellerAvatar} />
             ) : (
-              <View style={[dtl.sellerAvatar, dtl.sellerAvatarFallback]}>
-                <Ionicons name="person" size={20} color="#555" />
+              <View style={[dtl.sellerAvatar, dtl.sellerAvatarFallback, { backgroundColor: colors.bg }]}>
+                <Ionicons name="person" size={20} color={colors.textMuted} />
               </View>
             )}
             <View style={{ flex: 1, marginLeft: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <Text style={dtl.sellerName}>
+                <Text style={[dtl.sellerName, { color: colors.text }]}>
                   {seller?.full_name ?? seller?.username ?? 'Unknown'}
                 </Text>
                 {seller?.is_verified && (
                   <VerifiedBadge type={seller.verification_type as any} size="sm" />
                 )}
               </View>
-              <Text style={dtl.sellerMeta}>
+              <Text style={[dtl.sellerMeta, { color: colors.textMuted }]}>
                 @{seller?.username}
                 {seller?.university ? ` · ${seller.university}` : ''}
               </Text>
@@ -553,6 +556,7 @@ const SellModal: React.FC<SellModalProps> = ({
   onPosted,
   onUpdated,
 }) => {
+  const { colors } = useTheme();
   const isEdit = !!editItem;
 
   const [title, setTitle] = useState('');
@@ -664,20 +668,20 @@ const SellModal: React.FC<SellModalProps> = ({
       onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
-        style={sell.container}
+        style={[sell.container, { backgroundColor: colors.bg }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header */}
-        <View style={sell.header}>
+        <View style={[sell.header, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={sell.cancelText}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={sell.headerTitle}>
+          <Text style={[sell.headerTitle, { color: colors.text }]}>
             {isEdit ? 'Edit Listing' : 'New Listing'}
           </Text>
           <TouchableOpacity onPress={handleSubmit} disabled={submitting}>
             {submitting ? (
-              <ActivityIndicator size="small" color="#818cf8" />
+              <ActivityIndicator size="small" color={colors.accent} />
             ) : (
               <Text style={sell.postText}>
                 {isEdit ? 'Update' : 'Post'}
@@ -703,25 +707,25 @@ const SellModal: React.FC<SellModalProps> = ({
               <TouchableOpacity style={sell.imagePicker} onPress={pickImage} activeOpacity={0.75}>
                 {imageUri ? (
                   <>
-                    <Image source={{ uri: imageUri }} style={sell.imagePreview} resizeMode="cover" />
+                    <Image source={{ uri: imageUri }} style={sell.imagePreview as any} resizeMode="cover" />
                     <View style={sell.imageChangeOverlay}>
                       <Ionicons name="camera" size={22} color="#fff" />
                       <Text style={sell.imageChangeText}>Change</Text>
                     </View>
                   </>
                 ) : (
-                  <View style={sell.imageEmpty}>
-                    <Ionicons name="camera-outline" size={36} color="#444" />
-                    <Text style={sell.imageEmptyText}>Tap to add photo</Text>
+                  <View style={[sell.imageEmpty, { backgroundColor: colors.bg2 }]}>
+                    <Ionicons name="camera-outline" size={36} color={colors.textMuted} />
+                    <Text style={[sell.imageEmptyText, { color: colors.textMuted }]}>Tap to add photo</Text>
                   </View>
                 )}
               </TouchableOpacity>
 
               {/* Title */}
               <TextInput
-                style={sell.input}
+                style={[sell.input, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
                 placeholder="Title *"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.textMuted}
                 value={title}
                 onChangeText={setTitle}
                 maxLength={120}
@@ -730,9 +734,9 @@ const SellModal: React.FC<SellModalProps> = ({
 
               {/* Price */}
               <TextInput
-                style={sell.input}
+                style={[sell.input, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
                 placeholder="Price (e.g. 25.00) *"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.textMuted}
                 value={price}
                 onChangeText={setPrice}
                 keyboardType="decimal-pad"
@@ -740,9 +744,9 @@ const SellModal: React.FC<SellModalProps> = ({
 
               {/* Description */}
               <TextInput
-                style={[sell.input, sell.textArea]}
+                style={[sell.input, sell.textArea, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
                 placeholder="Description (optional)"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.textMuted}
                 value={description}
                 onChangeText={setDescription}
                 multiline
@@ -752,7 +756,7 @@ const SellModal: React.FC<SellModalProps> = ({
               />
 
               {/* Category */}
-              <Text style={sell.sectionLabel}>Category</Text>
+              <Text style={[sell.sectionLabel, { color: colors.textMuted }]}>Category</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -761,11 +765,11 @@ const SellModal: React.FC<SellModalProps> = ({
                 {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
                   <TouchableOpacity
                     key={cat.id}
-                    style={[sell.chip, category === cat.id && sell.chipActive]}
+                    style={[sell.chip, { backgroundColor: category === cat.id ? colors.accent + '20' : colors.bg2, borderColor: category === cat.id ? colors.accent : colors.border }, category === cat.id && sell.chipActive]}
                     onPress={() => setCategory(cat.id)}
                   >
                     <Text style={sell.chipEmoji}>{cat.icon}</Text>
-                    <Text style={[sell.chipLabel, category === cat.id && sell.chipLabelActive]}>
+                    <Text style={[sell.chipLabel, { color: category === cat.id ? colors.accent : colors.textMuted }, category === cat.id && sell.chipLabelActive]}>
                       {cat.label}
                     </Text>
                   </TouchableOpacity>
@@ -773,7 +777,7 @@ const SellModal: React.FC<SellModalProps> = ({
               </ScrollView>
 
               {/* Condition */}
-              <Text style={sell.sectionLabel}>Condition</Text>
+              <Text style={[sell.sectionLabel, { color: colors.textMuted }]}>Condition</Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {CONDITIONS.map(c => {
                   const color = CONDITION_COLOR[c];
@@ -783,11 +787,17 @@ const SellModal: React.FC<SellModalProps> = ({
                       key={c}
                       style={[
                         sell.condChip,
-                        active && { borderColor: color, backgroundColor: color + '20' },
+                        { 
+                          backgroundColor: active ? color + '20' : colors.bg2, 
+                          borderColor: active ? color : colors.border,
+                          flex: 1,
+                          minWidth: '45%',
+                          alignItems: 'center'
+                        }
                       ]}
                       onPress={() => setCondition(c)}
                     >
-                      <Text style={[sell.condChipText, active && { color }]}>
+                      <Text style={[sell.condChipText, { color: active ? color : colors.textSub }]}>
                         {CONDITION_LABEL[c]}
                       </Text>
                     </TouchableOpacity>
@@ -808,6 +818,7 @@ interface MarketScreenProps {
 }
 
 export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   // Auth
@@ -1192,10 +1203,10 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
       {/* ── Header ── */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Campus Market</Text>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Campus Market</Text>
         <TouchableOpacity
           style={styles.sellBtn}
           onPress={() => { setEditItem(null); setShowSell(true); }}
@@ -1206,7 +1217,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
       </View>
 
       {/* ── Tab bar ── */}
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
         {(
           [
             { id: 'browse', label: 'Browse', icon: 'storefront-outline' },
@@ -1216,17 +1227,18 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         ).map(tab => (
           <TouchableOpacity
             key={tab.id}
-            style={[styles.tabBtn, activeTab === tab.id && styles.tabBtnActive]}
+            style={[styles.tabBtn, { backgroundColor: activeTab === tab.id ? colors.accent + '20' : colors.bg2, borderColor: activeTab === tab.id ? colors.accent : colors.border }, activeTab === tab.id && styles.tabBtnActive]}
             onPress={() => setActiveTab(tab.id)}
           >
             <Ionicons
               name={tab.icon}
               size={14}
-              color={activeTab === tab.id ? '#818cf8' : 'rgba(255,255,255,0.4)'}
+              color={activeTab === tab.id ? colors.accent : colors.textMuted}
             />
             <Text
               style={[
                 styles.tabLabel,
+                { color: activeTab === tab.id ? colors.accent : colors.textMuted },
                 activeTab === tab.id && styles.tabLabelActive,
               ]}
             >
@@ -1247,11 +1259,11 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
           {CATEGORIES.map(cat => (
             <TouchableOpacity
               key={cat.id}
-              style={[styles.chip, category === cat.id && styles.chipActive]}
+              style={[styles.chip, { backgroundColor: category === cat.id ? colors.accent + '20' : colors.bg2, borderColor: category === cat.id ? colors.accent : colors.border }, category === cat.id && styles.chipActive]}
               onPress={() => setCategory(cat.id)}
             >
               <Text style={styles.chipEmoji}>{cat.icon}</Text>
-              <Text style={[styles.chipLabel, category === cat.id && styles.chipLabelActive]}>
+              <Text style={[styles.chipLabel, { color: category === cat.id ? colors.accent : colors.textMuted }, category === cat.id && styles.chipLabelActive]}>
                 {cat.label}
               </Text>
             </TouchableOpacity>
@@ -1261,12 +1273,12 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
 
       {/* ── Search bar (Browse only) ── */}
       {activeTab === 'browse' && (
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={15} color="rgba(255,255,255,0.35)" />
+        <View style={[styles.searchBar, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+          <Ionicons name="search" size={15} color={colors.textMuted} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: colors.text }]}
             placeholder="Search title or description…"
-            placeholderTextColor="rgba(255,255,255,0.3)"
+            placeholderTextColor={colors.textMuted}
             value={search}
             onChangeText={handleSearchChange}
             returnKeyType="search"
@@ -1275,7 +1287,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
           />
           {search.length > 0 && (
             <TouchableOpacity onPress={() => handleSearchChange('')}>
-              <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.35)" />
+              <Ionicons name="close-circle" size={16} color={colors.textMuted} />
             </TouchableOpacity>
           )}
         </View>
@@ -1289,6 +1301,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         </ScrollView>
       ) : (
         <FlatList
+          key={activeTab}
           data={activeData}
           keyExtractor={item => item.id}
           numColumns={2}
@@ -1319,8 +1332,8 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Ionicons name={emptyIcon} size={52} color="#2a2a2a" />
-              <Text style={styles.emptyText}>{emptyMessage}</Text>
+              <Ionicons name={emptyIcon} size={52} color={colors.textMuted} />
+              <Text style={[styles.emptyText, { color: colors.textSub }]}>{emptyMessage}</Text>
               {(activeTab === 'browse' || activeTab === 'mine') && (
                 <TouchableOpacity
                   style={[styles.sellBtn, { marginTop: 20 }]}
@@ -1402,7 +1415,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#4f46e5',
     borderRadius: 20,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   sellBtnText: {
     color: '#fff',
@@ -1422,11 +1435,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   tabBtnActive: {
     backgroundColor: 'rgba(99,102,241,0.18)',
@@ -1434,7 +1445,6 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.45)',
     fontWeight: '500',
   },
   tabLabelActive: {
@@ -1450,12 +1460,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 5,
   },
   chipActive: {
     backgroundColor: 'rgba(99,102,241,0.18)',
@@ -1466,7 +1474,6 @@ const styles = StyleSheet.create({
   },
   chipLabel: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
     fontWeight: '500',
   },
   chipLabelActive: {
@@ -1478,17 +1485,16 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 12,
     marginHorizontal: 14,
     marginBottom: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 8,
     gap: 8,
+    borderWidth: 1,
   },
   searchInput: {
     flex: 1,
-    color: '#fff',
     fontSize: 14,
   },
 
@@ -1511,7 +1517,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyText: {
-    color: 'rgba(255,255,255,0.35)',
     fontSize: 15,
     textAlign: 'center',
     marginTop: 16,
@@ -1520,11 +1525,9 @@ const styles = StyleSheet.create({
 
   // Card
   card: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
   },
   imageWrap: {
     position: 'relative',
@@ -1532,12 +1535,10 @@ const styles = StyleSheet.create({
   itemImage: {
     width: '100%',
     height: CARD_W,
-    backgroundColor: '#111',
   },
   imagePlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#111',
   },
   soldOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1565,14 +1566,12 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#fff',
     marginBottom: 4,
     lineHeight: 16,
   },
   itemPrice: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
     marginBottom: 6,
   },
   sellerRow: {
@@ -1588,16 +1587,13 @@ const styles = StyleSheet.create({
   sellerName: {
     fontSize: 10,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.45)',
     flex: 1,
   },
   dot: {
-    color: 'rgba(255,255,255,0.25)',
     fontSize: 10,
   },
   postedAt: {
     fontSize: 9,
-    color: 'rgba(255,255,255,0.3)',
   },
 
   // Owner actions row inside card
@@ -1679,14 +1675,12 @@ const dtl = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
     flex: 1,
     lineHeight: 28,
   },
   price: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#fff',
   },
   metaRow: {
     flexDirection: 'row',
@@ -1696,23 +1690,20 @@ const dtl = StyleSheet.create({
     flexWrap: 'wrap',
   },
   catBadge: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    borderWidth: 1,
   },
   catBadgeText: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
     textTransform: 'capitalize',
   },
   metaText: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.35)',
   },
   sectionLabel: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
     fontWeight: '700',
     letterSpacing: 1,
     textTransform: 'uppercase',
@@ -1720,18 +1711,15 @@ const dtl = StyleSheet.create({
   },
   description: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.75)',
     lineHeight: 22,
     marginBottom: 4,
   },
   sellerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     marginBottom: 4,
   },
   sellerAvatar: {
@@ -1740,18 +1728,15 @@ const dtl = StyleSheet.create({
     borderRadius: 23,
   },
   sellerAvatarFallback: {
-    backgroundColor: '#1a1a1a',
     alignItems: 'center',
     justifyContent: 'center',
   },
   sellerName: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#fff',
   },
   sellerMeta: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.4)',
     marginTop: 2,
   },
   primaryBtn: {
@@ -1783,12 +1768,10 @@ const sell = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   headerTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
   },
   cancelText: {
     color: '#818cf8',
@@ -1811,10 +1794,8 @@ const sell = StyleSheet.create({
     height: 200,
     borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: '#111',
-    borderWidth: 1,
-    borderColor: '#222',
     position: 'relative',
+    borderWidth: 1,
   },
   imagePreview: {
     width: '100%',
@@ -1845,13 +1826,10 @@ const sell = StyleSheet.create({
 
   // Inputs
   input: {
-    backgroundColor: '#111',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#222',
     paddingHorizontal: 14,
     paddingVertical: 13,
-    color: '#fff',
     fontSize: 15,
   },
   textArea: {
@@ -1860,7 +1838,6 @@ const sell = StyleSheet.create({
   },
 
   sectionLabel: {
-    color: 'rgba(255,255,255,0.4)',
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
@@ -1873,12 +1850,10 @@ const sell = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   chipActive: {
     backgroundColor: 'rgba(99,102,241,0.18)',
@@ -1889,7 +1864,6 @@ const sell = StyleSheet.create({
   },
   chipLabel: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.6)',
     fontWeight: '500',
   },
   chipLabelActive: {
@@ -1903,8 +1877,6 @@ const sell = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    backgroundColor: 'rgba(255,255,255,0.03)',
   },
   condChipText: {
     fontSize: 13,
@@ -1921,6 +1893,6 @@ const sell = StyleSheet.create({
     marginTop: 40,
     marginHorizontal: 16
   },
-  bannedTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginTop: 16 },
-  bannedSub: { color: 'rgba(255,255,255,0.4)', fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
+  bannedTitle: { fontSize: 20, fontWeight: 'bold', marginTop: 16 },
+  bannedSub: { fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
 });

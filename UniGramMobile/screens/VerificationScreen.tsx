@@ -114,7 +114,15 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   };
 
   const submit = async () => {
-    if (!selected || documents.length === 0) return;
+    if (!selected) return;
+    if (!name.trim() || !email.trim()) {
+      Alert.alert('Required', 'Please fill in your name and email.');
+      return;
+    }
+    if (documents.length === 0) {
+      Alert.alert('Documents Required', 'Please attach at least one supporting document.');
+      return;
+    }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();

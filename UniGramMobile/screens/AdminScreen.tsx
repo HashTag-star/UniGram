@@ -4,7 +4,6 @@ import {
   StyleSheet, ActivityIndicator, TextInput, Alert,
   RefreshControl, ScrollView, Modal,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { AdminReport, getReports, updateReportStatus, banUser as banUserAction } from '../services/reports';
@@ -905,17 +904,13 @@ const VerificationsTab: React.FC = () => {
       setRejectionModalVisible(true);
       return;
     }
-    
+
     setActioning(request.id);
     try {
-      // 1. Update profile
-      const { error: pErr } = await supabase
-        .from('profiles')
-        .update({ is_verified: true, verification_type: request.type })
-        .eq('id', request.user_id);
-      if (pErr) throw pErr;
+      const { data: { user: admin } } = await supabase.auth.getUser();
+      if (!admin) throw new Error('Not authenticated');
 
-      // 2. Update request status
+      // 1. Update request status → DB trigger handles profile update + in-app notification
       const { error: rErr } = await supabase
         .from('verification_requests')
         .update({ status: 'approved' })
@@ -923,23 +918,17 @@ const VerificationsTab: React.FC = () => {
       if (rErr) throw rErr;
 
       setAllRequests(prev => prev.map(r => r.id === request.id ? { ...r, status: 'approved' } : r));
-      
-      // 3. Send Notification
-      try {
-        const { data: { user: admin } } = await supabase.auth.getUser();
-        if (admin) {
-          await sendAdminNotification(
-            admin.id,
-            `Congratulations! Your verification request as ${request.type === 'influencer' ? 'Notable Account' : request.type} has been approved.`,
-            'verification_approved',
-            request.user_id
-          );
-        }
-      } catch (notiErr) {
-        console.error('Failed to send notification:', notiErr);
-      }
 
-      Alert.alert('Success', 'Request approved and profile updated.');
+      // 2. Send device push notification (the DB trigger already handled in-app notification)
+      const typeLabel = request.type === 'influencer' ? 'Notable Account' : request.type;
+      sendAdminNotification(
+        admin.id,
+        `Congratulations! Your ${typeLabel} verification has been approved. Your profile is now verified!`,
+        'verification_approved',
+        request.user_id,
+      ).catch(e => console.error('Push notification failed:', e));
+
+      Alert.alert('Approved', `${request.profiles?.username ?? 'User'} is now verified.`);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -951,36 +940,33 @@ const VerificationsTab: React.FC = () => {
     if (!selectedRequest || !rejectionReason.trim()) return;
     setActioning(selectedRequest.id);
     setRejectionModalVisible(false);
-    
+
     try {
+      const { data: { user: admin } } = await supabase.auth.getUser();
+      if (!admin) throw new Error('Not authenticated');
+
+      // Update request status + reason → DB trigger handles in-app notification
       const { error } = await supabase
         .from('verification_requests')
-        .update({ 
-          status: 'rejected',
-          rejection_reason: rejectionReason.trim()
-        })
+        .update({ status: 'rejected', rejection_reason: rejectionReason.trim() })
         .eq('id', selectedRequest.id);
-      
       if (error) throw error;
-      
-      setAllRequests(prev => prev.map(r => r.id === selectedRequest.id ? { ...r, status: 'rejected', rejection_reason: rejectionReason.trim() } : r));
-      
-      // Send Notification
-      try {
-        const { data: { user: admin } } = await supabase.auth.getUser();
-        if (admin) {
-          await sendAdminNotification(
-            admin.id,
-            `Your verification request has been rejected. Reason: ${rejectionReason.trim()}`,
-            'verification_rejected',
-            selectedRequest.user_id
-          );
-        }
-      } catch (notiErr) {
-        console.error('Failed to send notification:', notiErr);
-      }
 
-      Alert.alert('Success', 'Request rejected with reason.');
+      setAllRequests(prev => prev.map(r =>
+        r.id === selectedRequest.id
+          ? { ...r, status: 'rejected', rejection_reason: rejectionReason.trim() }
+          : r,
+      ));
+
+      // Send device push notification
+      sendAdminNotification(
+        admin.id,
+        `Your verification request was not approved. Reason: ${rejectionReason.trim()}`,
+        'verification_rejected',
+        selectedRequest.user_id,
+      ).catch(e => console.error('Push notification failed:', e));
+
+      Alert.alert('Rejected', 'Request rejected with reason sent to user.');
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -1472,7 +1458,6 @@ interface Props {
 }
 
 export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
-  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -1561,7 +1546,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
   ];
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>

@@ -14,6 +14,7 @@ import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
+import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 3) / 3;
@@ -36,6 +37,7 @@ interface Props {
 
 export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { selection } = useHaptics();
 
   const [query, setQuery] = useState('');
@@ -86,8 +88,9 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         .from('profiles')
         .select('*')
         .neq('id', uid)
-        .limit(8);
-      setSuggested((prof ?? []).filter((u: any) => !followingSet.has(u.id)).slice(0, 5));
+        .order('follower_count', { ascending: false })
+        .limit(20);
+      setSuggested((prof ?? []).filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
     });
 
     getTrendingHashtags(8).then(tags => {
@@ -166,7 +169,60 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   const mediaGridPosts = useMemo(() => gridPosts.filter(p => p.media_url), [gridPosts]);
 
   // ── Sub-components ────────────────────────────────────────────────────────
+  const UserCard = useCallback(({ user }: { user: any }) => {
+    const { colors } = useTheme();
+    const isSelf = user.id === currentUserId;
+    const [following, setFollowing] = useSocialFollow(user.id, followingIds.has(user.id));
+
+    const handleToggle = async () => {
+      const next = !following;
+      setFollowing(next);
+      selection();
+      try {
+        if (next) await followUser(currentUserId, user.id);
+        else await unfollowUser(currentUserId, user.id);
+      } catch { setFollowing(!next); }
+    };
+
+    return (
+      <TouchableOpacity 
+        style={[styles.suggestedCard, { backgroundColor: colors.bg2, borderColor: colors.border }]} 
+        onPress={() => onUserPress?.(user)} 
+        activeOpacity={0.8}
+      >
+        <TouchableOpacity style={styles.cardClose} onPress={() => setSuggested(prev => prev.filter(u => u.id !== user.id))}>
+          <Ionicons name="close" size={14} color={colors.textMuted} />
+        </TouchableOpacity>
+        
+        {user.avatar_url
+          ? <Image source={{ uri: user.avatar_url }} style={styles.cardAvatar} />
+          : <View style={[styles.cardAvatar, { backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="person" size={24} color={colors.textMuted} />
+            </View>
+        }
+        
+        <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{user.username}</Text>
+        <Text style={[styles.cardMeta, { color: colors.textMuted }]} numberOfLines={1}>
+          {user.full_name}
+        </Text>
+
+        <TouchableOpacity
+          style={[
+            styles.cardFollowBtn, 
+            { backgroundColor: following ? colors.bg : colors.accent }
+          ]}
+          onPress={handleToggle}
+        >
+          <Text style={[styles.cardFollowText, { color: following ? colors.text : '#fff' }]}>
+            {following ? 'Following' : 'Follow'}
+          </Text>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  }, [currentUserId, followingIds, onUserPress, selection]);
+
   const UserRow = useCallback(({ user }: { user: any }) => {
+    const { colors } = useTheme();
     const isSelf = user.id === currentUserId;
     const [following, setFollowing] = useSocialFollow(user.id, followingIds.has(user.id));
 
@@ -184,26 +240,33 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
       <TouchableOpacity style={styles.userRow} onPress={() => onUserPress?.(user)} activeOpacity={0.75}>
         {user.avatar_url
           ? <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />
-          : <View style={[styles.userAvatar, styles.userAvatarPlaceholder]}>
-              <Ionicons name="person" size={20} color="#555" />
+          : <View style={[styles.userAvatar, styles.userAvatarPlaceholder, { backgroundColor: colors.bg2 }]}>
+              <Ionicons name="person" size={20} color={colors.textMuted} />
             </View>
         }
         <View style={{ flex: 1, marginLeft: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={styles.userName}>{user.username}</Text>
+            <Text style={[styles.userName, { color: colors.text }]}>{user.username}</Text>
             {user.is_verified && <VerifiedBadge type={user.verification_type} />}
           </View>
-          <Text style={styles.userMeta}>
+          <Text style={[styles.userMeta, { color: colors.textMuted }]}>
             {user.full_name}{user.university ? ` · ${user.university}` : ''}
           </Text>
         </View>
         {!isSelf && (
           <TouchableOpacity
-            style={[styles.followBtn, following && styles.followBtnActive]}
+            style={[
+              styles.followBtn, 
+              { borderColor: following ? 'transparent' : colors.border },
+              following && styles.followBtnActive
+            ]}
             onPress={handleToggle}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Text style={[styles.followBtnText, following && { color: '#818cf8' }]}>
+            <Text style={[
+              styles.followBtnText, 
+              { color: following ? '#818cf8' : colors.text }
+            ]}>
               {following ? 'Following' : 'Follow'}
             </Text>
           </TouchableOpacity>
@@ -246,13 +309,13 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
   // ── Hashtag results screen ────────────────────────────────────────────────
   if (activeHashtag) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity onPress={() => { setActiveHashtag(null); setHashtagPosts([]); }} style={{ padding: 4, marginRight: 8 }}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.topBarTitle}>{activeHashtag}</Text>
-          <Text style={styles.hashtagPostCount}>{hashtagPosts.length} posts</Text>
+          <Text style={[styles.topBarTitle, { color: colors.text }]}>{activeHashtag}</Text>
+          <Text style={[styles.hashtagPostCount, { color: colors.textMuted }]}>{hashtagPosts.length} posts</Text>
         </View>
         {hashtagPosts.length === 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -290,7 +353,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
 
   if (loading && !query && gridPosts.length === 0) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
         <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
           <Skeleton width={'60%' as any} height={24} style={{ marginBottom: 20 }} />
           <Skeleton width={'100%' as any} height={40} borderRadius={20} />
@@ -315,19 +378,19 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       {/* Header */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.topBarTitle}>Explore</Text>
+        <Text style={[styles.topBarTitle, { color: colors.text }]}>Explore</Text>
       </View>
 
       {/* Search bar */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={16} color="rgba(255,255,255,0.4)" />
+      <View style={[styles.searchBar, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+        <Ionicons name="search" size={16} color={colors.textMuted} />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: colors.text }]}
           placeholder="Search people, posts, #tags..."
-          placeholderTextColor="rgba(255,255,255,0.3)"
+          placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={setQuery}
           returnKeyType="search"
@@ -336,7 +399,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         />
         {query.length > 0 && (
           <TouchableOpacity onPress={() => { setQuery(''); setActiveTab('top'); }}>
-            <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.5)" />
+            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
           </TouchableOpacity>
         )}
       </View>
@@ -345,14 +408,14 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         // ─── Search results ──────────────────────────────────────────────
         <View style={{ flex: 1 }}>
           {/* Tab bar */}
-          <View style={styles.tabRow}>
+          <View style={[styles.tabRow, { borderBottomColor: colors.border }]}>
             {SEARCH_TABS.map(t => (
               <TouchableOpacity
                 key={t.id}
                 style={[styles.tabBtn, activeTab === t.id && styles.tabBtnActive]}
                 onPress={() => setActiveTab(t.id)}
               >
-                <Text style={[styles.tabBtnText, activeTab === t.id && styles.tabBtnTextActive]}>
+                <Text style={[styles.tabBtnText, { color: activeTab === t.id ? '#818cf8' : colors.textMuted }]}>
                   {t.label}
                 </Text>
               </TouchableOpacity>
@@ -376,22 +439,22 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                  <Ionicons name="search-outline" size={40} color="#333" />
-                  <Text style={{ color: '#555', marginTop: 10 }}>No results for "{query}"</Text>
+                  <Ionicons name="search-outline" size={40} color={colors.textMuted} />
+                  <Text style={{ color: colors.textMuted, marginTop: 10 }}>No results for "{query}"</Text>
                 </View>
               }
               renderItem={({ item }) => {
                 if (activeTab === 'tags' || item.tag) {
                   return (
                     <TouchableOpacity style={styles.userRow} onPress={() => openHashtag(item.tag)}>
-                      <View style={styles.hashIcon}>
-                        <Ionicons name="pricetag-outline" size={18} color="#818cf8" />
+                      <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
+                        <Ionicons name="pricetag-outline" size={18} color={colors.accent} />
                       </View>
                       <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.userName}>{item.tag}</Text>
-                        <Text style={styles.userMeta}>{(item.posts ?? 0).toLocaleString()} posts</Text>
+                        <Text style={[styles.userName, { color: colors.text }]}>{item.tag}</Text>
+                        <Text style={[styles.userMeta, { color: colors.textMuted }]}>{(item.posts ?? 0).toLocaleString()} posts</Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
+                      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                     </TouchableOpacity>
                   );
                 }
@@ -399,10 +462,10 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
                 if (item.media_url) {
                   return (
                     <TouchableOpacity style={styles.postResultRow} onPress={() => setDetailPost(item)} activeOpacity={0.8}>
-                      <Image source={{ uri: item.media_url }} style={styles.postResultThumb} />
+                      <Image source={{ uri: item.media_url }} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.postResultCaption} numberOfLines={2}>{item.caption}</Text>
-                        <Text style={styles.postResultMeta}>
+                        <Text style={[styles.postResultCaption, { color: colors.text }]} numberOfLines={2}>{item.caption}</Text>
+                        <Text style={[styles.postResultMeta, { color: colors.textMuted }]}>
                           {item.profiles?.username} · {item.likes_count ?? 0} likes
                         </Text>
                       </View>
@@ -426,18 +489,18 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
             <>
               {/* Trending hashtags */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>TRENDING ON CAMPUS</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING ON CAMPUS</Text>
                 {trendingTags.map(({ tag, posts: count }, i) => (
                   <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
-                    <Text style={styles.trendNum}>{i + 1}</Text>
-                    <View style={styles.hashIcon}>
-                      <Ionicons name="pricetag-outline" size={16} color="#818cf8" />
+                    <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
+                    <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
+                      <Ionicons name="pricetag-outline" size={16} color={colors.accent} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.trendTag}>{tag}</Text>
-                      <Text style={styles.trendMeta}>{(count ?? 0).toLocaleString()} posts</Text>
+                      <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
+                      <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.2)" />
+                    <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -445,20 +508,31 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
               {/* Suggested people */}
               {suggested.length > 0 && (
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>SUGGESTED FOR YOU</Text>
-                  {suggested.map(user => <UserRow key={user.id} user={user} />)}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>SUGGESTED FOR YOU</Text>
+                    <TouchableOpacity onPress={() => {/* Link to all people */}}>
+                      <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '600' }}>See All</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 12, paddingRight: 20 }}
+                  >
+                    {suggested.map(user => <UserCard key={user.id} user={user} />)}
+                  </ScrollView>
                 </View>
               )}
 
               {/* Explore photo grid */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>EXPLORE</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>EXPLORE</Text>
               </View>
               <View style={styles.grid}>
                 {mediaGridPosts.map(post => <PostGridItem key={post.id} post={post} />)}
                 {mediaGridPosts.length === 0 && (
                   <View style={{ alignItems: 'center', width: '100%', paddingVertical: 20 }}>
-                    <Text style={{ color: '#555', fontSize: 13 }}>No photos yet</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 13 }}>No photos yet</Text>
                   </View>
                 )}
               </View>
@@ -494,64 +568,110 @@ const PostDetailModal: React.FC<{
   setIsMuted: (m: boolean) => void;
   isVisible?: boolean;
   onClose: () => void;
-}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, isVisible, onClose }) => (
-  <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-    <View style={{ flex: 1, backgroundColor: '#0a0a0a' }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
-        <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-          <Ionicons name="close" size={24} color="#fff" />
-        </TouchableOpacity>
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginLeft: 10 }}>
-          {post.profiles?.username ?? 'Post'}
-        </Text>
+}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, isVisible, onClose }) => {
+  const { colors } = useTheme();
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <Ionicons name="close" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={{ color: colors.text, fontWeight: '700', fontSize: 15, marginLeft: 10 }}>
+            {post.profiles?.username ?? 'Post'}
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <FeedPost
+            post={post}
+            currentUserId={currentUserId}
+            isLiked={isLiked}
+            isSaved={isSaved}
+            isActive={isVisible}
+            isMuted={isMuted}
+            setIsMuted={setIsMuted}
+          />
+        </ScrollView>
       </View>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <FeedPost
-          post={post}
-          currentUserId={currentUserId}
-          isLiked={isLiked}
-          isSaved={isSaved}
-          isActive={isVisible}
-          isMuted={isMuted}
-          setIsMuted={setIsMuted}
-        />
-      </ScrollView>
-    </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1 },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 4 },
-  topBarTitle: { fontSize: 22, fontWeight: '800', color: '#fff', flex: 1 },
-  hashtagPostCount: { fontSize: 12, color: 'rgba(255,255,255,0.4)' },
+  topBarTitle: { fontSize: 22, fontWeight: '800', flex: 1 },
+  hashtagPostCount: { fontSize: 12 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 20,
-    marginHorizontal: 14, marginVertical: 10, paddingHorizontal: 14, paddingVertical: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    marginHorizontal: 14, marginVertical: 6, paddingHorizontal: 14, paddingVertical: 4,
+    borderWidth: 1,
   },
-  searchInput: { flex: 1, color: '#fff', fontSize: 14 },
-  tabRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', marginBottom: 4 },
+  searchInput: { flex: 1, fontSize: 14 },
+  tabRow: { flexDirection: 'row', borderBottomWidth: 1, marginBottom: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#818cf8' },
-  tabBtnText: { fontSize: 13, color: 'rgba(255,255,255,0.4)', fontWeight: '600' },
+  tabBtnText: { fontSize: 13, fontWeight: '600' },
   tabBtnTextActive: { color: '#818cf8' },
-  section: { marginBottom: 20, paddingHorizontal: 14 },
-  sectionTitle: { fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 12 },
+  section: { marginBottom: 24, paddingHorizontal: 14 },
+  sectionTitle: { fontSize: 10, fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 12 },
+  
+  // Suggested Card (Horizontal)
+  suggestedCard: {
+    width: 150,
+    padding: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    position: 'relative',
+  },
+  cardClose: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    padding: 2,
+  },
+  cardAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    marginBottom: 10,
+  },
+  cardName: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  cardMeta: {
+    fontSize: 11,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  cardFollowBtn: {
+    width: '100%',
+    paddingVertical: 7,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cardFollowText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
   userRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
   userAvatar: { width: 44, height: 44, borderRadius: 22 },
-  userAvatarPlaceholder: { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
-  userName: { fontSize: 13, fontWeight: 'bold', color: '#fff' },
-  userMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 },
-  followBtn: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
+  userAvatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  userName: { fontSize: 13, fontWeight: 'bold' },
+  userMeta: { fontSize: 11, marginTop: 1 },
+  followBtn: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
   followBtnActive: { borderColor: 'rgba(99,102,241,0.4)', backgroundColor: 'rgba(99,102,241,0.1)' },
-  followBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  followBtnText: { fontSize: 12, fontWeight: '600' },
   trendRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
-  trendNum: { color: 'rgba(255,255,255,0.2)', fontSize: 12, fontWeight: 'bold', width: 16, textAlign: 'right' },
-  hashIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(99,102,241,0.1)', alignItems: 'center', justifyContent: 'center' },
-  trendTag: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
-  trendMeta: { color: 'rgba(255,255,255,0.35)', fontSize: 11 },
+  trendNum: { fontSize: 12, fontWeight: 'bold', width: 16, textAlign: 'right' },
+  hashIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  trendTag: { fontSize: 13, fontWeight: 'bold' },
+  trendMeta: { fontSize: 11 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, marginBottom: 80 },
   gridItem: { overflow: 'hidden', position: 'relative' },
   videoIndicator: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 3 },
@@ -559,7 +679,7 @@ const styles = StyleSheet.create({
   gridStat: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   gridStatText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   postResultRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
-  postResultThumb: { width: 56, height: 56, borderRadius: 8, backgroundColor: '#111' },
-  postResultCaption: { fontSize: 13, color: '#fff', lineHeight: 18 },
-  postResultMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 3 },
+  postResultThumb: { width: 56, height: 56, borderRadius: 8 },
+  postResultCaption: { fontSize: 13, lineHeight: 18 },
+  postResultMeta: { fontSize: 11, marginTop: 3 },
 });

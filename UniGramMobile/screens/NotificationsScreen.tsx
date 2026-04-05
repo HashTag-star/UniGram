@@ -7,6 +7,7 @@ import { CachedImage } from '../components/CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../context/ThemeContext';
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -83,6 +84,7 @@ const NotifItem: React.FC<{
   item: Notif;
   onPress: (item: Notif) => void;
 }> = React.memo(({ item, onPress }) => {
+  const { colors } = useTheme();
   const icon = notifIcon(item.type);
   const actor = item.profiles;
 
@@ -108,13 +110,13 @@ const NotifItem: React.FC<{
 
       {/* Text */}
       <View style={styles.textWrap}>
-        <Text style={styles.notifText} numberOfLines={2}>
+        <Text style={[styles.notifText, { color: colors.textSub }]} numberOfLines={2}>
           {actor?.username && (
-            <Text style={styles.actorName}>@{actor.username} </Text>
+            <Text style={[styles.actorName, { color: colors.text }]}>@{actor.username} </Text>
           )}
           {item.text}
         </Text>
-        <Text style={styles.notifTime}>{timeAgo(item.created_at)}</Text>
+        <Text style={[styles.notifTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
       </View>
 
       {/* Post thumbnail */}
@@ -139,6 +141,7 @@ interface Props {
 }
 
 export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onBack }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
@@ -227,7 +230,7 @@ export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onB
     if (!data.length) return null;
     return (
       <View key={title}>
-        <Text style={styles.sectionLabel}>{title}</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>{title}</Text>
         {data.map(item => (
           <NotifItem key={item.id} item={item} onPress={handlePress} />
         ))}
@@ -238,17 +241,17 @@ export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onB
   const unreadCount = notifs.filter(n => !n.is_read).length;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         {onBack ? (
           <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
         ) : (
           <View style={styles.backBtn} />
         )}
-        <Text style={styles.headerTitle}>Notifications</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
         {unreadCount > 0 ? (
           <TouchableOpacity
             onPress={() => {

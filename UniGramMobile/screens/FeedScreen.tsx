@@ -23,6 +23,7 @@ import { getPersonalizedFeed, recordImpression } from '../services/algorithm';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialLike } from '../hooks/useSocialSync';
+import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
 
@@ -54,6 +55,7 @@ const StoryBar: React.FC<{
   onStoryPress: (idx: number) => void;
   onYourStoryPress: () => void;
 }> = ({ storyGroups, currentProfile, viewedIds, onStoryPress, onYourStoryPress }) => {
+  const { colors } = useTheme();
   const ownGroupIdx = storyGroups.findIndex(g => g.profile.id === currentProfile?.id);
   const ownGroup = ownGroupIdx !== -1 ? storyGroups[ownGroupIdx] : null;
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
@@ -84,7 +86,7 @@ const StoryBar: React.FC<{
             <Ionicons name="add" size={14} color="#fff" />
           </TouchableOpacity>
         </View>
-        <Text style={styles.storyUsername} numberOfLines={1}>Your Story</Text>
+        <Text style={[styles.storyUsername, { color: colors.textSub }]} numberOfLines={1}>Your Story</Text>
       </TouchableOpacity>
 
       {filteredGroups.map((group, i) => {
@@ -101,7 +103,7 @@ const StoryBar: React.FC<{
                     </View>}
               </View>
             </View>
-            <Text style={[styles.storyUsername, allViewed && { color: '#555' }]} numberOfLines={1}>
+            <Text style={[styles.storyUsername, { color: allViewed ? colors.textMuted : colors.textSub }]} numberOfLines={1}>
               {group.profile.username}
             </Text>
           </TouchableOpacity>
@@ -556,6 +558,7 @@ const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }
 
 // ─── Post Meta Cycler ─────────────────────────────────────────────────────────
 const PostMetaCycler: React.FC<{ location?: string; song?: string }> = ({ location, song }) => {
+  const { colors } = useTheme();
   const [index, setIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const items = [location, song].filter(Boolean) as string[];
@@ -577,11 +580,11 @@ const PostMetaCycler: React.FC<{ location?: string; song?: string }> = ({ locati
 
   return (
     <Animated.View style={{ opacity: fadeAnim, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      <Ionicons 
-        name={items[index] === song ? "musical-note" : "location-outline"} 
-        size={10} color="rgba(255,255,255,0.4)" 
+      <Ionicons
+        name={items[index] === song ? "musical-note" : "location-outline"}
+        size={10} color={colors.textMuted}
       />
-      <Text style={styles.postMeta} numberOfLines={1}>{items[index]}</Text>
+      <Text style={[styles.postMeta, { color: colors.textSub }]} numberOfLines={1}>{items[index]}</Text>
     </Animated.View>
   );
 };
@@ -695,6 +698,7 @@ export const FeedPost: React.FC<{
   onCommentCountChange?: (postId: string, delta: number) => void;
   onDeleted?: (postId: string) => void;
 }> = React.memo(({ post, currentUserId, isLiked: initLiked, isSaved: initSaved, isActive, isMuted, setIsMuted, onCommentCountChange, onDeleted }) => {
+  const { colors } = useTheme();
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(post.id, 'POST', initLiked ?? false, post.likes_count ?? 0);
   const [saved, setSaved] = useState(initSaved);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
@@ -704,9 +708,7 @@ export const FeedPost: React.FC<{
   const [songLoading, setSongLoading] = useState(false);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
-  const songPlayer = useAudioPlayer(songPreviewUrl ?? '', {
-    loop: true,
-  });
+  const songPlayer = useAudioPlayer(songPreviewUrl ?? '');
 
   useEffect(() => {
     if (songPlayer) {
@@ -826,7 +828,7 @@ export const FeedPost: React.FC<{
   const profile = post.profiles;
 
   return (
-    <View style={styles.postCard}>
+    <View style={[styles.postCard, { borderBottomColor: colors.border }]}>
       {fullVideoUri && (
         <FullVideoModal visible uri={fullVideoUri} onClose={() => setFullVideoUri(null)} />
       )}
@@ -842,18 +844,18 @@ export const FeedPost: React.FC<{
           </View>
           <View style={{ marginLeft: 10, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={styles.postUsername}>{profile?.username ?? 'user'}</Text>
+              <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
               {profile?.is_verified && <VerifiedBadge type={profile.verification_type} />}
             </View>
             <PostMetaCycler location={post.location} song={post.song} />
-            <Text style={styles.postMeta}>{profile?.major ? `${profile.major} · ` : ''}{timeAgo(post.created_at)}</Text>
+            <Text style={[styles.postMeta, { color: colors.textSub }]}>{profile?.major ? `${profile.major} · ` : ''}{timeAgo(post.created_at)}</Text>
           </View>
         </View>
         <TouchableOpacity
           style={{ padding: 4 }}
           onPress={() => setShowOptions(true)}
         >
-          <Ionicons name="ellipsis-horizontal" size={20} color="rgba(255,255,255,0.5)" />
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
 
@@ -914,8 +916,8 @@ export const FeedPost: React.FC<{
         </View>
       ) : post.type === 'thread' ? (
         <View style={styles.threadBadge}>
-          <Ionicons name="chatbubbles-outline" size={12} color="rgba(255,255,255,0.4)" />
-          <Text style={styles.threadLabel}>Thread</Text>
+          <Ionicons name="chatbubbles-outline" size={12} color={colors.textMuted} />
+          <Text style={[styles.threadLabel, { color: colors.textMuted }]}>Thread</Text>
         </View>
       ) : null}
 
@@ -923,45 +925,45 @@ export const FeedPost: React.FC<{
         <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
           <TouchableOpacity onPress={() => doLike()} style={styles.actionBtn}>
             <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : '#fff'} />
+              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
             </Animated.View>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
-            <Ionicons name="chatbubble-outline" size={24} color="#fff" />
+            <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionBtn}
             onPress={() => setShowShare(true)}
           >
-            <Ionicons name="paper-plane-outline" size={23} color="#fff" />
+            <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
           </TouchableOpacity>
         </View>
         <TouchableOpacity onPress={toggleSave} style={styles.actionBtn}>
-          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? '#fbbf24' : '#fff'} />
+          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? '#fbbf24' : colors.text} />
         </TouchableOpacity>
       </View>
 
       <View style={styles.postInfo}>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
-          <Text style={styles.likesText}>{fmtCount(likes)} likes</Text>
+          <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
           {commentCount > 0 && (
             <TouchableOpacity onPress={() => setShowComments(true)}>
-              <Text style={[styles.likesText, { color: 'rgba(255,255,255,0.45)', fontWeight: '400' }]}>
+              <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>
                 {fmtCount(commentCount)} comments
               </Text>
             </TouchableOpacity>
           )}
         </View>
         {post.caption ? (
-          <Text style={styles.captionText} numberOfLines={3}>
-            <Text style={styles.postUsername}>{profile?.username ?? 'user'} </Text>
+          <Text style={[styles.captionText, { color: colors.text }]} numberOfLines={3}>
+            <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'} </Text>
             {post.caption}
           </Text>
         ) : null}
         {post.tagged_users?.length > 0 && (
           <Text style={styles.taggedText}>with {post.tagged_users.map((u: string) => `@${u}`).join(', ')}</Text>
         )}
-        <Text style={styles.timeText}>{timeAgo(post.created_at)}</Text>
+        <Text style={[styles.timeText, { color: colors.textMuted }]}>{timeAgo(post.created_at)}</Text>
       </View>
 
       <CommentSheet
@@ -1001,6 +1003,7 @@ interface FeedScreenProps {
 
 export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0 }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
@@ -1194,13 +1197,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} />
 
-      <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }] }]}>
-        <Text style={styles.topBarLogo}>UniGram</Text>
-        <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative' }}>
-          <Ionicons name="notifications-outline" size={24} color="#fff" />
+      <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg, borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
+        <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
+        <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
+          <Ionicons name="notifications-outline" size={24} color={colors.text} />
           {notifBadge > 0 && (
             <View style={styles.notifHeaderBadge}>
               <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
@@ -1237,8 +1240,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
         }
         ListEmptyComponent={loading ? null : (
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <Ionicons name="image-outline" size={48} color="#333" />
-            <Text style={{ color: '#555', marginTop: 12, fontSize: 15 }}>Follow people to see their posts!</Text>
+            <Ionicons name="image-outline" size={48} color={colors.textMuted} />
+            <Text style={{ color: colors.textMuted, marginTop: 12, fontSize: 15 }}>Follow people to see their posts!</Text>
           </View>
         )}
         renderItem={({ item }) => (
@@ -1295,13 +1298,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1 },
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingBottom: 8, backgroundColor: '#000',
+    paddingHorizontal: 16, paddingBottom: 8,
   },
-  topBarLogo: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
+  topBarLogo: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   notifHeaderBadge: {
     position: 'absolute', top: -4, right: -6,
     minWidth: 16, height: 16, borderRadius: 8,
@@ -1362,10 +1365,10 @@ const styles = StyleSheet.create({
   postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 6 },
   actionBtn: { padding: 6 },
   postInfo: { paddingHorizontal: 14, paddingBottom: 14 },
-  likesText: { fontSize: 13, fontWeight: 'bold', color: '#fff' },
-  captionText: { fontSize: 13, color: 'rgba(255,255,255,0.85)', lineHeight: 18, marginBottom: 4, marginTop: 2 },
+  likesText: { fontSize: 13, fontWeight: 'bold' },
+  captionText: { fontSize: 13, lineHeight: 18, marginBottom: 4, marginTop: 2 },
   taggedText: { fontSize: 11, color: '#818cf8', marginBottom: 3 },
-  timeText: { fontSize: 10, color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+  timeText: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
   carouselIndicator: {
     position: 'absolute', top: 12, right: 12,
     backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12,

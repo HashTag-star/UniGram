@@ -10,7 +10,7 @@ let Notifications: any = null;
 let Device: any = null;
 
 async function loadModules() {
-  if (isExpoGo) return; // skip entirely in Expo Go
+  if (isExpoGo) return;
   if (!Notifications) {
     try {
       Notifications = await import('expo-notifications');
@@ -40,18 +40,18 @@ export async function registerForPushNotifications(userId: string): Promise<stri
 
   if (finalStatus !== 'granted') return null;
 
-  const tokenData = await Notifications.getExpoPushTokenAsync();
+  // Must pass projectId for SDK 53+
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? '9e110753-5591-4a10-ac02-018cf974dc91';
+  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
   const token = tokenData.data;
 
   // Store token in Supabase
-  await supabase.from('push_tokens').upsert({
-    user_id: userId,
-    token,
-    platform: Platform.OS as 'ios' | 'android' | 'web',
-    updated_at: new Date().toISOString(),
-  });
+  await supabase.from('push_tokens').upsert(
+    { user_id: userId, token, platform: Platform.OS, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id,token' },
+  );
 
-  // Configure notification behavior
+  // Configure notification display behaviour
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
@@ -70,6 +70,46 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   }
 
   return token;
+}
+
+/**
+ * Send an Expo push notification to one or more users.
+ * Looks up their registered tokens from push_tokens table and calls Expo's push API.
+ */
+export async function sendPushToUser(
+  userId: string,
+  title: string,
+  body: string,
+  data?: Record<string, any>,
+): Promise<void> {
+  // Fetch this user's push tokens
+  const { data: rows, error } = await supabase
+    .from('push_tokens')
+    .select('token')
+    .eq('user_id', userId);
+
+  if (error || !rows?.length) return;
+
+  const messages = rows.map((r: any) => ({
+    to: r.token,
+    title,
+    body,
+    data: data ?? {},
+    sound: 'default',
+    priority: 'high',
+    channelId: 'default',
+  }));
+
+  // Expo push API — free, handles both FCM and APNs routing
+  await fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(messages),
+  });
 }
 
 export async function scheduleLocalNotification(title: string, body: string, data?: object) {

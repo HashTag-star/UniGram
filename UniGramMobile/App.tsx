@@ -24,7 +24,7 @@ import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
@@ -202,6 +202,7 @@ const loadStyles = StyleSheet.create({
 // ─── App shell ────────────────────────────────────────────────────────────────
 function AppShell() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [session, setSession] = useState<any>(undefined);
   const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
   const [activeTab, setActiveTab] = useState<Tab>('feed');
@@ -212,6 +213,7 @@ function AppShell() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [hideTabBar, setHideTabBar] = useState(false); // for messages chat & full-screen
   const [feedRefreshKey, setFeedRefreshKey] = useState(0);
+  const [profileRefreshKey, setProfileRefreshKey] = useState(0);
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -255,9 +257,13 @@ function AppShell() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
-        () => {
+        (payload: any) => {
           if (!showNotifsRef.current) {
             setNotifBadge(b => b + 1);
+          }
+          // If this user was just verified, force-reload the profile screen
+          if (payload.new?.type === 'verification_approved') {
+            setProfileRefreshKey(k => k + 1);
           }
         }
       )
@@ -310,8 +316,8 @@ function AppShell() {
   const isMainVisible = !showNotifications;
 
   return (
-    <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" translucent={false} />
+    <View style={[styles.root, { backgroundColor: colors.bg }]}>
+      <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} translucent={false} />
 
       {/* ── Screens container (flex:1 → tab bar is pushed to bottom) ── */}
       <View style={styles.screensContainer}>
@@ -344,6 +350,7 @@ function AppShell() {
         </View>
         <View style={[styles.screen, hide('profile')]}>
           <ProfileScreen
+            key={`${viewedUserId ?? session.user.id}-${profileRefreshKey}`}
             userId={viewedUserId ?? session.user.id}
             isOwn={!viewedUserId}
             isVisible={activeTab === 'profile' && isMainVisible}
@@ -374,7 +381,7 @@ function AppShell() {
 
       {/* Bottom tab bar */}
       {showTabBar && (
-        <SafeAreaView edges={['bottom']} style={styles.bottomNav}>
+        <SafeAreaView edges={['bottom']} style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
           <View style={styles.bottomNavInner}>
             {TABS.map(tab => {
               const isActive = activeTab === tab.id;
@@ -386,14 +393,14 @@ function AppShell() {
                   activeOpacity={0.7}
                 >
                   {isActive && <View style={styles.tabIndicator} />}
-                  <View style={[styles.tabIconWrap, isActive && styles.tabIconActive]}>
+                  <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '15' }]}>
                     <Ionicons
                       name={(isActive ? tab.activeIcon : tab.icon) as any}
                       size={22}
-                      color={isActive ? '#818cf8' : 'rgba(255,255,255,0.4)'}
+                      color={isActive ? colors.accent : colors.textMuted}
                     />
                   </View>
-                  <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
+                  <Text style={[styles.tabLabel, { color: colors.textMuted }, isActive && { color: colors.accent }]}>{tab.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -403,7 +410,7 @@ function AppShell() {
 
       {/* Notifications overlay — full-screen */}
       {showNotifications && (
-        <View style={styles.notifOverlay}>
+        <View style={[styles.notifOverlay, { backgroundColor: colors.bg }]}>
           <NotificationsScreen
             userId={session.user.id}
             onBadgeClear={() => setNotifBadge(0)}

@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { CommentsSkeleton } from './Skeleton';
 import { getPostComments, addPostComment, deletePostComment } from '../services/posts';
 import { getReelComments, addReelComment } from '../services/reels';
+import { useTheme } from '../context/ThemeContext';
 
 function timeAgo(ts: string) {
   const d = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -30,6 +31,7 @@ export const CommentSheet: React.FC<Props> = ({
   visible, targetId, targetType, currentUserId, onClose, onCountChange,
 }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
@@ -100,14 +102,14 @@ export const CommentSheet: React.FC<Props> = ({
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={[styles.sheet, { paddingBottom: insets.bottom || 16 }]}
+          style={[styles.sheet, { backgroundColor: colors.bg, paddingBottom: insets.bottom || 16 }]}
         >
           {/* Handle */}
           <View style={styles.handle} />
-          <View style={styles.header}>
-            <Text style={styles.title}>Comments</Text>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
             <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-              <Ionicons name="close" size={22} color="rgba(255,255,255,0.6)" />
+              <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
@@ -121,9 +123,9 @@ export const CommentSheet: React.FC<Props> = ({
               contentContainerStyle={{ padding: 14, paddingBottom: 8 }}
               ListEmptyComponent={
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <Ionicons name="chatbubble-outline" size={40} color="#333" />
-                  <Text style={{ color: '#555', marginTop: 10, fontSize: 14 }}>No comments yet</Text>
-                  <Text style={{ color: '#444', marginTop: 4, fontSize: 12 }}>Be the first to comment!</Text>
+                  <Ionicons name="chatbubble-outline" size={40} color={colors.textMuted} />
+                  <Text style={{ color: colors.textSub, marginTop: 10, fontSize: 14 }}>No comments yet</Text>
+                  <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>Be the first to comment!</Text>
                 </View>
               }
               renderItem={({ item }) => {
@@ -133,21 +135,21 @@ export const CommentSheet: React.FC<Props> = ({
                   <View style={styles.commentRow}>
                     {profile?.avatar_url
                       ? <Image source={{ uri: profile.avatar_url }} style={styles.commentAvatar} />
-                      : <View style={[styles.commentAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                          <Ionicons name="person" size={14} color="#555" />
+                      : <View style={[styles.commentAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                          <Ionicons name="person" size={14} color={colors.textMuted} />
                         </View>
                     }
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={styles.commentUser}>{profile?.username ?? 'user'}</Text>
-                        <Text style={styles.commentTime}>{timeAgo(item.created_at)}</Text>
+                        <Text style={[styles.commentUser, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
+                        <Text style={[styles.commentTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
                         {isMe && (
                           <TouchableOpacity onPress={() => deleteComment(item)} style={{ marginLeft: 'auto' }}>
-                            <Ionicons name="trash-outline" size={14} color="rgba(255,255,255,0.25)" />
+                            <Ionicons name="trash-outline" size={14} color={colors.textMuted} />
                           </TouchableOpacity>
                         )}
                       </View>
-                      <Text style={styles.commentText}>{item.text}</Text>
+                      <Text style={[styles.commentText, { color: colors.textSub }]}>{item.text}</Text>
                     </View>
                   </View>
                 );
@@ -156,14 +158,14 @@ export const CommentSheet: React.FC<Props> = ({
           )}
 
           {/* Input */}
-          <View style={styles.inputRow}>
+          <View style={[styles.inputRow, { borderTopColor: colors.border }]}>
             <TextInput
               ref={inputRef}
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
               value={text}
               onChangeText={setText}
               placeholder="Add a comment..."
-              placeholderTextColor="rgba(255,255,255,0.3)"
+              placeholderTextColor={colors.textMuted}
               returnKeyType="send"
               onSubmitEditing={send}
               multiline
@@ -175,7 +177,7 @@ export const CommentSheet: React.FC<Props> = ({
             >
               {sending
                 ? <ActivityIndicator size="small" color="#fff" />
-                : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : 'rgba(255,255,255,0.25)'} />
+                : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : colors.textMuted} />
               }
             </TouchableOpacity>
           </View>
@@ -188,30 +190,28 @@ export const CommentSheet: React.FC<Props> = ({
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: {
-    backgroundColor: '#111',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     maxHeight: '75%',
     minHeight: 300,
   },
-  handle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 4 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' },
-  title: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  handle: { width: 40, height: 4, backgroundColor: 'rgba(128,128,128,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 4 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  title: { fontSize: 15, fontWeight: '700' },
   commentRow: { flexDirection: 'row', marginBottom: 16 },
   commentAvatar: { width: 32, height: 32, borderRadius: 16 },
-  commentUser: { fontSize: 12, fontWeight: 'bold', color: '#fff' },
-  commentTime: { fontSize: 11, color: 'rgba(255,255,255,0.3)' },
-  commentText: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 3, lineHeight: 18 },
+  commentUser: { fontSize: 12, fontWeight: 'bold' },
+  commentTime: { fontSize: 11 },
+  commentText: { fontSize: 13, marginTop: 3, lineHeight: 18 },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 10,
     paddingHorizontal: 14, paddingVertical: 10,
-    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
+    borderTopWidth: 1,
   },
   input: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20, borderWidth: 1,
     paddingHorizontal: 14, paddingVertical: 9,
-    color: '#fff', fontSize: 14, maxHeight: 100,
+    fontSize: 14, maxHeight: 100,
   },
   sendBtn: { padding: 10, borderRadius: 20 },
   sendBtnActive: { backgroundColor: '#4f46e5' },

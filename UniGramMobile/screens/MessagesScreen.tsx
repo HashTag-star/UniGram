@@ -62,6 +62,7 @@ import {
   sendSharedContent,
 } from '../services/messages';
 import { updateActiveStatus } from '../services/profiles';
+import { useTheme } from '../context/ThemeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ const TypingDots: React.FC = () => {
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: 'rgba(255,255,255,0.55)',
+    backgroundColor: 'rgba(150,150,150,0.5)',
     marginHorizontal: 2,
     opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
     transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }],
@@ -148,6 +149,7 @@ const VoiceWaveform: React.FC<{
   duration: number;
   isMe: boolean;
 }> = ({ uri, duration, isMe }) => {
+  const { colors } = useTheme();
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const player = useRef<any>(null);
@@ -179,9 +181,9 @@ const VoiceWaveform: React.FC<{
   };
 
   return (
-    <View style={[styles.voiceBubble, isMe ? styles.voiceBubbleMe : styles.voiceBubbleThem]}>
+    <View style={[styles.voiceBubble, isMe ? styles.voiceBubbleMe : [styles.voiceBubbleThem, { backgroundColor: colors.bg2 }]]}>
       <TouchableOpacity onPress={togglePlayback} style={styles.voicePlayBtn}>
-        <Ionicons name={playing ? 'pause' : 'play'} size={20} color="#fff" />
+        <Ionicons name={playing ? 'pause' : 'play'} size={20} color={isMe ? '#fff' : colors.text} />
       </TouchableOpacity>
       <View style={styles.waveformContainer}>
         {bars.map((h, i) => (
@@ -192,14 +194,14 @@ const VoiceWaveform: React.FC<{
               {
                 height: h,
                 backgroundColor: i / bars.length <= progress
-                  ? '#fff'
-                  : 'rgba(255,255,255,0.3)'
+                  ? (isMe ? '#fff' : colors.accent)
+                  : (isMe ? 'rgba(255,255,255,0.3)' : colors.textMuted + '40')
               }
             ]}
           />
         ))}
       </View>
-      <Text style={styles.voiceDuration}>
+      <Text style={[styles.voiceDuration, { color: isMe ? '#fff' : colors.textSub }]}>
         {Math.floor(duration / 1000)}s
       </Text>
     </View>
@@ -211,28 +213,32 @@ const VoiceWaveform: React.FC<{
 const ReplyingToHeader: React.FC<{
   msg: any;
   onCancel: () => void;
-}> = ({ msg, onCancel }) => (
-  <View style={styles.replyHeader}>
-    <View style={styles.replyHeaderBar} />
-    <View style={{ flex: 1, paddingLeft: 12 }}>
-      <Text style={styles.replyHeaderTitle}>
-        Replying to {msg.profiles?.full_name || msg.profiles?.username}
-      </Text>
-      <Text style={styles.replyHeaderText} numberOfLines={1}>
-        {msg.type === 'image' ? '📷 Photo' : msg.type === 'audio' ? '🎤 Voice message' : msg.text}
-      </Text>
+}> = ({ msg, onCancel }) => {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.replyHeader, { borderBottomColor: colors.border }]}>
+      <View style={styles.replyHeaderBar} />
+      <View style={{ flex: 1, paddingLeft: 12 }}>
+        <Text style={styles.replyHeaderTitle}>
+          Replying to {msg.profiles?.full_name || msg.profiles?.username}
+        </Text>
+        <Text style={[styles.replyHeaderText, { color: colors.textSub }]} numberOfLines={1}>
+          {msg.type === 'image' ? '📷 Photo' : msg.type === 'audio' ? '🎤 Voice message' : msg.text}
+        </Text>
+      </View>
+      <TouchableOpacity onPress={onCancel} style={{ padding: 8 }}>
+        <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+      </TouchableOpacity>
     </View>
-    <TouchableOpacity onPress={onCancel} style={{ padding: 8 }}>
-      <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.4)" />
-    </TouchableOpacity>
-  </View>
-);
+  );
+};
 
 // ─── Voice Recorder ───────────────────────────────────────────────────────────
 
 const VoiceRecorder: React.FC<{
   onRecordComplete: (uri: string, duration: number) => void;
 }> = ({ onRecordComplete }) => {
+  const { colors } = useTheme();
   const [duration, setDuration] = useState(0);
   const timerRef = useRef<any>(null);
   const isRecordingRef = useRef(false);
@@ -271,7 +277,7 @@ const VoiceRecorder: React.FC<{
       style={styles.voiceRecordBtn}
     >
       <View style={[styles.voiceRecordIcon, duration > 0 && styles.voiceRecordIconActive]}>
-        <Ionicons name="mic" size={20} color={duration > 0 ? '#fff' : 'rgba(255,255,255,0.6)'} />
+        <Ionicons name="mic" size={20} color={duration > 0 ? '#fff' : colors.textMuted} />
       </View>
       {duration > 0 && (
         <View style={styles.voiceRecordingLabel}>
@@ -352,6 +358,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   onReactionTap,
   onSwipeReply,
 }) => {
+  const { colors } = useTheme();
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const swipeX = useSharedValue(0);
 
@@ -420,7 +427,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     <>
       {showDay && (
         <View style={styles.dayDivider}>
-          <Text style={styles.dayLabel}>{fmtDay(msg.created_at)}</Text>
+          <Text style={[styles.dayLabel, { color: colors.textMuted }]}>{fmtDay(msg.created_at)}</Text>
         </View>
       )}
 
@@ -448,8 +455,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               msg.profiles?.avatar_url ? (
                 <Image source={{ uri: msg.profiles.avatar_url }} style={styles.msgAvatar} />
               ) : (
-                <View style={[styles.msgAvatar, { backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="person" size={14} color="#555" />
+                <View style={[styles.msgAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={14} color={colors.textMuted} />
                 </View>
               )
             ) : null}
@@ -481,8 +488,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             ) : msg.type === 'audio' ? (
               <VoiceWaveform uri={msg.media_url} duration={msg.duration || 0} isMe={isMe} />
             ) : (
-              <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
-                <Text style={styles.bubbleText}>{msg.text}</Text>
+              <View style={[styles.bubble, isMe ? styles.bubbleMe : [styles.bubbleThem, { backgroundColor: colors.bg2 }]]}>
+                <Text style={[styles.bubbleText, !isMe && { color: colors.text }]}>{msg.text}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -493,11 +500,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               {Object.entries(grouped).map(([emoji, { count, iMine }]) => (
                 <TouchableOpacity
                   key={emoji}
-                  style={[styles.reactionBadge, iMine && styles.reactionBadgeMine]}
+                  style={[styles.reactionBadge, { backgroundColor: colors.bg2 }, iMine && styles.reactionBadgeMine]}
                   onPress={() => onReactionTap(msg, emoji)}
                 >
                   <Text style={{ fontSize: 13 }}>{emoji}</Text>
-                  {count > 1 && <Text style={styles.reactionCount}>{count}</Text>}
+                  {count > 1 && <Text style={[styles.reactionCount, { color: colors.textSub }]}>{count}</Text>}
                 </TouchableOpacity>
               ))}
             </View>
@@ -506,12 +513,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           {/* Timestamp + read receipt */}
           {showTimestamp && (
             <View style={[styles.msgMeta, isMe && { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 3 }]}>
-              <Text style={styles.msgTime}>{fmtTime(msg.created_at)}</Text>
+              <Text style={[styles.msgTime, { color: colors.textMuted }]}>{fmtTime(msg.created_at)}</Text>
               {isMe && (
                 <Ionicons
                   name={isRead ? 'checkmark-done' : 'checkmark'}
                   size={12}
-                  color={isRead ? '#818cf8' : 'rgba(255,255,255,0.35)'}
+                  color={isRead ? colors.accent : colors.textMuted}
                 />
               )}
             </View>
@@ -534,6 +541,7 @@ interface NewConvModalProps {
 type NewConvMode = 'dm' | 'group-pick' | 'group-name';
 
 const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onClose, onOpen }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<NewConvMode>('dm');
   const [query, setQuery] = useState('');
@@ -639,8 +647,8 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
           {item.avatar_url ? (
             <Image source={{ uri: item.avatar_url }} style={styles.userResultAvatar} />
           ) : (
-            <View style={[styles.userResultAvatar, { backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="person" size={20} color="#555" />
+            <View style={[styles.userResultAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="person" size={20} color={colors.textMuted} />
             </View>
           )}
           {isPickingGroup && isSelected && (
@@ -651,11 +659,11 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
         </View>
         <View style={{ flex: 1, marginLeft: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={styles.userResultName}>{item.full_name ?? item.username}</Text>
+            <Text style={[styles.userResultName, { color: colors.text }]}>{item.full_name ?? item.username}</Text>
             {item.is_verified && <VerifiedBadge type={item.verification_type} size="sm" />}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.userResultUsername}>@{item.username}</Text>
+            <Text style={[styles.userResultUsername, { color: colors.textMuted }]}>@{item.username}</Text>
             {item.relationship && (
               <View style={[
                 styles.relBadge,
@@ -671,9 +679,9 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
         </View>
         {!isPickingGroup && (
           creating === item.id ? (
-            <ActivityIndicator size="small" color="#6366f1" />
+            <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
           )
         )}
       </TouchableOpacity>
@@ -694,18 +702,18 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
       presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View style={[styles.newConvModal, { paddingTop: insets.top }]}>
+      <View style={[styles.newConvModal, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
         {/* Header */}
-        <View style={styles.newConvHeader}>
+        <View style={[styles.newConvHeader, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="close" size={24} color="#fff" />
+            <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.newConvTitle}>
+          <Text style={[styles.newConvTitle, { color: colors.text }]}>
             {mode === 'dm' ? 'New Message' : mode === 'group-pick' ? 'Add People' : 'Group Name'}
           </Text>
           {mode === 'group-pick' && selectedUsers.length > 0 ? (
             <TouchableOpacity onPress={() => setMode('group-name')}>
-              <Text style={{ color: '#6366f1', fontWeight: '600', fontSize: 15 }}>Next</Text>
+              <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 15 }}>Next</Text>
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
@@ -715,19 +723,19 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
         {/* Group name screen */}
         {mode === 'group-name' ? (
           <View style={{ flex: 1, padding: 20 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 8, letterSpacing: 1 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8, letterSpacing: 1 }}>
               GROUP NAME
             </Text>
             <TextInput
-              style={styles.groupNameInput}
+              style={[styles.groupNameInput, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
               value={groupName}
               onChangeText={setGroupName}
               placeholder="Enter a group name…"
-              placeholderTextColor="rgba(255,255,255,0.3)"
+              placeholderTextColor={colors.textMuted}
               maxLength={40}
               autoFocus
             />
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 6 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 6 }}>
               {selectedUsers.length} member{selectedUsers.length !== 1 ? 's' : ''} selected
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 16 }} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
@@ -736,11 +744,11 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
                   {u.avatar_url ? (
                     <Image source={{ uri: u.avatar_url }} style={{ width: 48, height: 48, borderRadius: 24 }} />
                   ) : (
-                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="person" size={20} color="#555" />
+                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="person" size={20} color={colors.textMuted} />
                     </View>
                   )}
-                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 4 }} numberOfLines={1}>{u.username}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 4 }} numberOfLines={1}>{u.username}</Text>
                 </View>
               ))}
             </ScrollView>
@@ -763,22 +771,22 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
           <>
             {/* Group chat button (only in DM mode) */}
             {mode === 'dm' && (
-              <TouchableOpacity style={styles.newGroupRow} onPress={() => setMode('group-pick')}>
+              <TouchableOpacity style={[styles.newGroupRow, { borderBottomColor: colors.border }]} onPress={() => setMode('group-pick')}>
                 <View style={styles.newGroupIcon}>
                   <Ionicons name="people" size={20} color="#fff" />
                 </View>
-                <Text style={styles.newGroupLabel}>New Group Chat</Text>
-                <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
+                <Text style={[styles.newGroupLabel, { color: colors.text }]}>New Group Chat</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
               </TouchableOpacity>
             )}
 
             {/* Search bar */}
-            <View style={styles.newConvSearch}>
-              <Ionicons name="search" size={16} color="rgba(255,255,255,0.4)" />
+            <View style={[styles.newConvSearch, { backgroundColor: colors.bg2 }]}>
+              <Ionicons name="search" size={16} color={colors.textMuted} />
               <TextInput
-                style={styles.newConvInput}
+                style={[styles.newConvInput, { color: colors.text }]}
                 placeholder={mode === 'group-pick' ? 'Add people…' : 'Search people…'}
-                placeholderTextColor="rgba(255,255,255,0.3)"
+                placeholderTextColor={colors.textMuted}
                 value={query}
                 onChangeText={setQuery}
                 autoFocus={mode === 'group-pick'}
@@ -786,7 +794,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
               />
               {query.length > 0 && (
                 <TouchableOpacity onPress={() => setQuery('')}>
-                  <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.3)" />
+                  <Ionicons name="close-circle" size={16} color={colors.textMuted} />
                 </TouchableOpacity>
               )}
             </View>
@@ -806,7 +814,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
                     onPress={() => toggleGroupUser(u)}
                   >
                     <Text style={styles.selectedChipText}>{u.username}</Text>
-                    <Ionicons name="close" size={12} color="rgba(255,255,255,0.6)" />
+                    <Ionicons name="close" size={12} color="#fff" />
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -819,13 +827,13 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
               <View style={{ alignItems: 'center', marginTop: 60 }}>
                 {query.trim() ? (
                   <>
-                    <Ionicons name="person-outline" size={44} color="#333" />
-                    <Text style={{ color: '#555', marginTop: 12 }}>No users found</Text>
+                    <Ionicons name="person-outline" size={44} color={colors.textMuted} />
+                    <Text style={{ color: colors.textSub, marginTop: 12 }}>No users found</Text>
                   </>
                 ) : (
                   <>
-                    <Ionicons name="people-outline" size={44} color="#333" />
-                    <Text style={{ color: '#555', marginTop: 12, textAlign: 'center', marginHorizontal: 30 }}>
+                    <Ionicons name="people-outline" size={44} color={colors.textMuted} />
+                    <Text style={{ color: colors.textSub, marginTop: 12, textAlign: 'center', marginHorizontal: 30 }}>
                       Search for someone or start a group chat.
                     </Text>
                   </>
@@ -855,6 +863,7 @@ interface ChatViewProps {
 }
 
 const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { convId, otherProfile } = convData;
 
@@ -1113,29 +1122,29 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
       {/* Header */}
-      <View style={[styles.chatHeader, { paddingTop: insets.top + 6 }]}>
+      <View style={[styles.chatHeader, { paddingTop: insets.top + 6, backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={onBack} style={styles.chatBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="arrow-back" size={22} color="#fff" />
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.chatHeaderUser} activeOpacity={0.8}>
           <View style={{ position: 'relative' }}>
             {otherProfile?.avatar_url ? (
               <Image source={{ uri: otherProfile.avatar_url }} style={styles.chatAvatar} />
             ) : (
-              <View style={[styles.chatAvatar, { backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name={isGroup ? 'people' : 'person'} size={16} color="#555" />
+              <View style={[styles.chatAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name={isGroup ? 'people' : 'person'} size={16} color={colors.textMuted} />
               </View>
             )}
             {!isGroup && <View style={styles.chatOnlineDot} />}
           </View>
           <View style={{ marginLeft: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={styles.chatName} numberOfLines={1}>
+              <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>
                 {otherProfile?.full_name ?? otherProfile?.username ?? 'Chat'}
               </Text>
               {otherProfile?.is_verified && (
@@ -1149,10 +1158,10 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', gap: 0 }}>
           <TouchableOpacity style={styles.chatAction}>
-            <Ionicons name="call-outline" size={21} color="rgba(255,255,255,0.5)" />
+            <Ionicons name="call-outline" size={21} color={colors.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.chatAction}>
-            <Ionicons name="videocam-outline" size={21} color="rgba(255,255,255,0.5)" />
+            <Ionicons name="videocam-outline" size={21} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1179,21 +1188,21 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
                   style={{ width: 72, height: 72, borderRadius: 36 }}
                 />
               ) : (
-                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name={isGroup ? 'people' : 'person'} size={32} color="#555" />
+                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={isGroup ? 'people' : 'person'} size={32} color={colors.textMuted} />
                 </View>
               )}
-              <Text style={styles.chatIntroName}>
+              <Text style={[styles.chatIntroName, { color: colors.text }]}>
                 {otherProfile?.full_name ?? otherProfile?.username}
               </Text>
               {otherProfile?.is_verified && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                   <VerifiedBadge type={otherProfile.verification_type} size="sm" />
-                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>Verified</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>Verified</Text>
                 </View>
               )}
               {otherProfile?.university ? (
-                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 3 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 3 }}>
                   {otherProfile.university}
                 </Text>
               ) : null}
@@ -1206,7 +1215,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
                   {otherProfile?.avatar_url ? (
                     <Image source={{ uri: otherProfile.avatar_url }} style={styles.msgAvatar} />
                   ) : (
-                    <View style={[styles.msgAvatar, { backgroundColor: '#1e1e1e' }]} />
+                    <View style={[styles.msgAvatar, { backgroundColor: colors.bg2 }]} />
                   )}
                 </View>
                 <TypingDots />
@@ -1217,25 +1226,25 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       )}
 
       {/* Input bar */}
-      <View style={[styles.inputRowContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.inputRowContainer, { paddingBottom: Math.max(insets.bottom, 8), backgroundColor: colors.bg, borderTopColor: colors.border }]}>
         {replyingTo && (
           <ReplyingToHeader msg={replyingTo} onCancel={() => setReplyingTo(null)} />
         )}
-        <View style={styles.inputRow}>
+        <View style={[styles.inputRow, { borderTopColor: colors.border }]}>
           <TouchableOpacity style={styles.inputIcon} onPress={pickAndSendImage} disabled={uploading}>
             {uploading ? (
               <ActivityIndicator size="small" color="#6366f1" />
             ) : (
-              <Ionicons name="image-outline" size={23} color="rgba(255,255,255,0.45)" />
+              <Ionicons name="image-outline" size={23} color={colors.textMuted} />
             )}
           </TouchableOpacity>
-          <View style={styles.inputWrap}>
+          <View style={[styles.inputWrap, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text }]}
               value={text}
               onChangeText={handleTyping}
               placeholder="Message…"
-              placeholderTextColor="rgba(255,255,255,0.28)"
+              placeholderTextColor={colors.textMuted}
               returnKeyType="send"
               blurOnSubmit={false}
               onSubmitEditing={send}
@@ -1245,7 +1254,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
             />
             {!text.trim() && (
               <TouchableOpacity style={{ paddingLeft: 4 }}>
-                <Ionicons name="camera-outline" size={19} color="rgba(255,255,255,0.28)" />
+                <Ionicons name="camera-outline" size={19} color={colors.textMuted} />
               </TouchableOpacity>
             )}
           </View>
@@ -1259,7 +1268,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
               <Ionicons
                 name="send"
                 size={17}
-                color={text.trim() && !uploading ? '#fff' : 'rgba(255,255,255,0.2)'}
+                color={text.trim() && !uploading ? '#fff' : colors.textMuted}
               />
             </TouchableOpacity>
           ) : (
@@ -1304,6 +1313,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
   onPress,
   onCompose,
 }) => {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [convs, setConvs] = useState<any[]>([]);
   const [filteredConvs, setFilteredConvs] = useState<any[]>([]);
@@ -1395,8 +1405,8 @@ const ConversationList: React.FC<ConversationListProps> = ({
             {other?.avatar_url ? (
               <Image source={{ uri: other.avatar_url }} style={styles.convAvatar} />
             ) : (
-              <View style={[styles.convAvatar, { backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name={isGroup ? 'people' : 'person'} size={21} color="#555" />
+              <View style={[styles.convAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name={isGroup ? 'people' : 'person'} size={21} color={colors.textMuted} />
               </View>
             )}
             {hasUnread && (
@@ -1411,7 +1421,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
             <View style={styles.convHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
                 <Text
-                  style={[styles.convName, hasUnread && { fontWeight: 'bold', color: '#fff' }]}
+                  style={[styles.convName, { color: colors.text }, hasUnread && { fontWeight: 'bold' }]}
                   numberOfLines={1}
                 >
                   {displayName}
@@ -1421,11 +1431,11 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 )}
               </View>
               {conv.last_message_at && (
-                <Text style={styles.convTime}>{timeAgo(conv.last_message_at)}</Text>
+                <Text style={[styles.convTime, { color: colors.textMuted }]}>{timeAgo(conv.last_message_at)}</Text>
               )}
             </View>
             <Text
-              style={[styles.convPreview, hasUnread && { color: 'rgba(255,255,255,0.65)', fontWeight: '500' }]}
+              style={[styles.convPreview, { color: colors.textSub }, hasUnread && { color: colors.text, fontWeight: '500' }]}
               numberOfLines={1}
             >
               {conv.last_message ?? 'Start a conversation'}
@@ -1445,7 +1455,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
   const ListHeader = useMemo(
     () => (
       <View style={styles.activeFriends}>
-        <Text style={styles.sectionLabel}>ACTIVE NOW</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>ACTIVE NOW</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -1464,13 +1474,13 @@ const ConversationList: React.FC<ConversationListProps> = ({
                   {other.avatar_url ? (
                     <Image source={{ uri: other.avatar_url }} style={styles.activeAvatar} />
                   ) : (
-                    <View style={[styles.activeAvatar, { backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center' }]}>
-                      <Ionicons name="person" size={18} color="#555" />
+                    <View style={[styles.activeAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                      <Ionicons name="person" size={18} color={colors.textMuted} />
                     </View>
                   )}
                   <View style={styles.onlineDot} />
                 </View>
-                <Text style={styles.activeUsername} numberOfLines={1}>
+                <Text style={[styles.activeUsername, { color: colors.textSub }]} numberOfLines={1}>
                   {other.username}
                 </Text>
               </TouchableOpacity>
@@ -1483,10 +1493,10 @@ const ConversationList: React.FC<ConversationListProps> = ({
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
       {/* Header */}
       <View style={styles.listHeader}>
-        <Text style={styles.listTitle}>
+        <Text style={[styles.listTitle, { color: colors.text }]}>
           {currentUsername || 'Messages'}
           {totalUnread > 0 && (
             <Text style={{ color: '#818cf8', fontSize: 14 }}> ·{totalUnread}</Text>
@@ -1497,24 +1507,24 @@ const ConversationList: React.FC<ConversationListProps> = ({
           onPress={onCompose}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="create-outline" size={24} color="#fff" />
+          <Ionicons name="create-outline" size={24} color={colors.text} />
         </TouchableOpacity>
       </View>
 
       {/* Search bar */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={15} color="rgba(255,255,255,0.35)" />
+      <View style={[styles.searchBar, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, borderWidth: 1 }]}>
+        <Ionicons name="search" size={15} color={colors.textMuted} />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: colors.text }]}
           placeholder="Search messages"
-          placeholderTextColor="rgba(255,255,255,0.28)"
+          placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
           autoCapitalize="none"
         />
         {search.length > 0 && (
           <TouchableOpacity onPress={() => setSearch('')}>
-            <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.3)" />
+            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
           </TouchableOpacity>
         )}
       </View>
@@ -1524,9 +1534,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
         <ConvSkeleton />
       ) : convs.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="chatbubbles-outline" size={56} color="#2a2a2a" />
-          <Text style={styles.emptyTitle}>No messages yet</Text>
-          <Text style={styles.emptySubtitle}>Tap the pencil icon above to start a conversation</Text>
+          <Ionicons name="chatbubbles-outline" size={56} color={colors.textMuted} />
+          <Text style={[styles.emptyTitle, { color: colors.textSub }]}>No messages yet</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>Tap the pencil icon above to start a conversation</Text>
           <TouchableOpacity style={styles.newMsgBtn} onPress={onCompose}>
             <Ionicons name="create-outline" size={18} color="#fff" />
             <Text style={styles.newMsgBtnText}>New Message</Text>
@@ -1546,8 +1556,8 @@ const ConversationList: React.FC<ConversationListProps> = ({
           ListEmptyComponent={
             search.trim() ? (
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                <Ionicons name="search-outline" size={40} color="#2a2a2a" />
-                <Text style={{ color: '#555', marginTop: 10 }}>No conversations found</Text>
+                <Ionicons name="search-outline" size={40} color={colors.textMuted} />
+                <Text style={{ color: colors.textSub, marginTop: 10 }}>No conversations found</Text>
               </View>
             ) : null
           }
@@ -1575,6 +1585,7 @@ interface MessagesScreenProps {
 }
 
 export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChange, initialConv, isVisible }) => {
+  const { colors } = useTheme();
   const [screenState, setScreenState] = useState<ScreenState>('list');
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUsername, setCurrentUsername] = useState('Messages');
@@ -1620,7 +1631,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
 
   if (!currentUserId) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <ConvSkeleton />
       </View>
     );
@@ -1660,7 +1671,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1 },
 
   // ── Conversation list ─────────────────────────────────────────────────────
   listHeader: {
@@ -1671,7 +1682,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 8,
   },
-  listTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
+  listTitle: { fontSize: 20, fontWeight: 'bold' },
   composeBtn: { padding: 4 },
   searchBar: {
     flexDirection: 'row',
@@ -1858,7 +1869,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: '#000',
+    backgroundColor: 'transparent',
   },
   inputIcon: { padding: 4 },
   inputWrap: {
@@ -1908,7 +1919,7 @@ const styles = StyleSheet.create({
   lightboxImage: { width: '100%', height: '85%' },
 
   // ── New Conversation Modal ────────────────────────────────────────────────
-  newConvModal: { flex: 1, backgroundColor: '#080808' },
+  newConvModal: { flex: 1 },
   newConvHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1940,14 +1951,13 @@ const styles = StyleSheet.create({
   newConvSearch: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 13,
     margin: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
   },
-  newConvInput: { flex: 1, color: '#fff', fontSize: 15, paddingVertical: 0 },
+  newConvInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
   userResultRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1955,8 +1965,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   userResultAvatar: { width: 46, height: 46, borderRadius: 23 },
-  userResultName: { fontSize: 14, fontWeight: '600', color: '#fff' },
-  userResultUsername: { fontSize: 12, color: 'rgba(255,255,255,0.38)', marginTop: 1 },
+  userResultName: { fontSize: 14, fontWeight: '600' },
+  userResultUsername: { fontSize: 12, marginTop: 1 },
   selectedCheck: {
     position: 'absolute',
     bottom: 0,
@@ -1997,18 +2007,14 @@ const styles = StyleSheet.create({
   relBadgeText: {
     fontSize: 9,
     fontWeight: 'bold',
-    color: 'rgba(255,255,255,0.4)',
     textTransform: 'uppercase',
   },
   groupNameInput: {
-    backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 12,
-    color: '#fff',
     fontSize: 17,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.12)',
   },
   createGroupBtn: {
     marginTop: 32,
@@ -2023,26 +2029,22 @@ const styles = StyleSheet.create({
   bubbleDeleted: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
     borderStyle: 'dashed' as any,
   },
   bubbleTextDeleted: {
-    color: 'rgba(255,255,255,0.25)',
     fontSize: 12,
     fontStyle: 'italic',
   },
   replyQuote: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 8,
     marginBottom: 2,
     maxWidth: '80%',
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderLeftWidth: 2,
   },
   replyQuoteText: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
   },
   voiceBubble: {
     flexDirection: 'row',
@@ -2056,13 +2058,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#4f46e5',
   },
   voiceBubbleThem: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    // backgroundColor handled inline
   },
   voicePlayBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2087,9 +2088,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 16,
-    backgroundColor: 'rgba(255,255,255,0.04)',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   replyHeaderBar: {
     width: 2,
@@ -2104,7 +2103,6 @@ const styles = StyleSheet.create({
   },
   replyHeaderText: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
     marginTop: 1,
   },
   voiceRecordBtn: {
@@ -2135,9 +2133,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   inputRowContainer: {
-    backgroundColor: '#000',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.1)',
   },
   unsendBtn: {
     position: 'absolute',

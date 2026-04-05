@@ -101,7 +101,7 @@ const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { reset(); onClose(); }}>
       <KeyboardAvoidingView
-        style={[styles.subModalContainer, { backgroundColor: colors.bg, paddingTop: insets.top || 16 }]}
+        style={[styles.subModalContainer, { backgroundColor: colors.bg, paddingTop: Platform.OS === 'ios' ? 0 : (insets.top || 16) }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
@@ -314,14 +314,23 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
 
   useEffect(() => {
     if (!visible || !profile?.id) return;
-    setLoading(true);
-    supabase
-      .from('blocked_users')
-      .select('blocked_id, profiles!blocked_users_blocked_id_fkey(id, full_name, username, avatar_url)')
-      .eq('blocker_id', profile.id)
-      .then(({ data }) => setBlocked(data?.map((r: any) => r.profiles).filter(Boolean) ?? []))
-      .catch(() => setBlocked([]))
-      .finally(() => setLoading(false));
+    
+    const fetchBlocked = async () => {
+      setLoading(true);
+      try {
+        const { data } = await supabase
+          .from('blocked_users')
+          .select('blocked_id, profiles!blocked_users_blocked_id_fkey(id, full_name, username, avatar_url)')
+          .eq('blocker_id', profile.id);
+        setBlocked(data?.map((r: any) => r.profiles).filter(Boolean) ?? []);
+      } catch (e) {
+        setBlocked([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBlocked();
   }, [visible, profile?.id]);
 
   const handleUnblock = (userId: string, name: string) => {
@@ -466,7 +475,7 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.container, { backgroundColor: colors.bg, paddingTop: insets.top || 16 }]}>
+      <View style={[styles.container, { backgroundColor: colors.bg, paddingTop: Platform.OS === 'ios' ? 0 : (insets.top || 16) }]}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose}>
