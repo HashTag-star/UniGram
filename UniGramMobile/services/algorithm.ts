@@ -41,19 +41,27 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
 }
 
 export async function recordImpression(postId: string, userId: string) {
-  await supabase
-    .from('post_impressions')
-    .upsert({ post_id: postId, user_id: userId })
-    .then(() => {}).catch(() => {});
+  try {
+    await supabase
+      .from('post_impressions')
+      .upsert({ post_id: postId, user_id: userId });
+  } catch (err) {
+    // Ignore engagement tracking failure
+    console.warn('Impression log failed', err);
+  }
 }
 
 export async function recordProfileView(actorId: string, targetId: string) {
   if (actorId === targetId) return;
-  await supabase.rpc('update_rel_strength', {
-    p_actor: actorId,
-    p_target: targetId,
-    p_delta: 1.0,
-  }).then(() => {}).catch(() => {});
+  try {
+    await supabase.rpc('update_rel_strength', {
+      p_actor: actorId,
+      p_target: targetId,
+      p_delta: 1.0,
+    });
+  } catch (err) {
+    // Ignore engagement tracking failure
+  }
 }
 
 /**
@@ -90,11 +98,16 @@ export async function recordVideoWatch(
   if (pct < 0.1) return;
   // Full watch = +3pts, partial proportional to completion
   const delta = pct >= 0.8 ? 3.0 : pct * 3.0;
-  await supabase.rpc('update_rel_strength', {
-    p_actor: viewerId,
-    p_target: authorId,
-    p_delta: delta,
-  }).then(() => {}).catch(() => {});
+
+  try {
+    await supabase.rpc('update_rel_strength', {
+      p_actor: viewerId,
+      p_target: authorId,
+      p_delta: delta,
+    });
+  } catch (err) {
+    // Ignore engagement tracking failure
+  }
 }
 
 // ─── Explore ──────────────────────────────────────────────────────────────────
