@@ -1490,7 +1490,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingBottom: 8,
   },
-  topBarLogo: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
+  topBarLogo: { 
+    fontWeight: '900', 
+    fontSize: 26, 
+    letterSpacing: -1,
+  },
   notifHeaderBadge: {
     position: 'absolute', top: -4, right: -6,
     minWidth: 16, height: 16, borderRadius: 8,

@@ -42,14 +42,24 @@ export async function registerForPushNotifications(userId: string): Promise<stri
 
   // Must pass projectId for SDK 53+
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? '9e110753-5591-4a10-ac02-018cf974dc91';
-  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-  const token = tokenData.data;
+  
+  // Get both Expo token (for basic testing) and Device token (for direct Firebase)
+  const expoTokenData = await Notifications.getExpoPushTokenAsync({ projectId }).catch(() => null);
+  const deviceTokenData = await Notifications.getDevicePushTokenAsync().catch(() => null);
 
-  // Store token in Supabase
-  await supabase.from('push_tokens').upsert(
-    { user_id: userId, token, platform: Platform.OS, updated_at: new Date().toISOString() },
-    { onConflict: 'user_id,token' },
-  );
+  if (expoTokenData?.data) {
+    await supabase.from('push_tokens').upsert(
+      { user_id: userId, token: expoTokenData.data, platform: Platform.OS, type: 'expo', updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,token' }
+    );
+  }
+
+  if (deviceTokenData?.data) {
+    await supabase.from('push_tokens').upsert(
+      { user_id: userId, token: deviceTokenData.data, platform: Platform.OS, type: 'native', updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,token' }
+    );
+  }
 
   // Configure notification display behaviour
   Notifications.setNotificationHandler({
@@ -66,10 +76,11 @@ export async function registerForPushNotifications(userId: string): Promise<stri
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#4f46e5',
+      sound: 'notification_alert.wav', // Resource name must be simple lowercase/underscore
     });
   }
 
-  return token;
+  return deviceTokenData?.data || expoTokenData?.data || null;
 }
 
 /**
@@ -100,16 +111,40 @@ export async function sendPushToUser(
     channelId: 'default',
   }));
 
-  // Expo push API — free, handles both FCM and APNs routing
-  await fetch('https://exp.host/--/api/v2/push/send', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Accept-Encoding': 'gzip, deflate',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(messages),
+  // Call our custom Supabase Edge Function which uses Firebase Admin SDK
+  // This is more reliable for standalone builds and direct FCM/APNs control
+  const { error: edgeError } = await supabase.functions.invoke('send-push-notification', {
+    body: { userId, title, body, data: data ?? {} },
   });
+
+  if (edgeError) {
+    console.warn('Edge function notification failed, falling back to Expo proxy:', edgeError);
+    
+    // Fallback to Expo push API for registered Expo tokens
+    const expoMessages = rows
+      .filter((r: any) => (r.token as string).startsWith('ExponentPushToken'))
+      .map((r: any) => ({
+        to: r.token,
+        title,
+        body,
+        data: data ?? {},
+        sound: 'default',
+        priority: 'high',
+        channelId: 'default',
+      }));
+
+    if (expoMessages.length > 0) {
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(expoMessages),
+      });
+    }
+  }
 }
 
 export async function scheduleLocalNotification(title: string, body: string, data?: object) {
@@ -131,4 +166,9 @@ export async function setBadgeCount(count: number) {
   await loadModules();
   if (!Notifications) return;
   await Notifications.setBadgeCountAsync(count);
+}
+export async function onNotificationResponseReceived(callback: (response: any) => void) {
+  await loadModules();
+  if (!Notifications) return;
+  return Notifications.addNotificationResponseReceivedListener(callback);
 }

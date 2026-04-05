@@ -65,13 +65,17 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const [activeMention, setActiveMention] = useState('');
 
   const [isBanned, setIsBanned] = useState(false);
+  const [isSuspended, setIsSuspended] = useState(false);
 
   useEffect(() => {
     if (visible && userId) {
       getFollowing(userId).then(setFollowingList).catch(() => {});
-      // Check if user is banned
-      supabase.from('profiles').select('is_banned').eq('id', userId).single()
-        .then(({ data }) => setIsBanned(!!data?.is_banned));
+      // Check if user is banned or suspended
+      supabase.from('profiles').select('is_banned, is_suspended').eq('id', userId).single()
+        .then(({ data }) => {
+          setIsBanned(!!data?.is_banned);
+          setIsSuspended(!!data?.is_suspended);
+        });
     }
   }, [visible, userId]);
 
@@ -363,14 +367,16 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           )}
         </View>
 
-        {/* ── Banned Zone ── */}
-        {isBanned && (
+        {/* ── Banned/Suspended Zone ── */}
+        {(isBanned || isSuspended) && (
           <View style={styles.bannedContainer}>
             <View style={styles.bannedCard}>
               <Ionicons name="alert-circle" size={48} color="#ef4444" />
-              <Text style={styles.bannedTitle}>Account Suspended</Text>
+              <Text style={styles.bannedTitle}>{isBanned ? 'Account Banned' : 'Account Suspended'}</Text>
               <Text style={styles.bannedSub}>
-                Your account has been suspended for violating campus community guidelines. You can still browse, but you are restricted from posting or selling.
+                {isBanned 
+                  ? 'Your account has been permanently banned for violating campus community guidelines.'
+                  : 'Your account has been temporarily suspended for violating campus community guidelines. You can still browse, but you are restricted from posting or selling.'}
               </Text>
               <TouchableOpacity style={styles.bannedBtn}>
                 <Text style={styles.bannedBtnText}>Contact Support</Text>
@@ -380,7 +386,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         )}
 
         {/* ── Step 1: Type selector ── */}
-        {!isBanned && step === 'type' && (
+        {!isBanned && !isSuspended && step === 'type' && (
           <ScrollView contentContainerStyle={styles.typeList} showsVerticalScrollIndicator={false}>
             {typeOptions.map(({ type, icon, label, sub, color }) => (
               <TouchableOpacity key={type} style={styles.typeCard} onPress={() => pickMedia(type)} activeOpacity={0.75}>
@@ -398,7 +404,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         )}
 
         {/* ── Step 2: Compose ── */}
-        {!isBanned && step === 'compose' && (
+        {!isBanned && !isSuspended && step === 'compose' && (
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
 
             {/* Media preview */}

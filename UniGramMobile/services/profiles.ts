@@ -2,6 +2,8 @@ import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
 import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
+import { createNotification } from './notifications';
+import { sendPushToUser } from './pushNotifications';
 
 export async function getProfile(userId: string) {
   const { data, error } = await supabase
@@ -122,6 +124,22 @@ export async function followUser(followerId: string, followingId: string) {
     .insert({ follower_id: followerId, following_id: followingId });
   if (error) throw error;
   SocialSync.emit('FOLLOW_CHANGE', { targetId: followingId, isActive: true });
+
+  // Notify target user
+  try {
+    const { data: follower } = await supabase.from('profiles').select('username').eq('id', followerId).single();
+    const text = 'started following you';
+    await createNotification({
+      user_id: followingId,
+      actor_id: followerId,
+      type: 'follow',
+      text
+    });
+    sendPushToUser(followingId, 'New Follower', `@${follower?.username || 'Someone'} ${text}`, {
+      type: 'follow',
+      userId: followerId // so they can see who followed them
+    }).catch(() => {});
+  } catch (e) {}
 }
 
 export async function unfollowUser(followerId: string, followingId: string) {

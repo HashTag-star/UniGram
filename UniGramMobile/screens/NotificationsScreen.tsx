@@ -73,6 +73,10 @@ function notifIcon(type: string): { name: string; color: string; bg: string } {
       return { name: 'shield-checkmark', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
     case 'verification_rejected':
       return { name: 'shield', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
+    case 'account_suspended':
+      return { name: 'ban', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
+    case 'account_unsuspended':
+      return { name: 'checkmark-circle', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
     default:
       return { name: 'notifications', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' };
   }
@@ -83,7 +87,8 @@ function notifIcon(type: string): { name: string; color: string; bg: string } {
 const NotifItem: React.FC<{
   item: Notif;
   onPress: (item: Notif) => void;
-}> = React.memo(({ item, onPress }) => {
+  isExpanded?: boolean;
+}> = React.memo(({ item, onPress, isExpanded }) => {
   const { colors } = useTheme();
   const icon = notifIcon(item.type);
   const actor = item.profiles;
@@ -110,7 +115,7 @@ const NotifItem: React.FC<{
 
       {/* Text */}
       <View style={styles.textWrap}>
-        <Text style={[styles.notifText, { color: colors.textSub }]} numberOfLines={2}>
+        <Text style={[styles.notifText, { color: colors.textSub }]} numberOfLines={isExpanded ? undefined : 2}>
           {actor?.username && (
             <Text style={[styles.actorName, { color: colors.text }]}>@{actor.username} </Text>
           )}
@@ -119,11 +124,11 @@ const NotifItem: React.FC<{
         <Text style={[styles.notifTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
       </View>
 
-      {/* Post thumbnail */}
-      {item.posts?.media_url ? (
+      {/* Post thumbnail (hide if expanding text to give more room) */}
+      {!isExpanded && item.posts?.media_url ? (
         <CachedImage uri={item.posts.media_url} style={styles.thumb} />
       ) : (
-        <View style={{ width: 44 }} />
+        <View style={{ width: 0 }} />
       )}
 
       {/* Unread dot */}
@@ -134,18 +139,25 @@ const NotifItem: React.FC<{
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
-interface Props {
+export interface NotificationsScreenProps {
   userId: string;
   onBadgeClear?: () => void;
   onBack?: () => void;
+  onUserPress?: (uid: string) => void;
+  onPostPress?: (pid: string, uid: string) => void;
+  onMessagePress?: (convId: string, otherProfile: any) => void;
 }
 
-export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onBack }) => {
+export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ 
+  userId, onBadgeClear, onBack,
+  onUserPress, onPostPress, onMessagePress
+}) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const channelRef = useRef<any>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -210,7 +222,39 @@ export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onB
       markNotificationRead(item.id).catch(() => {});
       setNotifs(prev => prev.map(n => n.id === item.id ? { ...n, is_read: true } : n));
     }
-  }, []);
+
+    const navigationTypes = ['follow', 'like', 'comment', 'mention', 'reel_like', 'reel_comment', 'message', 'verification_approved'];
+
+    if (!navigationTypes.includes(item.type) || item.type === 'announcement') {
+      setExpandedId(prev => (prev === item.id ? null : item.id));
+      if (item.type === 'announcement') return; // Announcements only expand
+    }
+
+    // Navigation logic
+    switch (item.type) {
+      case 'follow':
+      case 'verification_approved':
+        if (item.actor_id) onUserPress?.(item.actor_id);
+        break;
+      case 'like':
+      case 'comment':
+      case 'mention':
+      case 'reel_like':
+      case 'reel_comment':
+        if (item.post_id && item.actor_id) {
+          onPostPress?.(item.post_id, item.actor_id);
+        }
+        break;
+      case 'message':
+        if (item.actor_id && item.profiles) {
+          onMessagePress?.('', item.profiles);
+        }
+        break;
+      default:
+        // Already handled expansion for unknowns
+        break;
+    }
+  }, [onUserPress, onPostPress, onMessagePress]);
 
   const sections = React.useMemo(() => {
     const today: Notif[] = [];
@@ -232,7 +276,12 @@ export const NotificationsScreen: React.FC<Props> = ({ userId, onBadgeClear, onB
       <View key={title}>
         <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>{title}</Text>
         {data.map(item => (
-          <NotifItem key={item.id} item={item} onPress={handlePress} />
+          <NotifItem 
+            key={item.id} 
+            item={item} 
+            onPress={handlePress} 
+            isExpanded={expandedId === item.id}
+          />
         ))}
       </View>
     );

@@ -61,6 +61,7 @@ export const ProfileScreen: React.FC<Props> = ({
   const [currentUserId, setCurrentUserId] = useState('');
   const [isOwn, setIsOwn] = useState(propIsOwn ?? false);
   const [focusedPost, setFocusedPost] = useState<any>(null);
+  const [isSuspended, setIsSuspended] = useState(false);
 
   const [showEdit, setShowEdit] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -106,6 +107,7 @@ export const ProfileScreen: React.FC<Props> = ({
       setLikedIds(new Set(likedSet));
       setSavedPosts(savedSet);
       setTaggedPosts(taggedData);
+      setIsSuspended(!!(prof as any)?.is_suspended);
 
       if (!own) {
         const following = await isFollowing(user.id, targetId);
@@ -406,6 +408,19 @@ export const ProfileScreen: React.FC<Props> = ({
               ))}
             </View>
           )}
+
+          {/* Suspended notice - covers ONLY the gallery/content area */}
+          {isSuspended && (
+            <View style={styles.suspendedOverlay}>
+              <View style={styles.suspendedCard}>
+                <Ionicons name="ban" size={48} color="#f59e0b" />
+                <Text style={styles.suspendedTitle}>Account Suspended</Text>
+                <Text style={styles.suspendedSub}>
+                  This account has been temporarily suspended for violating campus community guidelines. Posts are hidden during this period.
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -555,6 +570,30 @@ const styles = StyleSheet.create({
   mediaBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 4, padding: 3 },
   reelMeta: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 },
   reelMetaText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+
+  // Suspended gallery overlay
+  suspendedOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    minHeight: 260,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 10,
+    paddingHorizontal: 32,
+  },
+  suspendedCard: {
+    alignItems: 'center', gap: 14,
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)',
+    borderRadius: 20, paddingHorizontal: 24, paddingVertical: 32,
+    width: '100%',
+  },
+  suspendedTitle: {
+    fontSize: 18, fontWeight: '800', color: '#f59e0b', textAlign: 'center',
+  },
+  suspendedSub: {
+    fontSize: 13, color: 'rgba(255,255,255,0.6)', textAlign: 'center', lineHeight: 20,
+  },
+
   focusContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' },
   focusContent: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
   focusHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1 },

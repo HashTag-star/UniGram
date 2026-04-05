@@ -51,3 +51,10 @@ export async function banUser(userId: string) {
     .eq('id', userId);
   if (error) throw error;
 }
+export async function suspendUser(userId: string, suspended: boolean) {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ is_suspended: suspended })
+    .eq('id', userId);
+  if (error) throw error;
+}

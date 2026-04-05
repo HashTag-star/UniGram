@@ -7,6 +7,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { signIn, signInWithGoogle, sendPasswordReset } from '../../services/auth';
+import { supabase } from '../../lib/supabase';
 
 const { width } = Dimensions.get('window');
 
@@ -201,7 +202,25 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
     }
     setLoading(true);
     try {
-      await signIn(email.trim().toLowerCase(), password);
+      const session = await signIn(email.trim().toLowerCase(), password);
+      // Immediately check if the signed-in user is banned
+      if (session?.user?.id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('is_banned')
+          .eq('id', session.user.id)
+          .single();
+        if (profile?.is_banned) {
+          // Sign them back out right away — no access to the app
+          await supabase.auth.signOut();
+          Alert.alert(
+            '🚫 Account Banned',
+            'Your account has been permanently banned from UniGram for violating campus community guidelines.\n\nIf you believe this is a mistake, contact campus support.',
+            [{ text: 'Got it', style: 'destructive' }]
+          );
+          return;
+        }
+      }
     } catch (err: any) {
       Alert.alert('Sign in failed', err.message ?? 'Something went wrong.');
     } finally {

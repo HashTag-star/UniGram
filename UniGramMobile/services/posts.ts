@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
 import { uploadFile } from './upload';
+import { createNotification } from './notifications';
+import { sendPushToUser } from './pushNotifications';
 
 export async function getFeedPosts(limit = 20, offset = 0) {
   const { data, error } = await supabase
@@ -96,6 +98,25 @@ export async function likePost(postId: string, userId: string) {
     await supabase.rpc('increment_post_likes', { p_post_id: postId });
   } catch (e) {}
   SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: true });
+  
+  // Notify author
+  try {
+    const { data: post } = await supabase.from('posts').select('user_id, caption').eq('id', postId).single();
+    if (post && post.user_id !== userId) {
+      const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
+      const text = `liked your post: "${post.caption?.substring(0, 20) || ''}..."`;
+      await createNotification({
+        user_id: post.user_id,
+        actor_id: userId,
+        type: 'like',
+        post_id: postId,
+        text
+      });
+      sendPushToUser(post.user_id, 'New Like', `@${actor?.username || 'Someone'} ${text}`, { 
+        type: 'like', postId, userId 
+      }).catch(() => {});
+    }
+  } catch (e) {}
 }
 
 export async function unlikePost(postId: string, userId: string) {
@@ -168,6 +189,26 @@ export async function addPostComment(postId: string, userId: string, text: strin
     .select(`*, profiles!post_comments_user_id_fkey(*)`)
     .single();
   if (error) throw error;
+
+  // Notify author
+  try {
+    const { data: post } = await supabase.from('posts').select('user_id').eq('id', postId).single();
+    if (post && post.user_id !== userId) {
+      const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
+      const notifText = `commented: "${text.substring(0, 30)}..."`;
+      await createNotification({
+        user_id: post.user_id,
+        actor_id: userId,
+        type: 'comment',
+        post_id: postId,
+        text: notifText
+      });
+      sendPushToUser(post.user_id, 'New Comment', `@${actor?.username || 'Someone'} ${notifText}`, { 
+        type: 'comment', postId, userId 
+      }).catch(() => {});
+    }
+  } catch (e) {}
+
   return data;
 }
 

@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { AdminReport, getReports, updateReportStatus, banUser as banUserAction } from '../services/reports';
+import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, suspendUser as suspendUserAction } from '../services/reports';
 import { sendAdminNotification } from '../services/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +29,7 @@ interface AdminUser {
   is_verified: boolean;
   is_admin: boolean;
   is_banned: boolean;
+  is_suspended: boolean;
   verification_type: string | null;
 }
 
@@ -267,7 +268,7 @@ const UsersTab: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, full_name, avatar_url, university, is_verified, is_admin, is_banned, verification_type')
+        .select('id, username, full_name, avatar_url, university, is_verified, is_admin, is_banned, is_suspended, verification_type')
         .order('created_at', { ascending: false })
         .limit(200);
       if (error) throw error;
@@ -327,6 +328,41 @@ const UsersTab: React.FC = () => {
     );
   };
 
+  const handleSuspend = async (userId: string, suspend: boolean) => {
+    Alert.alert(
+      suspend ? 'Suspend User' : 'Unsuspend User',
+      suspend ? 'This will temporarily restrict the user\'s ability to post or sell.' : 'This will restore full access for the user.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: suspend ? 'Suspend' : 'Unsuspend',
+          style: suspend ? 'destructive' : 'default',
+          onPress: async () => {
+            setActioning(userId);
+            try {
+              await suspendUserAction(userId, suspend);
+              setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_suspended: suspend } : u));
+
+              // Notify the user about the action
+              const { data: { user: adminUser } } = await supabase.auth.getUser();
+              const adminId = adminUser?.id ?? userId; // fallback — unlikely
+              const message = suspend
+                ? 'Your account has been temporarily suspended for violating campus community guidelines. You can still browse, but posting and selling are restricted. If you believe this is a mistake, contact campus support.'
+                : 'Your account suspension has been lifted. You now have full access to post and sell on UniGram. Welcome back!';
+              const notifType = suspend ? 'account_suspended' : 'account_unsuspended';
+
+              await sendAdminNotification(adminId, message, notifType as any, userId);
+            } catch (e: any) {
+              Alert.alert('Error', e.message);
+            } finally {
+              setActioning(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const filtered = users.filter(u => {
     const q = search.toLowerCase();
     return (
@@ -337,7 +373,7 @@ const UsersTab: React.FC = () => {
   });
 
   const renderUser = ({ item: u }: { item: AdminUser }) => (
-    <View style={[styles.userRow, u.is_banned && styles.userRowBanned]}>
+    <View style={[styles.userRow, (u.is_banned || u.is_suspended) && styles.userRowBanned]}>
       <View style={styles.userAvatarWrap}>
         {u.avatar_url
           ? <Image source={{ uri: u.avatar_url }} style={styles.userAvatar} />
@@ -366,6 +402,11 @@ const UsersTab: React.FC = () => {
               <Text style={styles.badgeText}>Banned</Text>
             </View>
           )}
+          {u.is_suspended && (
+            <View style={[styles.badge, styles.badgeBanned, { backgroundColor: '#f59e0b' }]}>
+              <Text style={styles.badgeText}>Suspended</Text>
+            </View>
+          )}
         </View>
         <Text style={styles.userMeta} numberOfLines={1}>
           {u.full_name}{u.university ? ` · ${u.university}` : ''}
@@ -384,6 +425,12 @@ const UsersTab: React.FC = () => {
                 <Text style={styles.actionBtnText}>Verify</Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              style={[styles.actionBtn, u.is_suspended ? styles.actionBtnUnban : styles.actionBtnBan, { backgroundColor: u.is_suspended ? '#4f46e5' : '#f59e0b' }]}
+              onPress={() => handleSuspend(u.id, !u.is_suspended)}
+            >
+              <Text style={styles.actionBtnText}>{u.is_suspended ? 'Unsuspend' : 'Suspend'}</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, u.is_banned ? styles.actionBtnUnban : styles.actionBtnBan]}
               onPress={() => handleBan(u.id, !u.is_banned)}

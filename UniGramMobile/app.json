@@ -48,6 +48,7 @@
         "backgroundColor": "#05050a"
       },
       "package": "com.unigram.mobile",
+      "googleServicesFile": "./google-services.json",
       "edgeToEdgeEnabled": true,
       "targetSdkVersion": 34,
       "minSdkVersion": 24,
@@ -85,13 +86,27 @@
       [
         "expo-notifications",
         {
-          "sounds": []
+          "sounds": [
+            "./assets/notification_alert.wav"
+          ]
         }
       ],
       "expo-image-picker",
       "expo-video",
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minifyEnabled": true,
+            "shrinkResources": true,
+            "extraGradleProps": {
+              "enablePngCrunch": "true"
+            }
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {

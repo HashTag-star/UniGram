@@ -9,22 +9,25 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
 import * as Font from 'expo-font';
+import { useFonts } from 'expo-font';
 import { FeedScreen } from './screens/FeedScreen';
 import { ExploreScreen } from './screens/ExploreScreen';
 import { ReelsScreen } from './screens/ReelsScreen';
 import { MessagesScreen } from './screens/MessagesScreen';
 import { MarketScreen } from './screens/MarketScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
-import { NotificationsScreen } from './screens/NotificationsScreen';
+import { NotificationsScreen, NotificationsScreenProps } from './screens/NotificationsScreen';
 import { VerificationScreen } from './screens/VerificationScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
 import ResetPasswordScreen from './screens/auth/ResetPasswordScreen';
 import { OnboardingNavigator } from './screens/onboarding/OnboardingNavigator';
+import { QuickCaptureScreen } from './screens/QuickCaptureScreen';
+import PagerView from 'react-native-pager-view';
 import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
-import { registerForPushNotifications } from './services/pushNotifications';
+import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 
@@ -222,6 +225,9 @@ function AppShell() {
   const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const notifChannelRef = useRef<any>(null);
   const showNotifsRef = useRef(false);
+  const pagerRef = useRef<PagerView>(null);
+  const [pagerPage, setPagerPage] = useState(1);
+  const [userProfile, setUserProfile] = useState<any>(null);
 
   useEffect(() => {
     showNotifsRef.current = showNotifications;
@@ -268,10 +274,29 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!session) return;
-    isOnboardingComplete(session.user.id)
-      .then(setOnboardingDone)
-      .catch(() => setOnboardingDone(true));
+    if (!session?.user?.id) return;
+    const uid = session.user.id;
+    const fetchProfile = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', uid)
+          .single();
+        
+        if (error) throw error;
+        
+        if (data) {
+          setUserProfile(data);
+          setOnboardingDone(data.onboarding_completed ?? false);
+        } else {
+          setOnboardingDone(true);
+        }
+      } catch (e) {
+        setOnboardingDone(true);
+      }
+    };
+    fetchProfile();
   }, [session?.user?.id]);
 
   // Load unread count + subscribe to new notifications
@@ -279,11 +304,24 @@ function AppShell() {
     if (!session?.user?.id) return;
     const uid = session.user.id;
 
-    // Initial unread count
-    getUnreadNotificationCount(uid).then(setNotifBadge).catch(() => {});
+    const initNotifications = async () => {
+      // Initial unread count
+      try {
+        const count = await getUnreadNotificationCount(uid);
+        setNotifBadge(count);
+      } catch (e) {
+        // silent fail
+      }
 
-    // Register for push notifications (no-op in Expo Go)
-    registerForPushNotifications(uid).catch(() => {});
+      // Register for push notifications (no-op in Expo Go)
+      try {
+        await registerForPushNotifications(uid);
+      } catch (e) {
+        // silent fail
+      }
+    };
+
+    initNotifications();
 
     // Realtime: increment badge when new notification arrives and screen is not active
     const channel = supabase
@@ -307,6 +345,73 @@ function AppShell() {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, [session?.user?.id]);
+
+  const handleNotificationAction = (data: any) => {
+    if (!data) return;
+    const { type, userId, postId, conversationId, otherProfile } = data;
+
+    setShowNotifications(false);
+    
+    // Close other overlays
+    setShowVerification(false);
+    setShowCreate(false);
+
+    switch (tabMap[type] || type) {
+      case 'profile':
+      case 'follow':
+      case 'verification_approved':
+        if (userId) {
+          setViewedUserId(userId);
+          setActiveTab('profile');
+        }
+        break;
+      case 'post':
+      case 'like':
+      case 'comment':
+      case 'mention':
+      case 'reel_like':
+      case 'reel_comment':
+        if (userId) {
+          // Since no single post view yet, navigate to user profile
+          setViewedUserId(userId);
+          setActiveTab('profile');
+        }
+        break;
+      case 'message':
+        if (conversationId && otherProfile) {
+          navigateToMessages(conversationId, otherProfile);
+        } else {
+          setActiveTab('messages');
+        }
+        break;
+      case 'announcement':
+      case 'notifications':
+      default:
+        setShowNotifications(true);
+        break;
+    }
+  };
+
+  const tabMap: Record<string, string> = {
+    'like': 'post',
+    'comment': 'post',
+    'mention': 'post',
+    'reel_like': 'post',
+    'reel_comment': 'post',
+    'follow': 'profile',
+  };
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    
+    let sub: any;
+    onNotificationResponseReceived((response: any) => {
+      const data = response.notification.request.content.data;
+      if (data) handleNotificationAction(data);
+    }).then(s => sub = s);
+
+    return () => sub?.remove();
   }, [session?.user?.id]);
 
   if (session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
@@ -339,113 +444,141 @@ function AppShell() {
     setActiveTab('messages');
   };
 
+
   // Reels is full-screen video — unmount when not active to free GPU/memory.
   // All other tabs stay permanently mounted so switching is instant (display:none trick).
   const isReels = activeTab === 'reels';
-  const showTabBar = !hideTabBar; // navbar stays visible on Reels too
+  const showTabBar = !hideTabBar;
   const TAB_BAR_HEIGHT = 58;
-
-  // Helper: style that hides a screen without unmounting it
   const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
 
   // Each screen should only be "active" (playing media) if its tab is active
   // AND no full-screen overlays (like Notifications) are currently visible.
-  const isMainVisible = !showNotifications;
+  const isMainVisible = !showNotifications && !showCreate && !showVerification && pagerPage === 1;
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} translucent={false} />
 
-      {/* ── Screens container (flex:1 → tab bar is pushed to bottom) ── */}
-      <View style={styles.screensContainer}>
-        {/* Each screen uses absoluteFill inside the container so they overlap
-            each other but NOT the tab bar. display:none hides without unmount. */}
-        <View style={[styles.screen, hide('feed')]}>
-          <FeedScreen
-            refreshKey={feedRefreshKey}
-            isVisible={activeTab === 'feed' && isMainVisible}
-            onCreateStory={() => setShowCreate(true)}
-            onNotifPress={openNotifications}
-            notifBadge={notifBadge}
-            onReelPress={() => setActiveTab('reels')}
-            onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-          />
-        </View>
-        <View style={[styles.screen, hide('explore')]}>
-          <ExploreScreen
-            isVisible={activeTab === 'explore' && isMainVisible}
-            onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-          />
-        </View>
-        <View style={[styles.screen, hide('market')]}>
-          <MarketScreen isVisible={activeTab === 'market' && isMainVisible} onMessagePress={navigateToMessages} />
-        </View>
-        <View style={[styles.screen, hide('messages')]}>
-          <MessagesScreen
-            isVisible={activeTab === 'messages' && isMainVisible}
-            onChatStateChange={setHideTabBar}
-            initialConv={initialConv}
-          />
-        </View>
-        <View style={[styles.screen, hide('profile')]}>
-          <ProfileScreen
-            key={`${viewedUserId ?? session.user.id}-${profileRefreshKey}`}
-            userId={viewedUserId ?? session.user.id}
-            isOwn={!viewedUserId}
-            isVisible={activeTab === 'profile' && isMainVisible}
-            onVerifyPress={() => setShowVerification(true)}
-            onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
-            onMessagePress={navigateToMessages}
+      <PagerView 
+        ref={pagerRef}
+        style={{ flex: 1 }} 
+        initialPage={1}
+        onPageSelected={(e) => setPagerPage(e.nativeEvent.position)}
+        scrollEnabled={
+          activeTab === 'feed' && 
+          !showNotifications && 
+          !showCreate && 
+          !showVerification && 
+          !userProfile?.is_suspended
+        }
+      >
+        {/* Page 0: Side-Swipe Camera (IG Style) */}
+        <View key="0" style={{ flex: 1 }}>
+          <QuickCaptureScreen 
+            isVisible={pagerPage === 0} 
+            onClose={() => pagerRef.current?.setPage(1)}
+            onCapture={(media) => {
+               pagerRef.current?.setPage(1);
+               // Future: pass media to CreatePostModal logic
+               console.log('Captured media:', media);
+            }}
           />
         </View>
 
-        {/* Reels: full-screen video, only mount when active to free GPU memory */}
-        {isReels && (
-          <View style={styles.screen}>
-            <ReelsScreen onBack={() => setActiveTab(prevTab)} />
+        {/* Page 1: Main App Content */}
+        <View key="1" style={{ flex: 1 }}>
+          <View style={styles.screensContainer}>
+            {/* Each screen uses absoluteFill inside the container so they overlap
+                each other but NOT the tab bar. display:none hides without unmount. */}
+            <View style={[styles.screen, hide('feed')]}>
+              <FeedScreen
+                refreshKey={feedRefreshKey}
+                isVisible={activeTab === 'feed' && isMainVisible}
+                onCreateStory={() => setShowCreate(true)}
+                onNotifPress={openNotifications}
+                notifBadge={notifBadge}
+                onReelPress={() => setActiveTab('reels')}
+                onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+              />
+            </View>
+            <View style={[styles.screen, hide('explore')]}>
+              <ExploreScreen
+                isVisible={activeTab === 'explore' && isMainVisible}
+                onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+              />
+            </View>
+            <View style={[styles.screen, hide('market')]}>
+              <MarketScreen isVisible={activeTab === 'market' && isMainVisible} onMessagePress={navigateToMessages} />
+            </View>
+            <View style={[styles.screen, hide('messages')]}>
+              <MessagesScreen
+                isVisible={activeTab === 'messages' && isMainVisible}
+                onChatStateChange={setHideTabBar}
+                initialConv={initialConv}
+              />
+            </View>
+            <View style={[styles.screen, hide('profile')]}>
+              <ProfileScreen
+                key={`${viewedUserId ?? session.user.id}-${profileRefreshKey}`}
+                userId={viewedUserId ?? session.user.id}
+                isOwn={!viewedUserId}
+                isVisible={activeTab === 'profile' && isMainVisible}
+                onVerifyPress={() => setShowVerification(true)}
+                onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
+                onMessagePress={navigateToMessages}
+              />
+            </View>
+
+            {/* Reels: full-screen video, only mount when active to free GPU memory */}
+            {isReels && (
+              <View style={styles.screen}>
+                <ReelsScreen onBack={() => setActiveTab(prevTab)} />
+              </View>
+            )}
           </View>
-        )}
-      </View>
 
-      {/* Floating "+" create button — hide on Reels */}
-      {showTabBar && !isReels && (
-        <TouchableOpacity
-          style={[styles.fab, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}
-          onPress={() => setShowCreate(true)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="add" size={28} color="#fff" />
-        </TouchableOpacity>
-      )}
+          {/* Floating "+" create button — hide on Reels */}
+          {showTabBar && !isReels && (
+            <TouchableOpacity
+              style={[styles.fab, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}
+              onPress={() => setShowCreate(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={28} color="#fff" />
+            </TouchableOpacity>
+          )}
 
-      {/* Bottom tab bar */}
-      {showTabBar && (
-        <SafeAreaView edges={['bottom']} style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
-          <View style={styles.bottomNavInner}>
-            {TABS.map(tab => {
-              const isActive = activeTab === tab.id;
-              return (
-                <TouchableOpacity
-                  key={tab.id}
-                  onPress={() => handleTabChange(tab.id)}
-                  style={styles.tabBtn}
-                  activeOpacity={0.7}
-                >
-                  {isActive && <View style={styles.tabIndicator} />}
-                  <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '15' }]}>
-                    <Ionicons
-                      name={(isActive ? tab.activeIcon : tab.icon) as any}
-                      size={22}
-                      color={isActive ? colors.accent : colors.textMuted}
-                    />
-                  </View>
-                  <Text style={[styles.tabLabel, { color: colors.textMuted }, isActive && { color: colors.accent }]}>{tab.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </SafeAreaView>
-      )}
+          {/* Bottom tab bar */}
+          {showTabBar && (
+            <SafeAreaView edges={['bottom']} style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+              <View style={styles.bottomNavInner}>
+                {TABS.map(tab => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <TouchableOpacity
+                      key={tab.id}
+                      onPress={() => handleTabChange(tab.id)}
+                      style={styles.tabBtn}
+                      activeOpacity={0.7}
+                    >
+                      {isActive && <View style={styles.tabIndicator} />}
+                      <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '15' }]}>
+                        <Ionicons
+                          name={(isActive ? tab.activeIcon : tab.icon) as any}
+                          size={22}
+                          color={isActive ? colors.accent : colors.textMuted}
+                        />
+                      </View>
+                      <Text style={[styles.tabLabel, { color: colors.textMuted }, isActive && { color: colors.accent }]}>{tab.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </SafeAreaView>
+          )}
+        </View>
+      </PagerView>
 
       {/* Notifications overlay — full-screen */}
       {showNotifications && (
@@ -454,6 +587,9 @@ function AppShell() {
             userId={session.user.id}
             onBadgeClear={() => setNotifBadge(0)}
             onBack={() => setShowNotifications(false)}
+            onUserPress={(uid: string) => handleNotificationAction({ type: 'profile', userId: uid })}
+            onPostPress={(pid: string, uid: string) => handleNotificationAction({ type: 'post', postId: pid, userId: uid })}
+            onMessagePress={navigateToMessages}
           />
         </View>
       )}
@@ -471,7 +607,7 @@ function AppShell() {
 }
 
 export default function App() {
-  const [fontsLoaded] = Font.useFonts({
+  const [fontsLoaded] = useFonts({
     ...Ionicons.font,
     ...AntDesign.font,
     ...MaterialIcons.font,

@@ -98,8 +98,9 @@ BEGIN
   SELECT array_agg(f.following_id) INTO v_following
   FROM public.follows f WHERE f.follower_id = p_user_id;
 
-  SELECT university, major INTO v_my_uni, v_my_major
-  FROM public.profiles WHERE id = p_user_id;
+  -- Use explicit table qualification to avoid ambiguity with RETURNS TABLE columns
+  SELECT p_pro.university, p_pro.major INTO v_my_uni, v_my_major
+  FROM public.profiles p_pro WHERE p_pro.id = p_user_id;
 
   RETURN QUERY
   SELECT
@@ -171,8 +172,9 @@ BEGIN
   SELECT array_agg(ui.interest) INTO v_interests
   FROM public.user_interests ui WHERE ui.user_id = p_user_id;
 
-  SELECT university INTO v_my_uni
-  FROM public.profiles WHERE id = p_user_id;
+  -- Use explicit table qualification
+  SELECT p_pro.university INTO v_my_uni
+  FROM public.profiles p_pro WHERE p_pro.id = p_user_id;
 
   RETURN QUERY
   SELECT

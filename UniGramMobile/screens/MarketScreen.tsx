@@ -567,11 +567,15 @@ const SellModal: React.FC<SellModalProps> = ({
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
+  const [isSuspended, setIsSuspended] = useState(false);
 
   useEffect(() => {
     if (visible && currentUserId) {
-      supabase.from('profiles').select('is_banned').eq('id', currentUserId).single()
-        .then(({ data }) => setIsBanned(!!data?.is_banned));
+      supabase.from('profiles').select('is_banned, is_suspended').eq('id', currentUserId).single()
+        .then(({ data }) => {
+          setIsBanned(!!data?.is_banned);
+          setIsSuspended(!!data?.is_suspended);
+        });
     }
   }, [visible, currentUserId]);
 
@@ -695,11 +699,15 @@ const SellModal: React.FC<SellModalProps> = ({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {isBanned ? (
+          {(isBanned || isSuspended) ? (
             <View style={sell.bannedCard}>
               <Ionicons name="alert-circle" size={42} color="#ef4444" />
-              <Text style={sell.bannedTitle}>Market Restricted</Text>
-              <Text style={sell.bannedSub}>Your account is restricted from creating marketplace listings due to community policy violations. You can still browse and message sellers.</Text>
+              <Text style={sell.bannedTitle}>{isBanned ? 'Market Banned' : 'Market Restricted'}</Text>
+              <Text style={sell.bannedSub}>
+                {isBanned 
+                  ? 'Your account is permanently banned from creating marketplace listings due to community policy violations.'
+                  : 'Your account is temporarily restricted from creating marketplace listings due to community policy violations. You can still browse and message sellers.'}
+              </Text>
             </View>
           ) : (
             <>

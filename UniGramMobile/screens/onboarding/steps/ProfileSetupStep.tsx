@@ -9,6 +9,7 @@ import { updateProfileSetup } from '../../../services/onboarding';
 import { uploadAvatar } from '../../../services/profiles';
 import { useHaptics } from '../../../hooks/useHaptics';
 import { searchMajors } from '../../../constants/majors';
+import { searchUniversities } from '../../../constants/universities';
 
 const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'PhD', 'Faculty'];
 
@@ -22,7 +23,6 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
   const [university, setUniversity] = useState('');
   const [uniQuery, setUniQuery] = useState('');
   const [uniResults, setUniResults] = useState<string[]>([]);
-  const [uniSearching, setUniSearching] = useState(false);
   const [showUniList, setShowUniList] = useState(false);
   const [major, setMajor] = useState('');
   const [majorQuery, setMajorQuery] = useState('');
@@ -32,36 +32,31 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
   const [bio, setBio] = useState('');
   const [pronouns, setPronouns] = useState('');
   const [loading, setLoading] = useState(false);
+  const [uniLoading, setUniLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { light, success } = useHaptics();
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
 
-  const searchUniversity = async (q: string) => {
-    if (!q.trim() || q.length < 3) { setUniResults([]); return; }
-    setUniSearching(true);
+  const handleUniType = async (text: string) => {
+    setUniQuery(text);
+    if (!text.trim() || text.length < 2) {
+      setUniResults([]);
+      setShowUniList(false);
+      return;
+    }
+    setShowUniList(true);
+    setUniLoading(true);
     try {
-      const res = await fetch(
-        `https://universities.hipolabs.com/search?name=${encodeURIComponent(q)}&limit=30`
-      );
-      const data: any[] = await res.json();
-      const names = [...new Set(data.map((u: any) => u.name as string))].slice(0, 20);
-      setUniResults(names);
-    } catch {
+      const results = await searchUniversities(text);
+      setUniResults(results);
+    } catch (e) {
       setUniResults([]);
     } finally {
-      setUniSearching(false);
+      setUniLoading(false);
     }
-  };
-
-  const handleUniType = (text: string) => {
-    setUniQuery(text);
-    setShowUniList(true);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => searchUniversity(text), 400);
   };
 
   const selectUniversity = (name: string) => {
@@ -149,15 +144,18 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
                 onFocus={() => setShowUniList(true)}
                 returnKeyType="search"
               />
-              {uniSearching
-                ? <ActivityIndicator size="small" color="#4f46e5" />
-                : university
-                  ? <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
-                  : null
+              {university
+                ? <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
+                : null
               }
             </View>
-            {showUniList && uniResults.length > 0 && (
+            {showUniList && (uniResults.length > 0 || uniLoading) && (
               <View style={styles.uniDropdown}>
+                {uniLoading && (
+                  <View style={{ paddingVertical: 20 }}>
+                    <ActivityIndicator size="small" color="#4f46e5" />
+                  </View>
+                )}
                 <ScrollView
                   style={{ maxHeight: 200 }}
                   keyboardShouldPersistTaps="handled"
@@ -172,7 +170,7 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
                 </ScrollView>
               </View>
             )}
-            {showUniList && !uniSearching && uniQuery.length >= 3 && uniResults.length === 0 && (
+            {showUniList && !uniLoading && uniQuery.length >= 2 && uniResults.length === 0 && (
               <View style={styles.uniDropdown}>
                 <TouchableOpacity
                   style={styles.uniRow}

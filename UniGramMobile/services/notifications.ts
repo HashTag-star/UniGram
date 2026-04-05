@@ -43,13 +43,15 @@ const PUSH_TITLES: Record<string, string> = {
   verification_approved: '✅ Verification Approved',
   verification_rejected: '❌ Verification Update',
   announcement: '📢 UniGram Announcement',
+  account_suspended: '🚫 Account Suspended',
+  account_unsuspended: '✅ Account Restored',
 };
 
 /** Admin sends a notification to one user or all users */
 export async function sendAdminNotification(
   adminId: string,
   message: string,
-  type: 'announcement' | 'verification_approved' | 'verification_rejected',
+  type: 'announcement' | 'verification_approved' | 'verification_rejected' | 'account_suspended' | 'account_unsuspended',
   targetUserId?: string,  // undefined = broadcast to all
 ) {
   if (targetUserId) {
