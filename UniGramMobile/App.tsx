@@ -509,7 +509,11 @@ function AppShell() {
               />
             </View>
             <View style={[styles.screen, hide('market')]}>
-              <MarketScreen isVisible={activeTab === 'market' && isMainVisible} onMessagePress={navigateToMessages} />
+              <MarketScreen 
+                isVisible={activeTab === 'market' && isMainVisible} 
+                onMessagePress={navigateToMessages} 
+                isSuspended={userProfile?.is_suspended}
+              />
             </View>
             <View style={[styles.screen, hide('messages')]}>
               <MessagesScreen

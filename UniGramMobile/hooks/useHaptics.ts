@@ -18,19 +18,19 @@ export function useHaptics() {
   const light = useCallback(async () => {
     const h = await loadHaptics();
     if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Light); } catch {}
+    try { await h.impactAsync(h.ImpactFeedbackStyle.Medium); } catch {}
   }, []);
 
   const medium = useCallback(async () => {
     const h = await loadHaptics();
     if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Medium); } catch {}
+    try { await h.impactAsync(h.ImpactFeedbackStyle.Heavy); } catch {}
   }, []);
 
   const heavy = useCallback(async () => {
     const h = await loadHaptics();
     if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Heavy); } catch {}
+    try { await h.notificationAsync(h.NotificationFeedbackType.Success); } catch {}
   }, []);
 
   const success = useCallback(async () => {
@@ -54,7 +54,7 @@ export function useHaptics() {
   const selection = useCallback(async () => {
     const h = await loadHaptics();
     if (!h) return;
-    try { await h.selectionAsync(); } catch {}
+    try { await h.impactAsync(h.ImpactFeedbackStyle.Light); } catch {}
   }, []);
 
   return { light, medium, heavy, success, error, warning, selection };

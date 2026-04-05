@@ -543,6 +543,7 @@ interface SellModalProps {
   visible: boolean;
   currentUserId: string;
   editItem?: MarketItem | null;
+  isSuspended?: boolean;
   onClose: () => void;
   onPosted: (item: MarketItem) => void;
   onUpdated: (item: MarketItem) => void;
@@ -555,6 +556,7 @@ const SellModal: React.FC<SellModalProps> = ({
   onClose,
   onPosted,
   onUpdated,
+  isSuspended: propIsSuspended,
 }) => {
   const { colors } = useTheme();
   const isEdit = !!editItem;
@@ -567,7 +569,13 @@ const SellModal: React.FC<SellModalProps> = ({
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
-  const [isSuspended, setIsSuspended] = useState(false);
+  const [isSuspended, setIsSuspended] = useState(propIsSuspended ?? false);
+
+  useEffect(() => {
+    if (propIsSuspended !== undefined) {
+      setIsSuspended(propIsSuspended);
+    }
+  }, [propIsSuspended]);
 
   useEffect(() => {
     if (visible && currentUserId) {
@@ -823,9 +831,10 @@ const SellModal: React.FC<SellModalProps> = ({
 interface MarketScreenProps {
   onMessagePress?: (convId: string, otherProfile: any) => void;
   isVisible?: boolean;
+  isSuspended?: boolean;
 }
 
-export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible }) => {
+export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible, isSuspended }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -1217,7 +1226,14 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         <Text style={[styles.headerTitle, { color: colors.text }]}>Campus Market</Text>
         <TouchableOpacity
           style={styles.sellBtn}
-          onPress={() => { setEditItem(null); setShowSell(true); }}
+          onPress={() => { 
+            if (isSuspended) {
+              Alert.alert('Account Suspended', 'Your account is suspended and cannot create new listings at this time.');
+              return;
+            }
+            setEditItem(null); 
+            setShowSell(true); 
+          }}
         >
           <Ionicons name="add" size={16} color="#fff" />
           <Text style={styles.sellBtnText}>Sell</Text>
@@ -1345,7 +1361,14 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
               {(activeTab === 'browse' || activeTab === 'mine') && (
                 <TouchableOpacity
                   style={[styles.sellBtn, { marginTop: 20 }]}
-                  onPress={() => { setEditItem(null); setShowSell(true); }}
+                  onPress={() => { 
+                    if (isSuspended) {
+                      Alert.alert('Account Suspended', 'Your account is suspended and cannot create new listings at this time.');
+                      return;
+                    }
+                    setEditItem(null); 
+                    setShowSell(true); 
+                  }}
                 >
                   <Ionicons name="add" size={16} color="#fff" />
                   <Text style={styles.sellBtnText}>
@@ -1366,6 +1389,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         onClose={handleCloseSell}
         onPosted={handlePosted}
         onUpdated={handleUpdated}
+        isSuspended={isSuspended}
       />
 
       {/* ── Item Detail Modal ── */}

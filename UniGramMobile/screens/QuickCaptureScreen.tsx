@@ -18,7 +18,7 @@ interface QuickCaptureScreenProps {
   onCapture: (media: { uri: string; type: 'image' | 'video' }) => void;
 }
 
-type Mode = 'POST' | 'REEL' | 'STORY';
+type Mode = 'POST' | 'STORY' | 'REEL' | 'LIVE';
 
 export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisible, onClose, onCapture }) => {
   const [permission, requestPermission] = useCameraPermissions();
@@ -170,7 +170,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
 
         <View style={styles.bottomControls}>
           <View style={styles.modeSelector}>
-            {['POST', 'STORY', 'REEL'].map((m) => (
+            {['POST', 'STORY', 'REEL', 'LIVE'].map((m) => (
               <TouchableOpacity 
                 key={m} 
                 onPress={() => { setMode(m as Mode); haptics.selection(); }}
