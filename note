@@ -25,3 +25,5 @@
   Studio + SDK installed), the alternative is:
   npx expo run:android --variant release
   But EAS cloud build is much easier and doesn't require Android Studio.
+
+Preview for ios

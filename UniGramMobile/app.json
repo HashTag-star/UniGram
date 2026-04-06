@@ -39,7 +39,8 @@
         "NSPhotoLibraryUsageDescription": "UniGram needs access to your photo library to share photos and videos.",
         "NSPhotoLibraryAddUsageDescription": "UniGram needs permission to save media to your photo library.",
         "NSLocationWhenInUseUsageDescription": "UniGram uses your location to tag posts and show nearby marketplace items.",
-        "NSUserNotificationsUsageDescription": "UniGram sends notifications for likes, comments, messages, and campus events."
+        "NSUserNotificationsUsageDescription": "UniGram sends notifications for likes, comments, messages, and campus events.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -78,6 +79,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "@react-native-google-signin/google-signin",
       "expo-font",
       "expo-secure-store",
       "expo-location",

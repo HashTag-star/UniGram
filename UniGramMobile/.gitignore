@@ -36,9 +36,27 @@ yarn-error.*
 .env*.local
 firebase-adminsdk*.json
 
+# Credentials and keys
+credentials.json
+credentials/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
 # typescript
 *.tsbuildinfo
 
 # generated native folders
 /ios
 /android
+
+# firebase config
+google-services.json
+GoogleService-Info.plist
+firebase.json
+
+# Supabase scratch scripts in root
+/supabase-*.sql
+/supabase_*.sql
