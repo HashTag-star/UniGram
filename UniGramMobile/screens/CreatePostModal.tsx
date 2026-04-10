@@ -259,12 +259,12 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             // Fallback: we will proceed without a thumbnail, backend/ui should handle this.
           }
           await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined, thumbUri);
-        } else {
           await createPost(userId, fullCaption, type, mediaAssets.map(a => a.uri), {
             location: location || undefined,
             song: song || undefined,
             taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
             mimeType: primaryAsset?.mimeType,
+            aspectRatio: primaryAsset ? Math.max(0.5, Math.min(1.91, primaryAsset.width / primaryAsset.height)) : 1.0,
           });
         }
         DeviceEventEmitter.emit('upload_status', { status: 'success', type: postType });
@@ -397,7 +397,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                   <Image
                     source={{ uri: mediaAssets[selectedMediaIdx].uri }}
                     style={[styles.mediaPreview, isVideo && { opacity: 0.85 }]}
-                    resizeMode="cover"
+                    resizeMode="contain"
                   />
                   {isVideo && (
                     <View style={StyleSheet.absoluteFill as any} pointerEvents="none">

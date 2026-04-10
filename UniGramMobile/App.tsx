@@ -224,6 +224,7 @@ function AppShell() {
   const [showVerification, setShowVerification] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
+  const [globalMuted, setGlobalMuted] = useState(true);
 
   const handleCapture = (media: any) => {
     setActiveMedia(media);
@@ -587,15 +588,17 @@ function AppShell() {
             {/* Each screen uses absoluteFill inside the container so they overlap
                 each other but NOT the tab bar. display:none hides without unmount. */}
             <View style={[styles.screen, hide('feed')]}>
-              <FeedScreen
-                refreshKey={feedRefreshKey}
-                isVisible={activeTab === 'feed' && isMainVisible}
-                onCreateStory={() => setShowCreate(true)}
-                onNotifPress={openNotifications}
-                notifBadge={notifBadge}
-                onReelPress={() => setActiveTab('reels')}
-                onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-              />
+                <FeedScreen
+                  refreshKey={feedRefreshKey}
+                  isVisible={activeTab === 'feed' && isMainVisible}
+                  onCreateStory={() => setShowCreate(true)}
+                  onNotifPress={openNotifications}
+                  notifBadge={notifBadge}
+                  onReelPress={() => setActiveTab('reels')}
+                  onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+                  isMuted={globalMuted}
+                  setIsMuted={setGlobalMuted}
+                />
             </View>
             <View style={[styles.screen, hide('explore')]}>
               <ExploreScreen
@@ -635,7 +638,11 @@ function AppShell() {
             {/* Reels: full-screen video, only mount when active to free GPU memory */}
             {isReels && (
               <View style={styles.screen}>
-                <ReelsScreen onBack={() => setActiveTab(prevTab)} />
+                <ReelsScreen 
+                  onBack={() => setActiveTab(prevTab)} 
+                  isMuted={globalMuted}
+                  setIsMuted={setGlobalMuted}
+                />
               </View>
             )}
           </View>

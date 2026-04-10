@@ -29,7 +29,13 @@ export async function createPost(
   caption: string,
   type: 'image' | 'video' | 'thread' = 'thread',
   mediaUris?: string[],
-  extras?: { location?: string; song?: string; taggedUsers?: string[]; mimeType?: string },
+  extras?: { 
+    location?: string; 
+    song?: string; 
+    taggedUsers?: string[]; 
+    mimeType?: string;
+    aspectRatio?: number;
+  },
 ): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
@@ -63,6 +69,7 @@ export async function createPost(
       location: extras?.location,
       song: extras?.song,
       tagged_users: extras?.taggedUsers,
+      aspect_ratio: extras?.aspectRatio ?? 1.0,
     })
     .select(`*, profiles!posts_user_id_fkey(*)`)
     .single();

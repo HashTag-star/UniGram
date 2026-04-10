@@ -13,6 +13,8 @@ ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS embedding extensions.vector(38
 CREATE INDEX IF NOT EXISTS posts_embedding_idx ON public.posts USING hnsw (embedding vector_ip_ops);
 
 -- 4. Social Graph Recommendation (Mutuals & Friends of Friends)
+DROP FUNCTION IF EXISTS get_suggested_users(uuid, int);
+
 CREATE OR REPLACE FUNCTION get_suggested_users(p_user_id uuid, p_limit int DEFAULT 20)
 RETURNS TABLE (
   id uuid,

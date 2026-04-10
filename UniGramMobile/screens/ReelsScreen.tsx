@@ -442,14 +442,18 @@ const ReelItem: React.FC<{
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
+export const ReelsScreen: React.FC<{ 
+  onBack?: () => void;
+  isMuted: boolean;
+  setIsMuted: (m: boolean) => void;
+}> = ({ onBack, isMuted, setIsMuted }) => {
   const [reels, setReels] = useState<any[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [muted, setMuted] = useState(false); // global mute for all reels
+  // Using global muting props instead of local state
   const [containerHeight, setContainerHeight] = useState(height); // measured on layout
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -544,8 +548,8 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
               isFollowingUser={followingIds.has(item.profiles?.id)}
               isActive={index === activeIndex}
               isAdjacent={Math.abs(index - activeIndex) <= 2}
-              muted={muted}
-              onMuteToggle={() => setMuted(m => !m)}
+              muted={isMuted}
+              onMuteToggle={() => setIsMuted(!isMuted)}
               itemHeight={containerHeight}
             />
           )}

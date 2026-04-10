@@ -30,6 +30,7 @@ import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
+import { LiveScreen } from './LiveScreen';
 
 const { width } = Dimensions.get('window');
 
@@ -53,6 +54,7 @@ interface PostProfile {
 }
 
 interface Post {
+  aspect_ratio: number | undefined;
   id: string;
   user_id: string;
   type: string;
@@ -95,18 +97,28 @@ let cachedCurrentProfile: any = null;
 // ─── Story Bar ────────────────────────────────────────────────────────────────
 const StoryBar: React.FC<{
   storyGroups: any[];
+  liveSessions: any[];
   currentProfile: any;
   viewedIds: string[];
   onStoryPress: (idx: number) => void;
+  onLivePress: (sessionId: string) => void;
   onYourStoryPress: () => void;
-}> = ({ storyGroups, currentProfile, viewedIds, onStoryPress, onYourStoryPress }) => {
+  hasOwnStories: boolean;
+  ownGroupIdx: number;
+}> = ({ storyGroups, liveSessions, currentProfile, viewedIds, onStoryPress, onLivePress, onYourStoryPress, hasOwnStories, ownGroupIdx }) => {
   const { colors } = useTheme();
-  const ownGroupIdx = storyGroups.findIndex(g => g.profile.id === currentProfile?.id);
   const ownGroup = ownGroupIdx !== -1 ? storyGroups[ownGroupIdx] : null;
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
-  const hasOwnStories = ownGroup && ownGroup.stories.length > 0;
-  
   const thumbUri = hasOwnStories ? ownGroup.stories[0].media_url : currentProfile?.avatar_url;
+
+  const localStyles = {
+    liveBadgeMini: {
+      position: 'absolute' as const, bottom: -2, alignSelf: 'center' as const,
+      backgroundColor: '#ff3b30', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1,
+      borderWidth: 1, borderColor: '#000',
+    },
+    liveBadgeMiniText: { color: '#fff', fontSize: 8, fontWeight: '900' as const },
+  };
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}
@@ -115,6 +127,24 @@ const StoryBar: React.FC<{
       onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
       onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
     >
+      {/* Live Sessions */}
+      {liveSessions.map((ls) => (
+        <TouchableOpacity key={ls.id} style={styles.storyItem} onPress={() => onLivePress(ls.id)}>
+          <View style={[styles.storyRing, { borderColor: '#ff3b30' }]}>
+            <View style={styles.storyAvatarClip}>
+              {ls.profiles?.avatar_url
+                ? <Image source={{ uri: ls.profiles.avatar_url }} style={styles.storyAvatar} />
+                : <View style={[styles.storyAvatar, { backgroundColor: '#222' }]} />}
+            </View>
+            <View style={localStyles.liveBadgeMini}>
+              <Text style={localStyles.liveBadgeMiniText}>LIVE</Text>
+            </View>
+          </View>
+          <Text style={[styles.storyUsername, { color: '#ff3b30', fontWeight: 'bold' }]} numberOfLines={1}>
+            {ls.profiles?.username ?? 'user'}
+          </Text>
+        </TouchableOpacity>
+      ))}
       
       <TouchableOpacity 
         style={styles.storyItem} 
@@ -616,7 +646,7 @@ const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ r
         <VideoView
           player={player}
           style={StyleSheet.absoluteFill}
-          contentFit="cover"
+          contentFit="contain"
           nativeControls={false}
         />
       )}
@@ -624,8 +654,11 @@ const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ r
   );
 });
 
-// ─── Video Post ───────────────────────────────────────────────────────────────
-const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }> = React.memo(({ uri, isMuted, isActive }) => {
+const VideoPost: React.FC<{ 
+  uri: string; 
+  isMuted?: boolean; 
+  isActive?: boolean;
+}> = React.memo(({ uri, isMuted, isActive }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = isMuted ?? false;
@@ -651,11 +684,11 @@ const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }
            <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
         </View>
       )}
-      {isActive && player && (
+      {isActive && (
         <VideoView
           player={player}
           style={[styles.postMedia, { width }]}
-          contentFit="cover"
+          contentFit="contain"
           nativeControls={false}
         />
       )}
@@ -704,6 +737,7 @@ const MediaCarousel: React.FC<{
   onSingleTap: () => void;
   isMuted?: boolean;
   isActive?: boolean;
+  aspectRatio?: number;
 }> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const lastTap = useRef(0);
@@ -745,13 +779,17 @@ const MediaCarousel: React.FC<{
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
           <TouchableWithoutFeedback onPress={handleTap}>
-            <View style={{ width, height: 360 }}>
-              {type === 'video' ? (
-                <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} />
-              ) : (
-                <CachedImage uri={item} style={styles.postMedia} resizeMode="cover" />
-              )}
-            </View>
+              <View style={{ width, height: 360, backgroundColor: '#111' }}>
+                {type === 'video' ? (
+                  <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} />
+                ) : (
+                  <CachedImage 
+                    uri={item} 
+                    style={[styles.postMedia, { width: '100%' }]} 
+                    resizeMode="cover" 
+                  />
+                )}
+              </View>
           </TouchableWithoutFeedback>
         )}
       />
@@ -800,7 +838,7 @@ const FullVideoModal: React.FC<{
 };
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, onDeleted }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isMuted, setIsMuted, onDeleted }) => {
   const { colors } = useTheme();
   const { medium, success, selection } = useHaptics();
   
@@ -811,7 +849,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [likes, setLikes] = useState(post.likes_count ?? 0);
   const [saved, setSaved] = useState(false);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
-  const [isMuted, setIsMuted] = useState(true);
+  // Removed local isMuted state to use prop-based global muting (MOMA)
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songLoading, setSongLoading] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
@@ -841,7 +879,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
   useEffect(() => {
     if (songPlayer) {
-      songPlayer.muted = isMuted;
+      songPlayer.muted = isMuted ?? true;
       songPlayer.loop = true;
     }
   }, [songPlayer, isMuted]);
@@ -998,12 +1036,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const profile = post.profiles;
 
   return (
-    <View style={[styles.postCard, { borderBottomColor: colors.border }]}>
+    <View style={[styles.postCard, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
       {fullVideoUri && (
         <FullVideoModal visible uri={fullVideoUri} onClose={() => setFullVideoUri(null)} />
       )}
 
-      <View style={styles.postHeader}>
+      <View style={[styles.postHeader, { backgroundColor: colors.background }]}>
         <View style={styles.postUserRow}>
           <View style={styles.avatarRing}>
             {profile?.avatar_url
@@ -1059,14 +1097,15 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               if (post.type === 'video') {
                 setFullVideoUri(post.media_url!);
               } else {
-                setIsMuted(!isMuted);
+                setIsMuted?.(!isMuted);
               }
             }}
             isMuted={isMuted}
             isActive={isActive}
+            aspectRatio={post.aspect_ratio}
           />
           {(post.type === 'video' || post.song) && (
-            <TouchableOpacity style={styles.muteOverlayBtn} onPress={() => setIsMuted(!isMuted)} activeOpacity={0.8}>
+            <TouchableOpacity style={styles.muteOverlayBtn} onPress={() => setIsMuted?.(!isMuted)} activeOpacity={0.8}>
               <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={16} color="#fff" />
             </TouchableOpacity>
           )}
@@ -1084,7 +1123,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         </View>
       ) : null}
 
-      <View style={styles.postActions}>
+      <View style={[styles.postActions, { backgroundColor: colors.background }]}>
         <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
           <TouchableOpacity onPress={() => doLike()} style={styles.actionBtn}>
             <Animated.View style={{ transform: [{ scale: heartScale }] }}>
@@ -1284,6 +1323,8 @@ const feedInjStyles = StyleSheet.create({
   suggMiniText: { fontSize: 10, textAlign: 'center' },
   suggFollowBtn: { marginTop: 4, backgroundColor: '#6366f1', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 6, width: '100%', alignItems: 'center' },
   suggFollowText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  liveBadgeMini: { position: 'absolute', bottom: -4, backgroundColor: '#ff3b30', paddingHorizontal: 4, borderRadius: 4 },
+  liveBadgeMiniText: { color: '#fff', fontSize: 8, fontWeight: '800' },
 });
 
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
@@ -1298,9 +1339,11 @@ interface FeedScreenProps {
   notifBadge?: number;
   onReelPress?: () => void;
   onUserPress?: (user: any) => void;
+  isMuted: boolean;
+  setIsMuted: (m: boolean) => void;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0, onReelPress, onUserPress }) => {
+export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0, onReelPress, onUserPress, isMuted, setIsMuted }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
@@ -1308,13 +1351,16 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
   const [posts, setPosts] = useState<any[]>(cachedFeedPosts);
   const [storyGroups, setStoryGroups] = useState<any[]>(cachedStoryGroups);
+  const [liveSessions, setLiveSessions] = useState<any[]>([]);
+  const [activeLiveSessionId, setActiveLiveSessionId] = useState<string | null>(null);
+  const [liveToast, setLiveToast] = useState<{ id: string, username: string, sessionId: string } | null>(null);
+  const toastAnim = useRef(new Animated.Value(-100)).current;
   const [likedIds, setLikedIds] = useState<Set<string>>(cachedLikedIds ?? new Set());
   const [savedIds, setSavedIds] = useState<Set<string>>(cachedSavedIds ?? new Set());
   const [viewedIds, setViewedIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentProfile, setCurrentProfile] = useState<any>(cachedCurrentProfile);
   const [activePostId, setActivePostId] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [previewReels, setPreviewReels] = useState<any[]>([]);
@@ -1357,9 +1403,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       setCurrentUserId(user.id);
 
       // Fetch first page + supporting data in parallel
-      const [postsData, storiesData, likedData, savedData, viewedData, prof, reelsData, usersData] = await Promise.all([
+      const [postsData, storiesData, lRes, likedData, savedData, viewedData, prof, reelsData, usersData] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
+        supabase.from('live_sessions').select('*, profiles(username, avatar_url)').eq('status', 'live'),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
         getViewedStoryIds(user.id),
@@ -1371,6 +1418,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       ]);
 
       setCurrentProfile(prof);
+      setLiveSessions(lRes.data ?? []);
       setPreviewReels(reelsData ?? []);
       setSuggestedUsers(usersData ?? []);
       setStoryGroups(storiesData);
@@ -1409,6 +1457,39 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       setRefreshing(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const channel = supabase
+      .channel(`user-lives-${currentUserId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUserId}` },
+        (payload: any) => {
+          if (payload.new.type === 'live_started') {
+            const username = payload.new.content.split(' is ')[0];
+            setLiveToast({ id: payload.new.id, username, sessionId: payload.new.related_id });
+            
+            Animated.spring(toastAnim, {
+              toValue: 60,
+              useNativeDriver: true,
+              tension: 40,
+              friction: 7
+            }).start();
+
+            setTimeout(() => {
+              Animated.timing(toastAnim, { toValue: -100, duration: 300, useNativeDriver: true }).start(() => setLiveToast(null));
+            }, 6000);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUserId]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -1474,14 +1555,18 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
 
   useEffect(() => {
     const postSub = SocialSync.on('POST_DELETE', ({ targetId }) => {
-      handlePostDeleted(targetId);
+      if (targetId) handlePostDeleted(targetId);
     });
     const reelSub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
-      setPreviewReels(prev => prev.filter(r => r.id !== targetId));
+      if (targetId) setPreviewReels(prev => prev.filter(r => r.id !== targetId));
+    });
+    const liveSub = SocialSync.on('LIVE_ENDED', ({ id }) => {
+      if (id) setLiveSessions(prev => prev.filter(s => s.id !== id));
     });
     return () => {
       postSub.remove();
       reelSub.remove();
+      liveSub.remove();
     };
   }, [handlePostDeleted]);
 
@@ -1528,6 +1613,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
     }
   };
 
+  const ownGroupIdx = storyGroups.findIndex(g => g.profile.id === currentUserId);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} />
@@ -1561,10 +1648,14 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
             {loading ? <StorySkeleton /> : (
               <StoryBar
                 storyGroups={storyGroups}
+                liveSessions={liveSessions}
                 currentProfile={currentProfile}
                 viewedIds={viewedIds}
                 onStoryPress={i => setStoryIdx(i)}
+                onLivePress={(id) => setActiveLiveSessionId(id)}
                 onYourStoryPress={handleYourStory}
+                hasOwnStories={ownGroupIdx !== -1}
+                ownGroupIdx={ownGroupIdx}
               />
             )}
             {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
@@ -1639,6 +1730,35 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
           }}
         />
       )}
+      {activeLiveSessionId && (
+        <Modal animationType="slide" visible={true} onRequestClose={() => setActiveLiveSessionId(null)}>
+          <LiveScreen 
+            onClose={() => setActiveLiveSessionId(null)} 
+            viewerSessionId={activeLiveSessionId} 
+          />
+        </Modal>
+      )}
+
+      {/* Real-time Live Toast */}
+      {liveToast && (
+        <Animated.View style={[styles.toastContainer, { transform: [{ translateY: toastAnim }] }]}>
+          <TouchableOpacity 
+            style={styles.toastInner} 
+            onPress={() => {
+              setActiveLiveSessionId(liveToast.sessionId);
+              setLiveToast(null);
+            }}
+          >
+            <View style={styles.toastLiveBadge}>
+              <Text style={styles.toastLiveText}>LIVE</Text>
+            </View>
+            <Text style={styles.toastContent} numberOfLines={1}>
+              <Text style={{ fontWeight: 'bold' }}>{liveToast.username}</Text> started a live video!
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.5)" />
+          </TouchableOpacity>
+        </Animated.View>
+      )}
     </View>
   );
 };
@@ -1691,8 +1811,11 @@ const styles = StyleSheet.create({
   },
   storyUsername: { fontSize: 10, color: 'rgba(255,255,255,0.7)', maxWidth: 64, textAlign: 'center', marginTop: 4 },
 
-  postCard: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 4 },
-  postHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10 },
+  postCard: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 8, overflow: 'hidden' },
+  postHeader: { 
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
+    paddingHorizontal: 12, height: 56, backgroundColor: 'transparent' 
+  },
   postUserRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   avatarRing: { width: 42, height: 42, borderRadius: 21, padding: 2, backgroundColor: '#ff6b35', overflow: 'hidden' },
   postAvatar: { width: 38, height: 38, borderRadius: 19 },
@@ -1738,6 +1861,21 @@ const styles = StyleSheet.create({
     borderRadius: 14, alignItems: 'center', justifyContent: 'center',
     zIndex: 10,
   },
+  sendBtn: { paddingHorizontal: 4 },
+  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
+  toastContainer: {
+    position: 'absolute', top: 0, left: 20, right: 20, zIndex: 1000,
+  },
+  toastInner: {
+    backgroundColor: 'rgba(28,28,30,0.95)',
+    borderRadius: 12, padding: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10,
+  },
+  toastLiveBadge: { backgroundColor: '#ff3b30', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  toastLiveText: { color: '#fff', fontSize: 10, fontWeight: '900' },
+  toastContent: { color: '#fff', fontSize: 13, flex: 1 },
 });
 
 const sv = StyleSheet.create({
@@ -1753,7 +1891,7 @@ const sv = StyleSheet.create({
     paddingHorizontal: 12,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#fff' },
+  avatar: { width: 36, height: 36, borderRadius: 18, borderOutlineWidth: 2, borderColor: '#fff' } as any,
   username: { color: '#fff', fontWeight: '700', fontSize: 13 },
   time: { color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 1 },
   iconBtn: { padding: 6 },
@@ -1780,14 +1918,13 @@ const sv = StyleSheet.create({
   replyHeart: { padding: 4 },
   replyShare: { padding: 4 },
   reactionOverlay: {
-    position: 'absolute', left: 20, right: 20,
-    flexDirection: 'row', justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 30,
-    padding: 12, zIndex: 20,
+    position: 'absolute', left: 20, right: 20, zIndex: 1000,
+    backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: 30,
+    flexDirection: 'row', padding: 10, justifyContent: 'space-between'
   },
   reactionItem: { padding: 4 },
-  sendBtn: { paddingHorizontal: 4 },
-  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
+  sendBtn: { padding: 6 },
+  sendBtnText: { color: '#6366f1', fontWeight: '800' },
 });
 
 const vv = StyleSheet.create({
@@ -1815,3 +1952,4 @@ const vv = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 60 },
   emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14 },
 });
+

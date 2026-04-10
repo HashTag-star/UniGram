@@ -94,7 +94,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
       {/* Background Media */}
       <View style={styles.mediaContainer}>
         {type === 'image' ? (
-          <Image source={{ uri }} style={styles.fullMedia} resizeMode="cover" />
+          <Image source={{ uri }} style={styles.fullMedia} resizeMode="contain" />
         ) : (
           <VideoPreview uri={uri} />
         )}
@@ -171,7 +171,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
                 style={styles.filterItem}
               >
                 <View style={[styles.filterPreview, { backgroundColor: f.color }]}>
-                   <Image source={{ uri }} style={styles.filterPreviewImg} resizeMode="cover" />
+                   <Image source={{ uri }} style={styles.filterPreviewImg} resizeMode="contain" />
                    <View style={[StyleSheet.absoluteFill, { backgroundColor: f.overlay }]} />
                 </View>
                 <Text style={[styles.filterName, activeFilter.id === f.id && styles.filterNameActive]}>
@@ -238,7 +238,7 @@ const ModernVideoPlayer = ({ uri }: { uri: string }) => {
     <VideoView
       player={player}
      style={styles.fullMedia}
-      contentFit="cover"
+      contentFit="contain"
       nativeControls={false}
     />
   );
@@ -251,7 +251,7 @@ const LegacyVideoPlayer = ({ uri }: { uri: string }) => {
       rate={1.0}
       volume={1.0}
       isMuted={false}
-      resizeMode={ResizeMode.COVER}
+      resizeMode={ResizeMode.CONTAIN}
       shouldPlay
       isLooping
       style={styles.fullMedia}

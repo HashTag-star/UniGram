@@ -6,10 +6,13 @@ export type SocialEventType =
   | 'REEL_LIKE_CHANGE'
   | 'STORY_LIKE_CHANGE'
   | 'REEL_DELETE'
-  | 'POST_DELETE';
+  | 'POST_DELETE'
+  | 'LIVE_STARTED'
+  | 'LIVE_ENDED';
 
 export interface SocialEventData {
-  targetId: string; // userId, postId, reelId, etc.
+  targetId?: string; // userId, postId, reelId, etc.
+  id?: string; // used for live session cleanup
   isActive?: boolean; // isLiked, isFollowing, etc.
   newCount?: number; // updated likes_count
 }
