@@ -7,6 +7,17 @@ import {
   TextInput, InteractionManager, AppState,
   Platform,
 } from 'react-native';
+import { 
+  Gesture, 
+  GestureDetector, 
+  GestureHandlerRootView 
+} from 'react-native-gesture-handler';
+import Reanimated, { 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withSpring, 
+  runOnJS 
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,6 +36,7 @@ import { getReels } from '../services/reels';
 import { getSuggestedUsers } from '../services/onboarding';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
+import { CampusPulse } from '../components/CampusPulse';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -79,6 +91,7 @@ interface FeedPostProps {
   isMuted?: boolean;
   setIsMuted?: (m: boolean) => void;
   onCommentCountChange?: (postId: string, delta: number) => void;
+  onOpenComments?: (id: string, authorId: string) => void;
   onDeleted?: (id: string) => void;
 }
 
@@ -658,7 +671,8 @@ const VideoPost: React.FC<{
   uri: string; 
   isMuted?: boolean; 
   isActive?: boolean;
-}> = React.memo(({ uri, isMuted, isActive }) => {
+  aspectRatio?: number;
+}> = React.memo(({ uri, isMuted, isActive, aspectRatio }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = isMuted ?? false;
@@ -677,8 +691,10 @@ const VideoPost: React.FC<{
     else player.pause();
   }, [player, isActive]);
 
+  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : 360;
+
   return (
-    <View style={{ position: 'relative', width, height: 360, backgroundColor: '#000' }}>
+    <View style={{ position: 'relative', width, height: containerHeight, backgroundColor: '#000' }}>
       {!isActive && (
         <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
            <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
@@ -687,8 +703,8 @@ const VideoPost: React.FC<{
       {isActive && (
         <VideoView
           player={player}
-          style={[styles.postMedia, { width }]}
-          contentFit="contain"
+          style={[styles.postMedia, { width, height: containerHeight }]}
+          contentFit="cover"
           nativeControls={false}
         />
       )}
@@ -738,24 +754,49 @@ const MediaCarousel: React.FC<{
   isMuted?: boolean;
   isActive?: boolean;
   aspectRatio?: number;
-}> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive }) => {
+}> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive, aspectRatio }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
-  const lastTap = useRef(0);
+  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : 360;
+  
+  // Gesture State
+  const isSwiping = useSharedValue(false);
+  const translateX = useSharedValue(0);
 
-  const handleTap = () => {
-    const now = Date.now();
-    if (now - lastTap.current < 300) {
-      onDoubleTap();
-    } else {
-      setTimeout(() => {
-        if (now - lastTap.current >= 300) onSingleTap();
-      }, 300);
-    }
-    lastTap.current = now;
-  };
+  const tapGesture = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => {
+      if (!isSwiping.value) {
+        runOnJS(onSingleTap)();
+      }
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      runOnJS(onDoubleTap)();
+    });
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-10, 10]) // Movement threshold for direction locking
+    .onStart(() => {
+      isSwiping.value = true;
+    })
+    .onUpdate((e) => {
+      translateX.value = e.translationX;
+    })
+    .onEnd(() => {
+      isSwiping.value = false;
+      translateX.value = withSpring(0);
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value * 0.2 }],
+  }));
+
+  const composedGesture = Gesture.Exclusive(doubleTapGesture, tapGesture, panGesture);
 
   return (
-    <View>
+    <View style={{ height: containerHeight }}>
       <FlatList
         data={mediaUrls}
         horizontal
@@ -778,19 +819,19 @@ const MediaCarousel: React.FC<{
         }}
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
-          <TouchableWithoutFeedback onPress={handleTap}>
-              <View style={{ width, height: 360, backgroundColor: '#111' }}>
-                {type === 'video' ? (
-                  <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} />
-                ) : (
-                  <CachedImage 
-                    uri={item} 
-                    style={[styles.postMedia, { width: '100%' }]} 
-                    resizeMode="cover" 
-                  />
-                )}
-              </View>
-          </TouchableWithoutFeedback>
+          <GestureDetector gesture={composedGesture}>
+            <Reanimated.View style={[{ width, height: containerHeight, backgroundColor: '#111' }, animatedStyle]}>
+              {type === 'video' ? (
+                <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={aspectRatio} />
+              ) : (
+                <CachedImage 
+                  uri={item} 
+                  style={[styles.postMedia, { width: '100%', height: '100%' }]} 
+                  resizeMode="cover" 
+                />
+              )}
+            </Reanimated.View>
+          </GestureDetector>
         )}
       />
       {mediaUrls.length > 1 && (
@@ -838,7 +879,7 @@ const FullVideoModal: React.FC<{
 };
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isMuted, setIsMuted, onDeleted }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isMuted, setIsMuted, onOpenComments, onCommentCountChange, onDeleted }) => {
   const { colors } = useTheme();
   const { medium, success, selection } = useHaptics();
   
@@ -1130,7 +1171,9 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
             </Animated.View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => {
+            onOpenComments?.(post.id, post.user_id);
+          }}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={async () => {
@@ -1149,7 +1192,9 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
           {likes > 0 && <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>}
           {commentCount > 0 && (
-            <TouchableOpacity onPress={() => setShowComments(true)}>
+            <TouchableOpacity onPress={() => {
+              onOpenComments?.(post.id, post.user_id);
+            }}>
               <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>{fmtCount(commentCount)} comments</Text>
             </TouchableOpacity>
           )}
@@ -1162,16 +1207,6 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         ) : null}
         <Text style={[styles.timeText, { color: colors.textMuted }]}>{timeAgo(post.created_at)}</Text>
       </View>
-
-      <CommentSheet
-        visible={showComments}
-        targetId={post.id}
-        targetType="post"
-        currentUserId={currentUserId}
-        authorId={post.user_id}
-        onClose={() => setShowComments(false)}
-        onCountChange={handleCommentChange}
-      />
 
       <ShareSheet
         visible={showShare}
@@ -1335,6 +1370,7 @@ interface FeedScreenProps {
   refreshKey?: number;
   isVisible?: boolean;
   onCreateStory?: () => void;
+  onCameraPress?: () => void; // New prop for manual camera access
   onNotifPress?: () => void;
   notifBadge?: number;
   onReelPress?: () => void;
@@ -1343,7 +1379,18 @@ interface FeedScreenProps {
   setIsMuted: (m: boolean) => void;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisible = true, onCreateStory, onNotifPress, notifBadge = 0, onReelPress, onUserPress, isMuted, setIsMuted }) => {
+export const FeedScreen: React.FC<FeedScreenProps> = ({ 
+  refreshKey = 0, 
+  isVisible = true, 
+  onCreateStory, 
+  onCameraPress,
+  onNotifPress, 
+  notifBadge = 0, 
+  onReelPress, 
+  onUserPress, 
+  isMuted, 
+  setIsMuted 
+}) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
@@ -1361,6 +1408,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentProfile, setCurrentProfile] = useState<any>(cachedCurrentProfile);
   const [activePostId, setActivePostId] = useState<string | null>(null);
+  const [showCommentsId, setShowCommentsId] = useState<string | null>(null);
+  const [showCommentsType, setShowCommentsType] = useState<'post' | 'reel'>('post');
+  const [showCommentsAuthorId, setShowCommentsAuthorId] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [previewReels, setPreviewReels] = useState<any[]>([]);
@@ -1373,9 +1423,21 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
     itemVisiblePercentThreshold: 70,
   }).current;
 
+  const recordedImpressions = useRef(new Set<string>());
+
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
-      setActivePostId(viewableItems[0].key);
+      const topId = viewableItems[0].key;
+      setActivePostId(topId);
+      
+      // Record impressions for all visible items if not already done this session
+      viewableItems.forEach((info: any) => {
+        const id = info.key;
+        if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
+          recordedImpressions.current.add(id);
+          if (currentUserId) recordImpression(id, currentUserId);
+        }
+      });
     }
   }).current;
 
@@ -1637,7 +1699,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} />
 
       <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg, borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
-        <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <TouchableOpacity onPress={onCameraPress} style={{ padding: 4 }}>
+            <Ionicons name="camera-outline" size={26} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
+        </View>
         <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
           <Ionicons name="notifications-outline" size={24} color={colors.text} />
           {notifBadge > 0 && (
@@ -1675,6 +1742,15 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
                 ownGroupIdx={ownGroupIdx}
               />
             )}
+            {!loading && currentUserId && (
+              <CampusPulse 
+                userId={currentUserId} 
+                onPostPress={(post) => {
+                  // Direct navigation to post or open in modal... 
+                  // For now, let's keep it simple.
+                }} 
+              />
+            )}
             {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
           </>
         }
@@ -1708,6 +1784,11 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
               isMuted={isMuted}
               setIsMuted={setIsMuted}
               onCommentCountChange={handleCommentCountChange}
+              onOpenComments={(id, authorId) => {
+                setShowCommentsId(id);
+                setShowCommentsType('post');
+                setShowCommentsAuthorId(authorId);
+              }}
               onDeleted={handlePostDeleted}
             />
           );
@@ -1726,6 +1807,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
         }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
+      />
+
+      {/* Centralized Comment System */}
+      <CommentSheet
+        visible={!!showCommentsId}
+        targetId={showCommentsId ?? ''}
+        targetType={showCommentsType}
+        currentUserId={currentUserId}
+        authorId={showCommentsAuthorId ?? ''}
+        onClose={() => setShowCommentsId(null)}
+        onCountChange={(delta) => {
+          if (showCommentsId) handleCommentCountChange(showCommentsId, delta);
+        }}
       />
 
       {storyIdx !== null && (

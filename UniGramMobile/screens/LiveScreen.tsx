@@ -218,7 +218,7 @@ export const LiveScreen: React.FC<{
       {/* Broadcaster Pre-Live Overlay */}
       {!isLive && !viewerSessionId && (
         <View style={styles.preLiveOverlay}>
-          <View style={styles.preLiveHeader}>
+          <View style={[styles.preLiveHeader, { marginTop: insets.top + 10 }]}>
             <TouchableOpacity onPress={onClose} style={styles.pillBtn}>
                <Ionicons name="close" size={24} color="#fff" />
             </TouchableOpacity>
@@ -228,7 +228,7 @@ export const LiveScreen: React.FC<{
           </View>
           
           <TouchableOpacity 
-            style={[styles.goLiveBtn, isStarting && { opacity: 0.7 }]} 
+            style={[styles.goLiveBtn, { marginBottom: insets.bottom + 40 }, isStarting && { opacity: 0.7 }]} 
             onPress={handleStartLive}
             disabled={isStarting}
           >
@@ -341,10 +341,10 @@ const styles = StyleSheet.create({
   rightHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconBtn: { padding: 4 },
   
-  preLiveOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'space-between', paddingVertical: 40 },
+  preLiveOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'space-between' },
   preLiveHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20 },
   pillBtn: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 12, borderRadius: 30 },
-  goLiveBtn: { alignSelf: 'center', marginBottom: 40, width: width * 0.5, height: 60, zIndex: 1000 },
+  goLiveBtn: { alignSelf: 'center', width: width * 0.5, height: 60, zIndex: 1000 },
   goLiveGradient: { flex: 1, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
   goLiveText: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 1.5 },
 

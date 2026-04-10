@@ -8,8 +8,9 @@ import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
-import * as Font from 'expo-font';
 import { useFonts } from 'expo-font';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { FeedScreen } from './screens/FeedScreen';
 import { ExploreScreen } from './screens/ExploreScreen';
 import { ReelsScreen } from './screens/ReelsScreen';
@@ -38,6 +39,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 // import { MediaEditScreen } from './screens/MediaEditScreen';
 import { createStory } from './services/stories';
 import { AccountService } from './services/accounts';
+import { runOnJS } from 'react-native-worklets';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
@@ -262,6 +264,7 @@ function AppShell() {
   const showNotifsRef = useRef(false);
   const pagerRef = useRef<PagerView>(null);
   const [pagerPage, setPagerPage] = useState(1);
+  const [isEdgeSwiping, setIsEdgeSwiping] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [minSplashDone, setMinSplashDone] = useState(false);
 
@@ -562,15 +565,11 @@ function AppShell() {
         ref={pagerRef}
         style={{ flex: 1 }} 
         initialPage={1}
-        onPageSelected={(e) => setPagerPage(e.nativeEvent.position)}
-        scrollEnabled={
-          pagerScrollEnabled &&
-          activeTab === 'feed' && 
-          !showNotifications && 
-          !showCreate && 
-          !showVerification && 
-          !userProfile?.is_suspended
-        }
+        onPageSelected={(e) => {
+          setPagerPage(e.nativeEvent.position);
+          setIsEdgeSwiping(false);
+        }}
+        scrollEnabled={false} // Disable swiping to prevent conflicts
       >
         {/* Page 0: Side-Swipe Camera (IG Style) */}
         <View key="0" style={{ flex: 1 }}>
@@ -592,6 +591,7 @@ function AppShell() {
                   refreshKey={feedRefreshKey}
                   isVisible={activeTab === 'feed' && isMainVisible}
                   onCreateStory={() => setShowCreate(true)}
+                  onCameraPress={() => pagerRef.current?.setPage(0)}
                   onNotifPress={openNotifications}
                   notifBadge={notifBadge}
                   onReelPress={() => setActiveTab('reels')}
@@ -777,11 +777,15 @@ export default function App() {
   if (!fontsLoaded) return <LoadingScreen />;
 
   return (
-    <ThemeProvider>
-      <SafeAreaProvider>
-        <AppShell />
-      </SafeAreaProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <BottomSheetModalProvider>
+          <SafeAreaProvider>
+            <AppShell />
+          </SafeAreaProvider>
+        </BottomSheetModalProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
 

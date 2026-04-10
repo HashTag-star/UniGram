@@ -1,17 +1,27 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
-  View, Text, Modal, TouchableOpacity, FlatList, TextInput,
+  View, Text, TouchableOpacity, FlatList, TextInput,
   StyleSheet, Image, KeyboardAvoidingView, Platform, ActivityIndicator,
-  Keyboard, EmitterSubscription, Alert
+  Keyboard, Alert, Dimensions
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  BottomSheetModal,
+  BottomSheetView,
+  BottomSheetBackdrop,
+  BottomSheetTextInput,
+  BottomSheetFlatList,
+} from '@gorhom/bottom-sheet';
+import * as Haptics from 'expo-haptics';
 import { CommentsSkeleton } from './Skeleton';
 import { getPostComments, addPostComment, deletePostComment, likeComment, unlikeComment } from '../services/posts';
 import { getReelComments, addReelComment } from '../services/reels';
 import { useTheme } from '../context/ThemeContext';
 import { VerifiedBadge } from './VerifiedBadge';
 import { createReport } from '../services/reports';
+
+const { width } = Dimensions.get('window');
 
 function timeAgo(ts: string) {
   const d = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -34,6 +44,7 @@ interface Props {
 export const CommentSheet: React.FC<Props> = ({
   visible, targetId, targetType, currentUserId, authorId, onClose, onCountChange,
 }) => {
+  const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [comments, setComments] = useState<any[]>([]);
@@ -41,128 +52,48 @@ export const CommentSheet: React.FC<Props> = ({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [replyingTo, setReplyingTo] = useState<any>(null);
-  const [tagSearch, setTagSearch] = useState('');
-  const [userResults, setUserResults] = useState<any[]>([]);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+
+  const snapPoints = useMemo(() => ['50%', '95%'], []);
 
   useEffect(() => {
-    const showSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => {
-        setKeyboardHeight(e.endCoordinates.height);
-        setIsKeyboardVisible(true);
-      }
-    );
-    const hideSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        setKeyboardHeight(0);
-        setIsKeyboardVisible(false);
-      }
-    );
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!visible || !targetId) return;
-    setLoading(true);
-    const fetch = targetType === 'post'
-      ? getPostComments(targetId)
-      : getReelComments(targetId);
-    fetch.then(setComments).catch(console.error).finally(() => setLoading(false));
+    if (visible) {
+      bottomSheetModalRef.current?.present();
+      loadComments();
+    } else {
+      bottomSheetModalRef.current?.dismiss();
+    }
   }, [visible, targetId]);
 
-  // Mentions logic
-  const onTextChange = (val: string) => {
-    setText(val);
-    const match = val.match(/@(\w*)$/);
-    if (match) {
-      const q = match[1];
-      setTagSearch(q);
-      const { searchUsers } = require('../services/profiles');
-      searchUsers(q).then(setUserResults).catch(() => {});
-    } else {
-      setTagSearch('');
-      setUserResults([]);
-    }
-  };
-
-  const insertMention = (user: any) => {
-    const newVal = text.replace(/@\w*$/, `@${user.username} `);
-    setText(newVal);
-    setTagSearch('');
-    setUserResults([]);
-    inputRef.current?.focus();
-  };
-
-  const send = async () => {
-    if (!text.trim() || sending) return;
-    const t = text.trim();
-    const parentId = replyingTo?.id;
-    setText('');
-    setReplyingTo(null);
-    
-    // Optimistic update
-    const tempId = 'temp-' + Date.now();
-    const tempComment = {
-      id: tempId,
-      text: t,
-      user_id: currentUserId,
-      parent_id: parentId,
-      created_at: new Date().toISOString(),
-      likes_count: 0,
-      dislikes_count: 0,
-      profiles: { username: 'Sending...', avatar_url: null },
-    };
-    setComments(prev => [...prev, tempComment]);
-    onCountChange?.(1);
-
+  const loadComments = async () => {
+    if (!targetId) return;
+    setLoading(true);
     try {
-      const newComment = targetType === 'post'
-        ? await addPostComment(targetId, currentUserId, t, parentId)
-        : await addReelComment(targetId, currentUserId, t, parentId);
-      
-      setComments(prev => prev.map(c => c.id === tempId ? newComment : c));
+      const data = targetType === 'post'
+        ? await getPostComments(targetId)
+        : await getReelComments(targetId);
+      setComments(data);
     } catch (e) {
-      setComments(prev => prev.filter(c => c.id !== tempId));
-      onCountChange?.(-1);
-      setText(t);
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const deleteComment = (comment: any) => {
-    if (comment.user_id !== currentUserId) return;
-    setComments(prev => prev.filter(c => c.id !== comment.id));
-    onCountChange?.(-1);
-    if (targetType === 'post') {
-      deletePostComment(comment.id, currentUserId).catch((e) => {
-        console.error('Delete comment failed:', e);
-        setComments(prev => [...prev, comment].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        ));
-        onCountChange?.(1);
-      });
-    }
-  };
-
-  const handleDislike = async (comment: any) => {
-    // Optimistic
-    const isDisliked = !!comment.isDisliked;
-    setComments(prev => prev.map(c => c.id === comment.id 
-      ? { ...c, dislikes_count: (c.dislikes_count ?? 0) + (isDisliked ? -1 : 1), isDisliked: !isDisliked } 
-      : c
-    ));
-    // Dislikes usually don't have a dedicated table yet, so we just let it be optimistic
+  const toggleExpand = (parentId: string) => {
+    setExpandedParents(prev => {
+      const next = new Set(prev);
+      if (next.has(parentId)) next.delete(parentId);
+      else next.add(parentId);
+      return next;
+    });
+    Haptics.selectionAsync();
   };
 
   const handleLike = async (comment: any) => {
     const isLiked = !!comment.isLiked;
-    // Optimistic
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    
     setComments(prev => prev.map(c => c.id === comment.id 
       ? { ...c, likes_count: (c.likes_count ?? 0) + (isLiked ? -1 : 1), isLiked: !isLiked } 
       : c
@@ -172,17 +103,6 @@ export const CommentSheet: React.FC<Props> = ({
       if (isLiked) await unlikeComment(comment.id, currentUserId);
       else await likeComment(comment.id, currentUserId);
     } catch (e: any) {
-      console.warn('Like action sync error:', e);
-      // If it's a database missing error (relation missing or schema cache error), 
-      // keep the optimistic state (don't revert) because the user wants the feature.
-      const isSchemaError = e.message?.includes('relation') || 
-                          e.message?.includes('not found') || 
-                          e.message?.includes('schema cache') ||
-                          e.code === 'PGRST205';
-
-      if (isSchemaError) {
-        return; 
-      }
       setComments(prev => prev.map(c => c.id === comment.id 
         ? { ...c, likes_count: (c.likes_count ?? 0) + (isLiked ? 1 : -1), isLiked } 
         : c
@@ -190,90 +110,170 @@ export const CommentSheet: React.FC<Props> = ({
     }
   };
 
-  const handleReportComment = (comment: any) => {
-    Alert.alert(
-      'Report Comment',
-      'Why are you reporting this comment?',
-      [
-        { text: 'Spam', onPress: () => submitReport(comment.id, 'Spam') },
-        { text: 'Harassment', onPress: () => submitReport(comment.id, 'Harassment') },
-        { text: 'Academic Fraud', onPress: () => submitReport(comment.id, 'Academic Fraud') },
-        { text: 'Other', onPress: () => submitReport(comment.id, 'Other') },
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
-  };
+  const send = async () => {
+    if (!text.trim() || sending) return;
+    const t = text.trim();
+    const parentId = replyingTo?.id;
+    setText('');
+    setReplyingTo(null);
+    setSending(true);
 
-  const submitReport = async (id: string, reason: string) => {
+    // Optimistic
+    const tempId = 'temp-' + Date.now();
+    const tempComment = {
+      id: tempId,
+      text: t,
+      user_id: currentUserId,
+      parent_id: parentId,
+      created_at: new Date().toISOString(),
+      likes_count: 0,
+      profiles: { username: 'Sending...', avatar_url: null },
+    };
+    
+    setComments(prev => [...prev, tempComment]);
+    onCountChange?.(1);
+    if (parentId) {
+      setExpandedParents(prev => {
+        const next = new Set(prev);
+        next.add(parentId);
+        return next;
+      });
+    }
+
     try {
-      await createReport(id, 'comment', reason);
-      Alert.alert('Report Received', 'Thank you for helping keep UniGram safe. Our moderators will review this shortly.');
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+      const newComment = targetType === 'post'
+        ? await addPostComment(targetId, currentUserId, t, parentId)
+        : await addReelComment(targetId, currentUserId, t, parentId);
+      
+      setComments(prev => prev.map(c => c.id === tempId ? newComment : c));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setComments(prev => prev.filter(c => c.id !== tempId));
+      onCountChange?.(-1);
+      setText(t);
+    } finally {
+      setSending(false);
     }
   };
+ 
+  const handleDeleteComment = (comment: any) => {
+    Alert.alert('Delete comment?', 'This will permanently remove your comment.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try {
+          setComments(prev => prev.filter(c => c.id !== comment.id));
+          onCountChange?.(-1);
+          await deletePostComment(comment.id, currentUserId);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (e: any) {
+          Alert.alert('Error', 'Could not delete comment.');
+          loadComments(); // Rollback
+        }
+      }}
+    ]);
+  };
 
-  const renderComment = ({ item }: { item: any }) => {
+  const renderBackdrop = useCallback(
+    (props: any) => (
+      <BottomSheetBackdrop
+        {...props}
+        disappearsAt={-1}
+        appearsAt={0}
+        opacity={0.5}
+      />
+    ),
+    []
+  );
+
+  // Hierarchical data prep: Build a tree for nested expansion
+  const commentTree = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    const roots: any[] = [];
+    
+    // Sort by date first to ensure order
+    const sorted = [...comments].sort((a, b) => 
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+
+    sorted.forEach(c => {
+      if (c.parent_id) {
+        if (!map[c.parent_id]) map[c.parent_id] = [];
+        map[c.parent_id].push(c);
+      } else {
+        roots.push(c);
+      }
+    });
+    return { roots, childrenMap: map };
+  }, [comments]);
+
+  const renderComment = ({ item, depth = 0 }: { item: any, depth?: number }) => {
     const profile = item.profiles;
-    const isMe = item.user_id === currentUserId;
     const isAuthor = item.user_id === authorId;
-    const isReply = !!item.parent_id;
+    const replies = commentTree.childrenMap[item.id] || [];
+    const isExpanded = expandedParents.has(item.id);
 
     return (
-      <View style={[styles.commentRow, isReply && { marginLeft: 42, transform: [{ scale: 0.95 }] }]}>
-        {profile?.avatar_url
-          ? <Image source={{ uri: profile.avatar_url }} style={styles.commentAvatar} />
-          : <View style={[styles.commentAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="person" size={16} color={colors.textMuted} />
-            </View>
-        }
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <Text style={[styles.commentUser, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
-            {profile?.is_verified && (
-              <VerifiedBadge type={profile.verification_type} size="sm" />
-            )}
-            {isAuthor && (
-              <View style={styles.authorBadge}>
-                <Text style={styles.authorBadgeText}>Author</Text>
+      <View key={item.id} style={[styles.commentGroup, depth > 0 && { marginLeft: depth * 24, marginBottom: 12 }]}>
+        <View style={styles.commentRow}>
+          {profile?.avatar_url
+            ? <Image source={{ uri: profile.avatar_url }} style={[styles.commentAvatar, depth > 0 && { width: 28, height: 28 }]} />
+            : <View style={[styles.commentAvatar, depth > 0 && { width: 28, height: 28 }, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name="person" size={depth > 0 ? 12 : 16} color={colors.textMuted} />
               </View>
-            )}
-            <Text style={[styles.commentTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
-          </View>
-          <Text style={[styles.commentText, { color: colors.textSub }]}>{item.text}</Text>
-          
-          <View style={styles.commentActions}>
-            <TouchableOpacity onPress={() => handleLike(item)} style={styles.actionItem}>
-              <Ionicons 
-                name={item.isLiked ? "heart" : "heart-outline"} 
-                size={16} 
-                color={item.isLiked ? "#ef4444" : colors.textMuted} 
-              />
-              <Text style={[styles.actionText, item.isLiked && { color: "#ef4444" }]}>{item.likes_count || ''}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => handleDislike(item)} style={styles.actionItem}>
-              <Ionicons 
-                name={item.isDisliked ? "thumbs-down" : "thumbs-down-outline"} 
-                size={16} 
-                color={item.isDisliked ? "#f59e0b" : colors.textMuted} 
-              />
-              <Text style={[styles.actionText, item.isDisliked && { color: "#f59e0b" }]}>{item.dislikes_count || ''}</Text>
-            </TouchableOpacity>
-            {!isReply && (
-              <TouchableOpacity onPress={() => { setReplyingTo(item); inputRef.current?.focus(); }} style={styles.actionItem}>
+          }
+          <View style={{ flex: 1, marginLeft: depth > 0 ? 8 : 12 }}>
+            <View style={styles.commentHeader}>
+              <Text style={[styles.commentUser, { color: colors.text, fontSize: depth > 0 ? 13 : 14 }]}>{profile?.username ?? 'user'}</Text>
+              {profile?.is_verified && <VerifiedBadge type={profile.verification_type} size="sm" />}
+              {isAuthor && depth === 0 && (
+                <View style={styles.authorBadge}>
+                  <Text style={styles.authorBadgeText}>Author</Text>
+                </View>
+              )}
+              <Text style={[styles.commentTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
+            </View>
+            <Text style={[styles.commentText, { color: colors.textSub, fontSize: depth > 0 ? 13 : 14 }]}>{item.text}</Text>
+            
+            <View style={styles.commentActions}>
+              <TouchableOpacity onPress={() => handleLike(item)} style={styles.actionItem}>
+                <Ionicons 
+                  name={item.isLiked ? "heart" : "heart-outline"} 
+                  size={depth > 0 ? 12 : 16} 
+                  color={item.isLiked ? "#ef4444" : colors.textMuted} 
+                />
+                <Text style={[styles.actionText, item.isLiked && { color: "#ef4444" }]}>{item.likes_count || ''}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                onPress={() => { 
+                   setReplyingTo(item); 
+                   setText(`@${profile?.username} `);
+                }} 
+                style={styles.actionItem}
+              >
                 <Text style={styles.actionTextBold}>Reply</Text>
               </TouchableOpacity>
-            )}
-            {isMe ? (
-              <TouchableOpacity onPress={() => deleteComment(item)} style={styles.actionItem}>
-                <Text style={[styles.actionText, { color: '#ef4444' }]}>Delete</Text>
+              
+              {item.user_id === currentUserId && (
+                <TouchableOpacity onPress={() => handleDeleteComment(item)} style={styles.actionItem}>
+                  <Ionicons name="trash-outline" size={14} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Expansion Toggle */}
+            {replies.length > 0 && (
+              <TouchableOpacity style={styles.repliesToggle} onPress={() => toggleExpand(item.id)}>
+                <View style={[styles.repliesLine, { backgroundColor: colors.border }]} />
+                <Text style={[styles.repliesToggleText, { color: colors.textMuted }]}>
+                  {isExpanded ? 'Hide replies' : `View ${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}`}
+                </Text>
               </TouchableOpacity>
-            ) : (
-              <TouchableOpacity onPress={() => handleReportComment(item)} style={styles.actionItem}>
-                <Ionicons name="flag-outline" size={14} color={colors.textMuted} />
-                <Text style={styles.actionText}>Report</Text>
-              </TouchableOpacity>
             )}
+
+            {/* True Nested Expansion Rendering */}
+            {isExpanded && replies.map(reply => (
+              renderComment({ item: reply, depth: depth + 1 })
+            ))}
           </View>
         </View>
       </View>
@@ -281,131 +281,117 @@ export const CommentSheet: React.FC<Props> = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={[
-            styles.sheet, 
-            { 
-              backgroundColor: colors.bg,
-              paddingBottom: isKeyboardVisible ? 0 : (insets.bottom || 12)
-            }
-          ]}
-        >
-          <View style={styles.handle} />
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
-            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-              <Ionicons name="close" size={24} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
+    <BottomSheetModal
+      ref={bottomSheetModalRef}
+      index={1}
+      snapPoints={snapPoints}
+      onDismiss={onClose}
+      backdropComponent={renderBackdrop}
+      handleIndicatorStyle={{ backgroundColor: colors.border }}
+      backgroundStyle={{ backgroundColor: colors.bg }}
+      keyboardBehavior="extend"
+      keyboardBlurBehavior="restore"
+      android_keyboardInputMode="adjustResize"
+    >
+      <View style={{ flex: 1 }}>
+        <View style={styles.sheetHeader}>
+          <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
+        </View>
 
-          {loading ? (
-            <CommentsSkeleton />
-          ) : (
-            <FlatList
-              data={comments}
-              keyExtractor={c => c.id}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
-              ListEmptyComponent={
-                <View style={{ alignItems: 'center', paddingVertical: 60 }}>
-                  <Ionicons name="chatbubble-outline" size={48} color={colors.textMuted} />
-                  <Text style={{ color: colors.textSub, marginTop: 12, fontSize: 16, fontWeight: '600' }}>No comments yet</Text>
+        <BottomSheetFlatList
+          data={commentTree.roots}
+          keyExtractor={c => c.id}
+          renderItem={renderComment}
+          contentContainerStyle={{ padding: 16, paddingBottom: 150 }}
+          ListHeaderComponent={
+            <>
+              {/* AI Highlight Placeholder */}
+              <View style={[styles.aiHighlight, { backgroundColor: colors.bg2, borderColor: colors.accent + '20' }]}>
+                <View style={styles.aiHeader}>
+                  <Ionicons name="sparkles" size={16} color={colors.accent} />
+                  <Text style={[styles.aiTitle, { color: colors.accent }]}>AI Highlights</Text>
                 </View>
-              }
-              renderItem={renderComment}
-            />
-          )}
+                <Text style={[styles.aiText, { color: colors.textMuted }]}>
+                  Analyzing conversations... Key points will appear here as we integrate our Unigram AI engine.
+                </Text>
+              </View>
+            </>
+          }
+          ListEmptyComponent={
+            loading ? <CommentsSkeleton /> : (
+              <View style={{ alignItems: 'center', paddingVertical: 60 }}>
+                <Ionicons name="chatbubble-outline" size={48} color={colors.textMuted} />
+                <Text style={{ color: colors.textSub, marginTop: 12, fontSize: 16, fontWeight: '600' }}>No comments yet</Text>
+              </View>
+            )
+          }
+        />
 
-          {/* Mentions Suggestions */}
-          {userResults.length > 0 && (
-            <View style={[styles.mentionList, { backgroundColor: colors.bg2, borderTopColor: colors.border }]}>
-              <FlatList
-                horizontal
-                data={userResults}
-                keyExtractor={u => u.id}
-                showsHorizontalScrollIndicator={false}
-                renderItem={({ item: u }) => (
-                  <TouchableOpacity onPress={() => insertMention(u)} style={styles.mentionItem}>
-                    {u.avatar_url ? <Image source={{ uri: u.avatar_url }} style={styles.mentionAvatar} /> : <View style={styles.mentionAvatar} />}
-                    <Text style={[styles.mentionName, { color: colors.text }]}>@{u.username}</Text>
-                  </TouchableOpacity>
-                )}
-                contentContainerStyle={{ paddingHorizontal: 16 }}
-              />
-            </View>
-          )}
-
-          {/* Reply Indicator */}
+        {/* Input Bar: Anchored to bottom of sheet */}
+        <View style={[styles.footer, { backgroundColor: colors.bg, borderTopColor: colors.border, paddingBottom: (insets.bottom || 12) }]}>
           {replyingTo && (
-            <View style={[styles.replyIndicator, { backgroundColor: colors.bg2, borderTopColor: colors.border }]}>
-              <Text style={[styles.replyText, { color: colors.textMuted }]}>
-                Replying to <Text style={{ fontWeight: 'bold' }}>@{replyingTo.profiles?.username}</Text>
-              </Text>
+            <View style={[styles.replyHeader, { backgroundColor: colors.bg2 }]}>
+              <Text style={{ color: colors.textSub, fontSize: 13 }}>Replying to @{replyingTo.profiles?.username}</Text>
               <TouchableOpacity onPress={() => setReplyingTo(null)}>
-                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
           )}
-
-          {/* Input */}
-          <View style={[styles.inputRow, { borderTopColor: colors.border }]}>
-            <TextInput
-              ref={inputRef}
-              style={[styles.input, { backgroundColor: colors.bg2, borderColor: colors.border, color: colors.text }]}
+          <View style={styles.inputRow}>
+            <BottomSheetTextInput
+              style={[styles.input, { backgroundColor: colors.bg2, color: colors.text, borderColor: colors.border }]}
               value={text}
-              onChangeText={onTextChange}
-              placeholder={replyingTo ? `Reply to @${replyingTo.profiles?.username}...` : "Add a comment..."}
+              onChangeText={setText}
+              placeholder="Add a comment..."
               placeholderTextColor={colors.textMuted}
-              returnKeyType="send"
-              onSubmitEditing={send}
               multiline
             />
-            <TouchableOpacity
+            <TouchableOpacity 
+              style={[styles.sendBtn, text.trim() ? styles.sendBtnActive : { opacity: 0.5 }]}
               onPress={send}
               disabled={!text.trim() || sending}
-              style={[styles.sendBtn, text.trim() && !sending && styles.sendBtnActive]}
             >
-              {sending
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Ionicons name="send" size={20} color={text.trim() ? '#fff' : colors.textMuted} />
-              }
+              {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={20} color="#fff" />}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
-    </Modal>
+    </BottomSheetModal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '80%', maxHeight: '95%' },
-  handle: { width: 40, height: 4, backgroundColor: 'rgba(128,128,128,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 4 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
-  title: { fontSize: 18, fontWeight: '800' },
-  commentRow: { flexDirection: 'row', marginBottom: 24 },
-  commentAvatar: { width: 42, height: 42, borderRadius: 21 },
-  commentUser: { fontSize: 15, fontWeight: '700' },
-  commentTime: { fontSize: 13 },
-  commentText: { fontSize: 15, marginTop: 4, lineHeight: 22 },
-  authorBadge: { backgroundColor: '#4f46e5', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  authorBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  commentActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 10 },
-  actionItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  actionText: { fontSize: 14, color: 'rgba(255,255,255,0.45)' },
-  actionTextBold: { fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: '800' },
-  mentionList: { height: 60, borderTopWidth: 1, paddingTop: 12 },
-  mentionItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, height: 38, borderRadius: 19, backgroundColor: 'rgba(128,128,128,0.1)', marginRight: 10 },
-  mentionAvatar: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#333' },
-  mentionName: { fontSize: 13, fontWeight: '600' },
-  replyIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1 },
-  replyText: { fontSize: 14 },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1 },
-  input: { flex: 1, borderRadius: 24, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, maxHeight: 120 },
-  sendBtn: { padding: 12, borderRadius: 24 },
-  sendBtnActive: { backgroundColor: '#4f46e5' },
+  sheetHeader: { paddingVertical: 12, alignItems: 'center', borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.1)' },
+  title: { fontSize: 16, fontWeight: '700' },
+  commentGroup: { marginBottom: 20 },
+  commentRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  commentAvatar: { width: 36, height: 36, borderRadius: 18 },
+  commentHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  commentUser: { fontSize: 14, fontWeight: '700' },
+  commentTime: { fontSize: 12 },
+  commentText: { fontSize: 14, lineHeight: 19 },
+  commentActions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 6 },
+  actionItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  actionText: { fontSize: 12 },
+  actionTextBold: { fontSize: 12, fontWeight: '700' },
+  authorBadge: { backgroundColor: '#6366f1', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },
+  authorBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
+  
+  repliesToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 12, marginLeft: 0 },
+  repliesLine: { width: 30, height: 1, marginRight: 10 },
+  repliesToggleText: { fontSize: 12, fontWeight: '600' },
+  
+  replyRow: { flexDirection: 'row', marginTop: 14, marginLeft: 0 },
+  
+  aiHighlight: { margin: 16, padding: 12, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed' },
+  aiHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  aiTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  aiText: { fontSize: 12, fontStyle: 'italic', lineHeight: 16 },
+
+  footer: { borderTopWidth: 0.5, backgroundColor: '#000' },
+  replyHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 6 },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 10 },
+  input: { flex: 1, minHeight: 40, maxHeight: 100, borderRadius: 20, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 8, fontSize: 15 },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' },
+  sendBtnActive: { opacity: 1 }
 });

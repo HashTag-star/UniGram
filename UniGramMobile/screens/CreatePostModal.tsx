@@ -259,12 +259,20 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             // Fallback: we will proceed without a thumbnail, backend/ui should handle this.
           }
           await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined, thumbUri);
+          const rawRatio = primaryAsset ? primaryAsset.width / primaryAsset.height : 1.0;
+          const snapRatio = (ratio: number) => {
+            const targets = [0.5625, 0.8, 1.0, 1.91]; // 9:16, 4:5, 1:1, 1.91:1
+            return targets.reduce((prev, curr) => 
+              Math.abs(curr - ratio) < Math.abs(prev - ratio) ? curr : prev
+            );
+          };
+
           await createPost(userId, fullCaption, type, mediaAssets.map(a => a.uri), {
             location: location || undefined,
             song: song || undefined,
             taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
             mimeType: primaryAsset?.mimeType,
-            aspectRatio: primaryAsset ? Math.max(0.5, Math.min(1.91, primaryAsset.width / primaryAsset.height)) : 1.0,
+            aspectRatio: snapRatio(rawRatio),
           });
         }
         DeviceEventEmitter.emit('upload_status', { status: 'success', type: postType });

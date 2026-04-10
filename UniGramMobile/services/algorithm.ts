@@ -24,7 +24,7 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     console.warn('Failed to fetch blocked IDs for feed filtering', err);
   }
 
-  const { data, error } = await supabase.rpc('get_personalized_feed', {
+  const { data, error } = await supabase.rpc('get_hybrid_campus_feed', {
     p_user_id: userId,
     p_limit: limit,
     p_offset: offset,
@@ -136,8 +136,8 @@ export async function recordVideoWatch(
   if (!durationMs || viewerId === authorId) return;
   const pct = watchedMs / durationMs;
   if (pct < 0.1) return;
-  // Full watch = +3pts, partial proportional to completion
-  const delta = pct >= 0.8 ? 3.0 : pct * 3.0;
+  // Full watch = +2pts (per hybrid algorithm design), partial proportional
+  const delta = pct >= 0.8 ? 2.0 : pct * 2.0;
 
   try {
     await supabase.rpc('update_rel_strength', {

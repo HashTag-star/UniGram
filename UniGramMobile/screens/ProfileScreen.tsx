@@ -391,7 +391,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {posts.filter(p => p.type !== 'thread').map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} />
+                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
                   {post.media_urls?.length > 1 && <View style={styles.mediaBadge}><Ionicons name="layers" size={12} color="#fff" /></View>}
                   {post.type === 'video' && <View style={styles.mediaBadge}><Ionicons name="play" size={12} color="#fff" /></View>}
                 </TouchableOpacity>
@@ -404,7 +404,7 @@ export const ProfileScreen: React.FC<Props> = ({
               {reels.map(reel => (
                 <TouchableOpacity key={reel.id} style={styles.gridItem} activeOpacity={0.9} onPress={() => setFocusedPost(reel)}>
                   {reel.thumbnail_url ? (
-                    <Image source={{ uri: reel.thumbnail_url }} style={styles.gridImg} />
+                    <Image source={{ uri: reel.thumbnail_url }} style={styles.gridImg} resizeMode="cover" />
                   ) : (
                     <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
                       <Ionicons name="film-outline" size={32} color="#333" />
@@ -423,7 +423,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {taggedPosts.map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} />
+                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
                 </TouchableOpacity>
               ))}
             </View>
@@ -433,7 +433,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {savedPosts.map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} />
+                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
                 </TouchableOpacity>
               ))}
             </View>

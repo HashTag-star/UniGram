@@ -4,6 +4,7 @@ import {
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
   Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -109,6 +110,7 @@ const ReelItem: React.FC<{
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const seekBarRef = useRef<View>(null);
+  const insets = useSafeAreaInsets();
   const profile = reel.profiles;
 
   // Reset pause state when reel becomes inactive
@@ -342,7 +344,7 @@ const ReelItem: React.FC<{
       </View>
 
       {/* Right actions */}
-      <View style={styles.rightActions}>
+      <View style={[styles.rightActions, { bottom: 100 + insets.bottom }]}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#ef4444' : '#fff'} />
           {likes > 0 && <Text style={styles.actionCount}>{fmtCount(likes)}</Text>}
@@ -369,7 +371,7 @@ const ReelItem: React.FC<{
       </View>
 
       {/* Bottom info */}
-      <View style={styles.bottomInfo}>
+      <View style={[styles.bottomInfo, { bottom: 30 + insets.bottom }]}>
         <View style={styles.userRow}>
           {profile?.avatar_url
             ? <Image source={{ uri: profile.avatar_url }} style={styles.reelAvatar} />
@@ -632,3 +634,4 @@ const styles = StyleSheet.create({
   songText: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   viewCount: { color: 'rgba(255,255,255,0.5)', fontSize: 11 },
 });
+
