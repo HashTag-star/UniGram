@@ -123,6 +123,7 @@ export const LiveScreen: React.FC<{
       console.log('[Live] Session created with ID:', id);
       setSessionId(id);
       setIsLive(true);
+      SocialSync.emit('LIVE_STARTED', { id, targetId: uid });
       setupSubscription(id);
       haptics.success();
     } catch (err: any) {

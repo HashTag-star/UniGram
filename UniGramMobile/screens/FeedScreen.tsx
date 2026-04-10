@@ -1403,10 +1403,15 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
       setCurrentUserId(user.id);
 
       // Fetch first page + supporting data in parallel
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      
       const [postsData, storiesData, lRes, likedData, savedData, viewedData, prof, reelsData, usersData] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
-        supabase.from('live_sessions').select('*, profiles(username, avatar_url)').eq('status', 'live'),
+        supabase.from('live_sessions')
+          .select('*, profiles(username, avatar_url)')
+          .eq('status', 'live')
+          .gt('created_at', twelveHoursAgo),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
         getViewedStoryIds(user.id),
@@ -1563,10 +1568,22 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
     const liveSub = SocialSync.on('LIVE_ENDED', ({ id }) => {
       if (id) setLiveSessions(prev => prev.filter(s => s.id !== id));
     });
+    const liveStartSub = SocialSync.on('LIVE_STARTED', async ({ id }) => {
+      if (!id) return;
+      // Fetch details and add to list if not already there
+      const { data } = await supabase.from('live_sessions').select('*, profiles(username, avatar_url)').eq('id', id).single();
+      if (data) {
+        setLiveSessions(prev => {
+          if (prev.some(s => s.id === id)) return prev;
+          return [data, ...prev];
+        });
+      }
+    });
     return () => {
       postSub.remove();
       reelSub.remove();
       liveSub.remove();
+      liveStartSub.remove();
     };
   }, [handlePostDeleted]);
 
