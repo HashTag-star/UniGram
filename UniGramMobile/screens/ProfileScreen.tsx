@@ -3,6 +3,7 @@ import {
   View, Text, Image, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, Modal, ActivityIndicator, Alert,
   TextInput, KeyboardAvoidingView, Platform, RefreshControl,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProfilePostsSkeleton, ProfileHeaderSkeleton } from '../components/Skeleton';
@@ -21,8 +22,9 @@ import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 import { recordProfileView } from '../services/algorithm';
+import { AccountService } from '../services/accounts';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 const COL = (width - 2) / 3;
 
 interface Props {
@@ -32,6 +34,9 @@ interface Props {
   onVerifyPress?: () => void;
   onBack?: () => void;
   onMessagePress?: (convId: string, otherProfile: any) => void;
+  onShowPrivacy?: () => void;
+  onShowTerms?: () => void;
+  onShowGuidelines?: () => void;
 }
 
 export const ProfileScreen: React.FC<Props> = ({
@@ -41,6 +46,9 @@ export const ProfileScreen: React.FC<Props> = ({
   onVerifyPress,
   onBack,
   onMessagePress,
+  onShowPrivacy,
+  onShowTerms,
+  onShowGuidelines,
 }) => {
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
@@ -77,6 +85,9 @@ export const ProfileScreen: React.FC<Props> = ({
   const [editWebsite, setEditWebsite] = useState('');
   const [editMajor, setEditMajor] = useState('');
   const [editYear, setEditYear] = useState('');
+
+  const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+  const [activeAccounts, setActiveAccounts] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -123,6 +134,19 @@ export const ProfileScreen: React.FC<Props> = ({
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (isOwn) {
+      AccountService.getAccounts().then(setActiveAccounts);
+    }
+  }, [isOwn]);
+
+  useEffect(() => {
+    const sub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
+      setReels(prev => prev.filter(r => r.id !== targetId));
+    });
+    return () => sub.remove();
+  }, []);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -140,9 +164,16 @@ export const ProfileScreen: React.FC<Props> = ({
       else await unfollowUser(currentUserId, profile.id);
       await medium();
     } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
       Alert.alert('Error', 'Failed to update follow status');
       setIsFollowingUser(!next);
       SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: !next });
+      setProfile((p: any) => ({ ...p, followers_count: !next ? p.followers_count + 1 : p.followers_count - 1 }));
     }
   };
 
@@ -230,6 +261,15 @@ export const ProfileScreen: React.FC<Props> = ({
             {onBack && (
               <TouchableOpacity onPress={onBack} style={styles.navBtn}>
                 <Ionicons name="chevron-back" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
+            {isOwn && (
+              <TouchableOpacity 
+                style={styles.headerInfo} 
+                onPress={() => { selection(); setShowAccountSwitcher(true); }}
+              >
+                <Text style={styles.headerUsername}>@{profile?.username}</Text>
+                <Ionicons name="chevron-down" size={14} color="#fff" />
               </TouchableOpacity>
             )}
             <View style={{ flex: 1 }} />
@@ -362,11 +402,17 @@ export const ProfileScreen: React.FC<Props> = ({
           {activeTab === 'reels' && (
             <View style={styles.grid}>
               {reels.map(reel => (
-                <TouchableOpacity key={reel.id} style={[styles.gridBtn, { height: COL * 1.6 }]} onPress={() => setFocusedPost(reel)}>
-                  <Image source={{ uri: reel.thumbnail_url }} style={styles.gridImg} />
-                  <View style={styles.reelMeta}>
-                    <Ionicons name="play-outline" size={12} color="#fff" />
-                    <Text style={styles.reelMetaText}>{reel.views_count || 0}</Text>
+                <TouchableOpacity key={reel.id} style={styles.gridItem} activeOpacity={0.9} onPress={() => setFocusedPost(reel)}>
+                  {reel.thumbnail_url ? (
+                    <Image source={{ uri: reel.thumbnail_url }} style={styles.gridImg} />
+                  ) : (
+                    <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+                      <Ionicons name="film-outline" size={32} color="#333" />
+                    </View>
+                  )}
+                  <View style={styles.gridOverlay}>
+                    <Ionicons name="play" size={12} color="#fff" />
+                    <Text style={styles.gridStatText}>{reel.views_count ?? 0}</Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -401,7 +447,7 @@ export const ProfileScreen: React.FC<Props> = ({
                   post={post} 
                   currentUserId={currentUserId} 
                   isLiked={likedIds.has(post.id)}
-                  isActive={isVisible}
+                  isActive={!!isVisible}
                   isMuted={true}
                   setIsMuted={() => {}}
                 />
@@ -449,7 +495,7 @@ export const ProfileScreen: React.FC<Props> = ({
                   post={focusedPost} 
                   currentUserId={currentUserId} 
                   isLiked={likedIds.has(focusedPost.id)}
-                  isActive={isVisible}
+                  isActive={!!isVisible}
                   isMuted={false}
                   setIsMuted={() => {}}
                 />
@@ -481,9 +527,86 @@ export const ProfileScreen: React.FC<Props> = ({
         </KeyboardAvoidingView>
       </Modal>
 
-      <SettingsScreen visible={showSettings} profile={profile} onClose={() => setShowSettings(false)} onProfileUpdated={setProfile} onAdminPress={() => { setShowSettings(false); setShowAdmin(true); }} />
+      <SettingsScreen 
+        visible={showSettings} 
+        profile={profile} 
+        onClose={() => setShowSettings(false)} 
+        onProfileUpdated={setProfile} 
+        onAdminPress={() => { setShowSettings(false); setShowAdmin(true); }}
+        onShowPrivacy={onShowPrivacy}
+        onShowTerms={onShowTerms}
+        onShowGuidelines={onShowGuidelines}
+      />
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
+      
+      <AccountSwitcherModal 
+        visible={showAccountSwitcher} 
+        onClose={() => setShowAccountSwitcher(false)} 
+        accounts={activeAccounts}
+        currentUserId={currentUserId}
+        onSwitch={async (id: string) => {
+          setShowAccountSwitcher(false);
+          setLoading(true);
+          try {
+            await AccountService.switchAccount(id);
+            await success();
+          } catch (e: any) {
+            Alert.alert('Switch Failed', e.message);
+            setLoading(false);
+          }
+        }}
+        onAddAccount={async () => {
+          setShowAccountSwitcher(false);
+          // Standard login flow for new account
+          await supabase.auth.signOut();
+        }}
+      />
     </View>
+  );
+};
+
+const AccountSwitcherModal = ({ visible, onClose, accounts, currentUserId, onSwitch, onAddAccount }: any) => {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.switcherOverlay} activeOpacity={1} onPress={onClose}>
+        <View style={[styles.switcherContent, { backgroundColor: colors.bg2, paddingBottom: insets.bottom + 20 }]}>
+          <View style={[styles.switcherHandle, { backgroundColor: colors.border }]} />
+          <Text style={[styles.switcherTitle, { color: colors.text }]}>Accounts</Text>
+          
+          <ScrollView style={styles.accountsList} bounces={false}>
+            {accounts.map((acc: any) => (
+              <TouchableOpacity 
+                key={acc.userId} 
+                style={styles.accountItem}
+                onPress={() => {
+                  if (acc.userId === currentUserId) onClose();
+                  else onSwitch(acc.userId);
+                }}
+              >
+                <Image source={{ uri: acc.avatarUrl || 'https://via.placeholder.com/150' }} style={styles.accAvatar} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.accName, { color: colors.text }]}>{acc.fullName || acc.username}</Text>
+                  <Text style={[styles.accUser, { color: colors.textMuted }]}>@{acc.username}</Text>
+                </View>
+                {acc.userId === currentUserId && (
+                   <Ionicons name="checkmark-circle" size={24} color={colors.accent} />
+                )}
+              </TouchableOpacity>
+            ))}
+            
+            <TouchableOpacity style={styles.addAccountBtn} onPress={onAddAccount}>
+              <View style={[styles.addIconWrap, { backgroundColor: colors.bg }]}>
+                <Ionicons name="add" size={24} color={colors.text} />
+              </View>
+              <Text style={[styles.addAccountText, { color: colors.text }]}>Add Account</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
   );
 };
 
@@ -566,7 +689,10 @@ const styles = StyleSheet.create({
   tabContent: { flex: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   gridBtn: { width: COL, height: COL, margin: 0.33, position: 'relative' },
+  gridItem: { width: COL, height: COL * 1.6, margin: 0.33, position: 'relative' },
   gridImg: { width: '100%', height: '100%' },
+  gridOverlay: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 },
+  gridStatText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   mediaBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 4, padding: 3 },
   reelMeta: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 },
   reelMetaText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
@@ -602,4 +728,20 @@ const styles = StyleSheet.create({
   editPostContent: { padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
   editPostHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   editPostInput: { fontSize: 15, borderRadius: 10, padding: 12, height: 120, textAlignVertical: 'top' },
+
+  headerInfo: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  headerUsername: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  switcherOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  switcherContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: height * 0.7 },
+  switcherHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
+  switcherTitle: { fontSize: 18, fontWeight: '800', textAlign: 'center', marginBottom: 20 },
+  accountsList: { marginBottom: 10 },
+  accountItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  accAvatar: { width: 50, height: 50, borderRadius: 25 },
+  accName: { fontSize: 15, fontWeight: '700' },
+  accUser: { fontSize: 13, marginTop: 2 },
+  addAccountBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, marginTop: 8 },
+  addIconWrap: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  addAccountText: { fontSize: 15, fontWeight: '600' },
 });

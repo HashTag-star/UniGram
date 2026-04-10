@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
+  Alert,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,11 +10,12 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
-import { getReels, likeReel, unlikeReel, getLikedReelIds } from '../services/reels';
+import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel } from '../services/reels';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { supabase } from '../lib/supabase';
+import { createReport } from '../services/reports';
 
 const { width, height } = Dimensions.get('window');
 const ITEM_HEIGHT = height;
@@ -123,7 +125,13 @@ const ReelItem: React.FC<{
     try {
       if (next) await likeReel(reel.id, currentUserId);
       else await unlikeReel(reel.id, currentUserId);
-    } catch {
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
       setLiked(!next);
       setLikes(likes);
       SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reel.id, isActive: !next, newCount: likes });
@@ -138,10 +146,68 @@ const ReelItem: React.FC<{
     try {
       if (next) await followUser(currentUserId, profile.id);
       else await unfollowUser(currentUserId, profile.id);
-    } catch {
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
       setFollowing(!next);
       SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: !next });
     }
+  };
+
+  const handleDelete = () => {
+    Alert.alert('Delete reel?', 'This action cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' } as const,
+      { 
+        text: 'Delete', 
+        style: 'destructive' as const, 
+        onPress: async () => {
+          try {
+            await deleteReel(reel.id, currentUserId);
+            // Pruning handled by SocialSync event in parent
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch (e: any) {
+            Alert.alert('Error', e.message ?? 'Could not delete reel');
+          }
+        }
+      },
+    ]);
+  };
+
+  const handleReport = () => {
+    Alert.alert(
+      'Report Reel',
+      'Why are you reporting this reel?',
+      [
+        { text: 'Inappropriate Content', onPress: () => submitReport('Inappropriate Content') },
+        { text: 'Spam', onPress: () => submitReport('Spam') },
+        { text: 'Harassment', onPress: () => submitReport('Harassment') },
+        { text: 'Academic Fraud', onPress: () => submitReport('Academic Fraud') },
+        { text: 'Other', onPress: () => submitReport('Other') },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  const submitReport = async (reason: string) => {
+    try {
+      await createReport(reel.id, 'reel', reason);
+      Alert.alert('Report Received', 'Thank you for helping keep UniGram safe. Our moderators will review this shortly.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const showOptions = () => {
+    const isMe = reel.user_id === currentUserId;
+    Alert.alert('Options', '', [
+      { text: 'Cancel', style: 'cancel' } as const,
+      { text: 'Report', onPress: handleReport },
+      ...(isMe ? [{ text: 'Delete', style: 'destructive', onPress: handleDelete } as const] : [])
+    ]);
   };
 
   const showHeartAnim = () => {
@@ -297,7 +363,7 @@ const ReelItem: React.FC<{
           <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionItem}>
+        <TouchableOpacity style={styles.actionItem} onPress={showOptions}>
           <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
@@ -355,6 +421,7 @@ const ReelItem: React.FC<{
         targetId={reel.id}
         targetType="reel"
         currentUserId={currentUserId}
+        authorId={reel.user_id}
         onClose={() => setShowComments(false)}
         onCountChange={delta => setCommentCount((n: number) => Math.max(0, n + delta))}
       />
@@ -414,6 +481,13 @@ export const ReelsScreen: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const sub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
+      setReels(prev => prev.filter(r => r.id !== targetId));
+    });
+    return () => sub.remove();
+  }, []);
 
   const getItemLayout = useCallback((_: any, index: number) => ({
     length: containerHeight,

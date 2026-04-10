@@ -36,7 +36,7 @@ export async function createPost(
 
   const uploadedUrls: string[] = [];
   if (mediaUris && mediaUris.length > 0) {
-    for (const uri of mediaUris) {
+    const uploadPromises = mediaUris.map(async (uri) => {
       const isVideo = type === 'video';
       let ext = uri.split('.').pop()?.toLowerCase();
       if (!ext || ext.length > 5 || ext === uri.toLowerCase()) {
@@ -45,9 +45,11 @@ export async function createPost(
       const bucket = isVideo ? 'videos' : 'post-media';
       const path = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
       const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
-      const url = await uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime);
-      uploadedUrls.push(url);
-    }
+      return uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime);
+    });
+
+    const results = await Promise.all(uploadPromises);
+    uploadedUrls.push(...results);
   }
 
   const { data, error } = await supabase
@@ -64,7 +66,44 @@ export async function createPost(
     })
     .select(`*, profiles!posts_user_id_fkey(*)`)
     .single();
+
   if (error) throw error;
+
+  // Notification logic for tags/mentions
+  const actor = data.profiles;
+  const notifyUserIds = new Set<string>();
+
+  // 1. Explicitly tagged users
+  if (extras?.taggedUsers && extras.taggedUsers.length > 0) {
+    const { data: taggedProfiles } = await supabase.from('profiles').select('id').in('username', extras.taggedUsers);
+    taggedProfiles?.forEach(p => { if (p.id !== userId) notifyUserIds.add(p.id); });
+  }
+
+  // 2. Mentions in caption
+  const captionMentions = caption.match(/@(\w+)/g);
+  if (captionMentions) {
+    const mentionUsernames = captionMentions.map(m => m.substring(1));
+    const { data: mentionProfiles } = await supabase.from('profiles').select('id').in('username', mentionUsernames);
+    mentionProfiles?.forEach(p => { if (p.id !== userId) notifyUserIds.add(p.id); });
+  }
+
+  // Send notifications
+  notifyUserIds.forEach(async (tid) => {
+    try {
+      const notifText = `tagged you in a post: "${caption.substring(0, 30)}..."`;
+      await createNotification({
+        user_id: tid,
+        actor_id: userId,
+        type: 'mention',
+        post_id: data.id,
+        text: notifText
+      });
+      sendPushToUser(tid, 'New Mention', `@${actor?.username || 'Someone'} ${notifText}`, {
+        type: 'post', postId: data.id, userId
+      }).catch(() => {});
+    } catch (e) {}
+  });
+
   return data;
 }
 
@@ -180,22 +219,46 @@ export async function getPostComments(postId: string) {
   return data ?? [];
 }
 
-export async function addPostComment(postId: string, userId: string, text: string) {
+export async function addPostComment(postId: string, userId: string, text: string, parentId?: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  
+  // Try inserting with parent_id, fallback if column doesn't exist
+  let res: any;
   const { data, error } = await supabase
     .from('post_comments')
-    .insert({ post_id: postId, user_id: userId, text })
+    .insert({ post_id: postId, user_id: userId, text, parent_id: parentId })
     .select(`*, profiles!post_comments_user_id_fkey(*)`)
     .single();
-  if (error) throw error;
+  
+  if (error) {
+    // If parent_id doesn't exist or schema cache is stale, try without it
+    const isColumnError = error.message?.includes('parent_id') || 
+                         error.message?.includes('schema cache') || 
+                         error.code === 'PGRST205';
 
-  // Notify author
+    if (isColumnError) {
+      const { data: d2, error: e2 } = await supabase
+        .from('post_comments')
+        .insert({ post_id: postId, user_id: userId, text })
+        .select(`*, profiles!post_comments_user_id_fkey(*)`)
+        .single();
+      if (e2) throw e2;
+      res = d2;
+    } else {
+      throw error;
+    }
+  } else {
+    res = data;
+  }
+
+  const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
+
+  // 1. Notify post author
   try {
     const { data: post } = await supabase.from('posts').select('user_id').eq('id', postId).single();
     if (post && post.user_id !== userId) {
-      const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
-      const notifText = `commented: "${text.substring(0, 30)}..."`;
+      const notifText = parentId ? `replied to a comment: "${text.substring(0, 30)}..."` : `commented: "${text.substring(0, 30)}..."`;
       await createNotification({
         user_id: post.user_id,
         actor_id: userId,
@@ -209,7 +272,41 @@ export async function addPostComment(postId: string, userId: string, text: strin
     }
   } catch (e) {}
 
-  return data;
+  // 2. Parse Mentions (@username)
+  const mentions = text.match(/@(\w+)/g);
+  if (mentions) {
+    const uniqueUsernames = Array.from(new Set(mentions.map(m => m.substring(1))));
+    uniqueUsernames.forEach(async (uname) => {
+      try {
+        const { data: targetProfile } = await supabase.from('profiles').select('id').eq('username', uname).single();
+        if (targetProfile && targetProfile.id !== userId) {
+          const mentionText = `mentioned you in a comment: "${text.substring(0, 30)}..."`;
+          await createNotification({
+            user_id: targetProfile.id,
+            actor_id: userId,
+            type: 'mention',
+            post_id: postId,
+            text: mentionText
+          });
+          sendPushToUser(targetProfile.id, 'New Mention', `@${actor?.username || 'Someone'} ${mentionText}`, {
+            type: 'mention', postId, userId
+          }).catch(() => {});
+        }
+      } catch (e) {}
+    });
+  }
+
+  return res;
+}
+
+export async function likeComment(commentId: string, userId: string) {
+  const { error } = await supabase.from('comment_likes').upsert({ comment_id: commentId, user_id: userId });
+  if (error && error.code !== '23505') throw error; // ignore duplicate
+}
+
+export async function unlikeComment(commentId: string, userId: string) {
+  const { error } = await supabase.from('comment_likes').delete().eq('comment_id', commentId).eq('user_id', userId);
+  if (error) throw error;
 }
 
 export async function deletePostComment(commentId: string, userId: string) {

@@ -27,17 +27,21 @@ export async function checkUsernameAvailable(username: string): Promise<boolean>
   return !data;
 }
 
-export async function signUp(email: string, password: string, username: string, fullName: string) {
+export async function signUp(email: string, password: string, username: string, fullName: string, dob: string) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      data: { username, full_name: fullName },
+      data: { username, full_name: fullName, date_of_birth: dob },
       emailRedirectTo: 'unigram://auth-callback',
     },
   });
   if (error) throw error;
   return data;
+}
+
+export function isUniversityEmail(email: string) {
+  return email.trim().toLowerCase().endsWith('.edu.gh');
 }
 
 export async function signIn(email: string, password: string) {

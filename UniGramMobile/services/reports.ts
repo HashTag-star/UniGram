@@ -58,3 +58,84 @@ export async function suspendUser(userId: string, suspended: boolean) {
     .eq('id', userId);
   if (error) throw error;
 }
+
+/**
+ * Creates a new report for content or a member.
+ */
+export async function createReport(
+  targetId: string,
+  targetType: AdminReport['target_type'],
+  reason: string,
+  details: string = ''
+) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('You must be signed in to report content.');
+
+  const { error } = await supabase.from('reports').insert({
+    reporter_id: user.id,
+    target_id: targetId,
+    target_type: targetType,
+    reason,
+    details,
+    status: 'pending'
+  });
+
+  if (error) throw error;
+}
+
+/**
+ * Checks if a piece of content should be "soft-hidden" based on report count.
+ * Default threshold is 5 reports.
+ */
+export async function shouldHideContent(targetId: string) {
+  const { count, error } = await supabase
+    .from('reports')
+    .select('*', { count: 'exact', head: true })
+    .eq('target_id', targetId)
+    .eq('status', 'pending');
+
+  if (error) return false;
+  return (count || 0) >= 5;
+}
+
+/**
+ * Deletes the content associated with a report.
+ */
+export async function deleteReportedContent(targetId: string, targetType: AdminReport['target_type']) {
+  let table = '';
+  switch (targetType) {
+    case 'post': table = 'posts'; break;
+    case 'reel': table = 'reels'; break;
+    case 'comment': table = 'comments'; break;
+    case 'market_item': table = 'market_items'; break;
+    default: throw new Error(`Cannot delete content of type ${targetType}`);
+  }
+
+  const { error } = await supabase.from(table).delete().eq('id', targetId);
+  if (error) throw error;
+}
+
+/**
+ * Finds the author ID of a reported piece of content.
+ */
+export async function getAuthorIdForReport(targetId: string, targetType: AdminReport['target_type']): Promise<string | null> {
+  if (targetType === 'member') return targetId;
+
+  let table = '';
+  switch (targetType) {
+    case 'post': table = 'posts'; break;
+    case 'reel': table = 'reels'; break;
+    case 'comment': table = 'comments'; break;
+    case 'market_item': table = 'market_items'; break;
+    default: return null;
+  }
+
+  const { data, error } = await supabase
+    .from(table)
+    .select('user_id')
+    .eq('id', targetId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data.user_id;
+}

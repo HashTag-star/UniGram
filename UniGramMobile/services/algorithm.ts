@@ -15,11 +15,23 @@ import { INTERESTS } from '../data/interests';
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
 export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0) {
+  // 1. Get blocked users to hide their content
+  let blockedIds: string[] = [];
+  try {
+    const { getBlockedUserIds } = require('./profiles');
+    blockedIds = await getBlockedUserIds(userId);
+  } catch (err) {
+    console.warn('Failed to fetch blocked IDs for feed filtering', err);
+  }
+
   const { data, error } = await supabase.rpc('get_personalized_feed', {
     p_user_id: userId,
     p_limit: limit,
     p_offset: offset,
   });
+
+  let results = data ?? [];
+
   if (error) {
     // Fallback: followed users' posts, most recent first
     console.warn('Feed RPC fallback:', error.message);
@@ -32,13 +44,41 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       `)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
-    return fallback ?? [];
+    results = fallback ?? [];
   }
-  return (data ?? []).map((row: any) => ({
-    ...row,
-    profiles: typeof row.profiles === 'string' ? JSON.parse(row.profiles) : row.profiles,
+
+  if (results.length === 0) return [];
+
+  // 2. Batch check for moderated content to avoid N+1 queries
+  const postIds = results.map((p: any) => p.id);
+  const { data: reportsData } = await supabase
+    .from('reports')
+    .select('target_id')
+    .in('target_id', postIds)
+    .eq('status', 'pending');
+  
+  const reportCounts: Record<string, number> = {};
+  (reportsData || []).forEach(r => {
+    reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
+  });
+
+  // 3. Client-side filtering (Final safety layer)
+  const filtered = results.filter((post: any) => {
+    // Skip if author is blocked
+    if (blockedIds.includes(post.user_id)) return false;
+
+    // Skip if content is moderated (threshold met: >= 5 reports)
+    if ((reportCounts[post.id] || 0) >= 5) return false;
+
+    return true;
+  }).map((post: any) => ({
+    ...post,
+    profiles: typeof post.profiles === 'string' ? JSON.parse(post.profiles) : post.profiles,
   }));
+
+  return filtered;
 }
+
 
 export async function recordImpression(postId: string, userId: string) {
   try {
@@ -117,6 +157,34 @@ export async function recordVideoWatch(
  * first, falls back to a client-side interest+engagement scored query.
  */
 export async function getPersonalizedExplorePosts(userId: string, limit = 24, offset = 0) {
+  // 1. Fetch user interests required for AI Search
+  const interests = await getUserInterests(userId).catch(() => [] as string[]);
+  const interestKeywords = interests
+    .map(id => INTERESTS.find(i => i.id === id)?.label?.toLowerCase())
+    .filter(Boolean) as string[];
+
+  // 2. Call the new Edge Function for pgvector Semantic Search
+  try {
+    const { data: edgeData, error: edgeError } = await supabase.functions.invoke('get-explore-feed', {
+      body: { 
+        userId, 
+        keywords: interestKeywords.join(' '),
+        limit,
+        match_threshold: 0.1 // lenient threshold to ensure we get results
+      }
+    });
+
+    if (!edgeError && edgeData?.posts?.length > 0) {
+      return edgeData.posts.map((row: any) => ({
+        ...row,
+        profiles: typeof row.profiles === 'string' ? JSON.parse(row.profiles) : row.profiles,
+      }));
+    }
+  } catch (err) {
+    console.warn('Vector Edge Function failed, falling back to legacy explore:', err);
+  }
+
+  // 3. Fallback to existing server/client hybrid approach
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_explore_posts', {
     p_user_id: userId,
     p_limit: limit,
@@ -129,17 +197,14 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
     }));
   }
 
-  // Client-side fallback
-  const [interests, profileResult] = await Promise.all([
-    getUserInterests(userId).catch(() => [] as string[]),
-    supabase.from('profiles').select('university').eq('id', userId).single(),
-  ]);
+  // Client-side final fallback
+  return _legacyGetExplorePosts(userId, limit, offset, interestKeywords);
+}
 
+// Extracted legacy function to keep getPersonalizedExplorePosts clean
+async function _legacyGetExplorePosts(userId: string, limit: number, offset: number, interestKeywords: string[]) {
+  const profileResult = await supabase.from('profiles').select('university').eq('id', userId).single();
   const userUniversity = profileResult.data?.university ?? null;
-  const interestKeywords = interests
-    .map(id => INTERESTS.find(i => i.id === id)?.label?.toLowerCase())
-    .filter(Boolean) as string[];
-
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: posts } = await supabase
@@ -174,31 +239,39 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
 // ─── Follow suggestions ───────────────────────────────────────────────────────
 
 /**
- * Multi-factor follow suggestions. Tries get_suggested_users RPC first
- * (returns mutual_friends, common_interests, follows_me signals), then
- * falls back to a client-side friends-of-friends + same-university blend.
- *
- * Each returned profile includes a `reason` string for the UI
- * e.g. "3 mutual follows" · "Goes to your university" · "Follows you back"
+ * Multi-factor follow suggestions. Powered by the get_suggested_users DB RPC 
+ * (Mutual Friends & Same University graph mapping).
  */
-export async function getFollowSuggestions(userId: string, limit = 10): Promise<any[]> {
+export async function getFollowSuggestions(userId: string, limit = 10) {
+  // 1. Get blocked users to hide them from suggestions
+  let blockedIds: string[] = [];
+  try {
+    const { getBlockedUserIds } = require('./profiles');
+    blockedIds = await getBlockedUserIds(userId);
+  } catch (err) {
+    console.warn('Failed to fetch blocked IDs for suggestion filtering', err);
+  }
+
+  // 2. Fetch directly from robust RPC written in advanced algorithm migration
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_suggested_users', {
     p_user_id: userId,
     p_limit: limit,
   });
+  
   if (!rpcError && rpcData?.length) {
-    return rpcData.map((u: any) => ({
-      ...u,
-      // Normalise field name: RPC returns mutual_friends, UI uses mutual_follows
-      mutual_follows: u.mutual_friends ?? 0,
-      same_university: u.university != null,
-      reason: _buildReason({
+    return rpcData
+      .filter((u: any) => !blockedIds.includes(u.id))
+      .map((u: any) => ({
+        ...u,
         mutual_follows: u.mutual_friends ?? 0,
-        follows_me: u.follows_me ?? false,
-        same_university: !!(u.university),
-        followers_count: u.followers_count ?? 0,
-      }),
-    }));
+        same_university: u.university != null,
+        reason: _buildReason({
+          mutual_follows: u.mutual_friends ?? 0,
+          follows_me: u.follows_me ?? false,
+          same_university: !!(u.university),
+          followers_count: u.followers_count ?? 0,
+        }),
+      }));
   }
 
   // Client-side fallback
@@ -254,7 +327,7 @@ export async function getFollowSuggestions(userId: string, limit = 10): Promise<
 
   for (const pool of pools) {
     for (const u of pool) {
-      if (!seen.has(u.id) && !followingSet.has(u.id)) {
+      if (!seen.has(u.id) && !followingSet.has(u.id) && !blockedIds.includes(u.id)) {
         seen.add(u.id);
         const mutualFollows = fofMap.get(u.id) ?? 0;
         const sameUniversity = !!(userUniversity && u.university === userUniversity);
@@ -295,8 +368,60 @@ function _buildReason(u: {
 
 // ─── Trending ─────────────────────────────────────────────────────────────────
 
-export async function getTrendingHashtags(limit = 10) {
-  const { data, error } = await supabase.rpc('get_trending_hashtags', { p_limit: limit });
-  if (error) return [];
-  return data ?? [];
+/**
+ * Gets trending hashtags by extracting them from recent posts.
+ * Prioritizes tags from the user's university if provided.
+ */
+export async function getTrendingHashtags(limit = 10, userId?: string) {
+  try {
+    let university: string | null = null;
+    if (userId) {
+      const { data: prof } = await supabase.from('profiles').select('university').eq('id', userId).single();
+      university = prof?.university ?? null;
+    }
+
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    
+    // Fetch recent posts with profile university
+    let query = supabase
+      .from('posts')
+      .select('caption, profiles!posts_user_id_fkey(university)')
+      .gte('created_at', threeDaysAgo)
+      .not('caption', 'is', null)
+      .limit(200);
+
+    const { data: posts, error } = await query;
+    if (error || !posts) return [];
+
+    const tagCounts: Record<string, number> = {};
+    const uniTagCounts: Record<string, number> = {};
+
+    posts.forEach(p => {
+      const tags = p.caption?.match(/#\w+/g) || [];
+      const profile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+      const isMyUni = university && profile?.university === university;
+      
+      tags.forEach((tag: string) => {
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+        if (isMyUni) {
+          uniTagCounts[tag] = (uniTagCounts[tag] || 0) + 2; // Weight uni tags higher
+        }
+      });
+    });
+
+    // Merge and sort
+    const allTags = Object.keys(tagCounts).map(tag => ({
+      tag,
+      post_count: tagCounts[tag],
+      score: (tagCounts[tag] || 0) + (uniTagCounts[tag] || 0)
+    }));
+
+    const sortedTags = allTags.sort((a, b) => b.score - a.score).slice(0, limit);
+    
+    // If we have tags, return them. Otherwise return empty [] to let UI handle fallback.
+    return sortedTags.length > 0 ? sortedTags : [];
+  } catch (err) {
+    console.warn('Trending tags error:', err);
+    return [];
+  }
 }

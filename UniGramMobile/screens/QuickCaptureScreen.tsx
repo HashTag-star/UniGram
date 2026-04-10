@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Dimensions,
-  Platform, StatusBar, Animated, Alert, Image
+  Platform, StatusBar, Animated, Alert, Image,
+  GestureResponderEvent
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHaptics } from '../hooks/useHaptics';
@@ -15,18 +16,25 @@ const { width, height } = Dimensions.get('window');
 interface QuickCaptureScreenProps {
   isVisible: boolean;
   onClose?: () => void;
-  onCapture: (media: { uri: string; type: 'image' | 'video' }) => void;
+  onCapture: (media: { uri: string; type: 'image' | 'video'; mode: Mode }) => void;
+  onLiveStart?: () => void;
 }
 
 type Mode = 'POST' | 'STORY' | 'REEL' | 'LIVE';
 
-export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisible, onClose, onCapture }) => {
+export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisible, onClose, onCapture, onLiveStart }) => {
+  const isFocused = isVisible; // Could be refined to check if editor is open
   const [permission, requestPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [facing, setFacing] = useState<'front' | 'back'>('back');
   const [flash, setFlash] = useState<'off' | 'on' | 'auto'>('off');
   const [mode, setMode] = useState<Mode>('POST');
   const [recording, setRecording] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  
+  const startTouchY = useRef<number | null>(null);
+  const lockAnim = useRef(new Animated.Value(0)).current;
   
   const cameraRef = useRef<CameraView>(null);
   const haptics = useHaptics();
@@ -38,10 +46,11 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
   const timerInterval = useRef<any>(null);
 
   useEffect(() => {
-    if (isVisible && !permission?.granted) {
-      requestPermission();
+    if (isVisible) {
+      if (!permission?.granted) requestPermission();
+      if (!micPermission?.granted) requestMicPermission();
     }
-  }, [isVisible, permission]);
+  }, [isVisible, permission, micPermission]);
 
   useEffect(() => {
     if (recording) {
@@ -71,7 +80,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
         exif: false,
       });
       if (photo) {
-        onCapture({ uri: photo.uri, type: 'image' });
+        onCapture({ uri: photo.uri, type: 'image', mode });
       }
     } catch (e) {
       Alert.alert('Error', 'Could not take photo');
@@ -82,25 +91,32 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
     if (!cameraRef.current || recording) return;
     haptics.success();
     setRecording(true);
+    setIsLocked(false);
+    lockAnim.setValue(0);
     try {
-      // Note: recordAsync might need additional config depending on expo-camera version
-      const video = await (cameraRef.current as any).recordAsync({
+      const video = await cameraRef.current.recordAsync({
         maxDuration: 60,
-        quality: '720p',
       });
       if (video) {
-        onCapture({ uri: video.uri, type: 'video' });
+        onCapture({ uri: video.uri, type: 'video', mode });
       }
     } catch (e) {
+      console.error('Recording fail', e);
       setRecording(false);
-      Alert.alert('Error', 'Recording failed');
+      setIsLocked(false);
+      Alert.alert('Error', 'Recording failed. Check mic permissions.');
     }
   };
 
   const stopRecord = async () => {
     if (!cameraRef.current || !recording) return;
+    try {
+      await cameraRef.current.stopRecording();
+    } catch (e) {
+      console.error('Stop recording failed', e);
+    }
     setRecording(false);
-    (cameraRef.current as any).stopRecording();
+    setIsLocked(false);
   };
 
   const pickGallery = async () => {
@@ -112,7 +128,8 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
     if (!res.canceled && res.assets?.[0]) {
       onCapture({ 
         uri: res.assets[0].uri, 
-        type: res.assets[0].type === 'video' ? 'video' : 'image' 
+        type: res.assets[0].type === 'video' ? 'video' : 'image',
+        mode
       });
     }
   };
@@ -133,15 +150,20 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
     </View>
   );
 
+
+
   return (
     <View style={styles.container}>
       <StatusBar hidden />
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing={facing}
-        onMountError={(e) => console.error('Camera Mount error', e)}
-      />
+      {isFocused && (
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+          mode={mode === 'POST' ? 'picture' : 'video'}
+          onMountError={(e) => console.error('Camera Mount error', e)}
+        />
+      )}
 
       {/* Transparent overlay for controls */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -187,20 +209,81 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                <Ionicons name="images-outline" size={28} color="#fff" />
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onLongPress={mode === 'POST' ? undefined : startRecord}
-              onPressOut={mode === 'POST' ? undefined : stopRecord}
-              onPress={mode === 'POST' ? snap : undefined}
-              activeOpacity={0.8}
-            >
-              <Animated.View style={[
-                styles.shutterOuter, 
-                recording && styles.shutterOuterRecording,
-                { transform: [{ scale: shutterScale }] }
-              ]}>
-                <View style={[styles.shutterInner, recording && styles.shutterInnerRecording]} />
-              </Animated.View>
-            </TouchableOpacity>
+            <View style={styles.shutterContainer}>
+              {/* Lock Indicator */}
+              {recording && !isLocked && (
+                <Animated.View style={[styles.lockIndicator, { opacity: lockAnim, transform: [{ translateY: lockAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -40] }) }] }]}>
+                  <Ionicons name="lock-closed" size={20} color="#fff" />
+                </Animated.View>
+              )}
+              {isLocked && (
+                <View style={[styles.lockIndicator, { backgroundColor: '#ff3b30', bottom: 100 }]}>
+                   <Ionicons name="lock-closed" size={20} color="#fff" />
+                </View>
+              )}
+
+              <View
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={(evt) => {
+                  startTouchY.current = evt.nativeEvent.pageY;
+                  if (mode === 'POST') {
+                    snap();
+                  } else if (mode === 'LIVE') {
+                    haptics.medium();
+                    Alert.alert(
+                      'Start Live Stream?',
+                      'Sharing your world in real-time with your campus. Followers will be notified.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                          text: 'Start Live', 
+                          style: 'default',
+                          onPress: () => {
+                            haptics.success();
+                            onLiveStart?.();
+                          }
+                        }
+                      ]
+                    );
+                  } else {
+                    if (recording && isLocked) {
+                      stopRecord();
+                      return;
+                    }
+                    // Slight delay for long press feel
+                    setTimeout(() => {
+                      if (startTouchY.current !== null) startRecord();
+                    }, 200);
+                  }
+                }}
+                onResponderMove={(evt) => {
+                  if (recording && startTouchY.current && !isLocked) {
+                    const diff = startTouchY.current - evt.nativeEvent.pageY;
+                    const progress = Math.min(Math.max(diff / 80, 0), 1);
+                    lockAnim.setValue(progress);
+                    if (diff > 80) {
+                      setIsLocked(true);
+                      haptics.medium();
+                    }
+                  }
+                }}
+                onResponderRelease={() => {
+                  startTouchY.current = null;
+                  if (recording && !isLocked) {
+                    stopRecord();
+                  }
+                  if (!isLocked) lockAnim.setValue(0);
+                }}
+              >
+                <Animated.View style={[
+                  styles.shutterOuter, 
+                  recording && styles.shutterOuterRecording,
+                  { transform: [{ scale: shutterScale }] }
+                ]}>
+                  <View style={[styles.shutterInner, recording && styles.shutterInnerRecording]} />
+                </Animated.View>
+              </View>
+            </View>
 
             <TouchableOpacity onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')} style={styles.sideBtn}>
               <Ionicons name="camera-reverse-outline" size={30} color="#fff" />
@@ -244,5 +327,10 @@ const styles = StyleSheet.create({
   sideBtn: { 
     width: 50, height: 50, borderRadius: 25, 
     backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' 
+  },
+  shutterContainer: { alignItems: 'center', position: 'relative' },
+  lockIndicator: { 
+    position: 'absolute', bottom: 84, backgroundColor: 'rgba(0,0,0,0.5)', 
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' 
   },
 });

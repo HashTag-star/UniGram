@@ -5,19 +5,31 @@ import { uploadFile } from './upload';
 // ─── Conversations ────────────────────────────────────────────────────────────
 
 export async function getConversations(userId: string) {
+  // Use conversations as base and inner join participants to filter by user_id
   const { data, error } = await supabase
-    .from('conversation_participants')
+    .from('conversations')
     .select(`
-      unread_count,
-      conversations(
-        id, is_group, group_name, last_message, last_message_at,
-        conversation_participants(user_id, profiles(*))
+      id, is_group, group_name, last_message, last_message_at,
+      conversation_participants!inner(user_id),
+      participants:conversation_participants(
+        unread_count,
+        user_id,
+        profiles(id, username, full_name, avatar_url, is_verified, verification_type)
       )
     `)
-    .eq('user_id', userId)
-    .order('conversations(last_message_at)', { ascending: false });
+    .eq('conversation_participants.user_id', userId)
+    .order('last_message_at', { ascending: false });
+
   if (error) throw error;
-  return data ?? [];
+  
+  // Transform to match previous format expected by UI
+  return (data ?? []).map(conv => ({
+    unread_count: conv.participants.find((p: any) => p.user_id === userId)?.unread_count ?? 0,
+    conversations: {
+      ...conv,
+      conversation_participants: conv.participants
+    }
+  }));
 }
 
 export async function createDirectConversation(userId1: string, userId2: string): Promise<string> {

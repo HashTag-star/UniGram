@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { EditProfileModal } from './EditProfileModal';
 import { useTheme } from '../context/ThemeContext';
+import { deleteUserAccount } from '../services/profiles';
 
 interface Props {
   visible: boolean;
@@ -17,6 +18,9 @@ interface Props {
   onClose: () => void;
   onProfileUpdated: (updated: any) => void;
   onAdminPress?: () => void;
+  onShowPrivacy?: () => void;
+  onShowTerms?: () => void;
+  onShowGuidelines?: () => void;
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
@@ -411,7 +415,10 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
 
 const NOTIF_STORAGE_KEY = 'unigram_notifications_enabled';
 
-export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onProfileUpdated, onAdminPress }) => {
+export const SettingsScreen: React.FC<Props> = ({ 
+  visible, profile, onClose, onProfileUpdated, onAdminPress,
+  onShowPrivacy, onShowTerms, onShowGuidelines
+}) => {
   const insets = useSafeAreaInsets();
   const { colors, isDark, toggleTheme } = useTheme();
 
@@ -447,17 +454,28 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account and all your data. This action cannot be undone.',
+      'This will permanently delete your account and all your data. This action cannot be undone and complies with the "Right to be Forgotten" protocol.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Continue', style: 'destructive',
           onPress: () => Alert.alert(
-            'Confirm Deletion',
-            'Are you absolutely sure? All posts, messages and data will be deleted.',
+            'Final Confirmation',
+            'Are you absolutely sure? This will scrub your posts, reels, and profiles from UniGram permanently.',
             [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Delete My Account', style: 'destructive', onPress: () => Linking.openURL('mailto:support@unigram.app?subject=Delete%20My%20Account&body=Please%20delete%20my%20account.%20User%20ID%3A%20' + (profile?.id ?? '')) },
+              { 
+                text: 'Delete Permanently', 
+                style: 'destructive', 
+                onPress: async () => {
+                  try {
+                    await deleteUserAccount(profile.id);
+                    onClose();
+                  } catch (e: any) {
+                    Alert.alert('error', e.message);
+                  }
+                } 
+              },
             ]
           ),
         },
@@ -585,22 +603,27 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
             />
           </Section>
 
+          <Section title="Legal & Compliance">
+            <Row icon="document-text-outline" label="Privacy Policy" onPress={onShowPrivacy} />
+            <Row icon="reader-outline" label="Terms of Service" onPress={onShowTerms} />
+            <Row icon="checkmark-shield-outline" label="Community Guidelines" onPress={onShowGuidelines} noBorder />
+          </Section>
+
           <Section title="Support">
             <Row icon="help-circle-outline" label="Help & Support" sublabel="Contact us" onPress={handleHelp} />
-            <Row icon="flag-outline" label="Report a Problem" sublabel="Send feedback to the team" onPress={handleReport} />
-            <Row
-              icon="information-circle-outline"
-              label="About UniGram"
-              sublabel="Version 1.0.0"
-              onPress={() => Alert.alert('UniGram', 'Your campus, connected.\n\nVersion 1.0.0\nBuilt with love for students.')}
-              noBorder
-            />
+            <Row icon="flag-outline" label="Report a Problem" sublabel="Send feedback to the team" onPress={handleReport} noBorder />
           </Section>
 
           <Section title="Account Management">
             <Row icon="log-out-outline" label="Log Out" danger onPress={handleLogout} />
             <Row icon="trash-outline" label="Delete Account" danger onPress={handleDeleteAccount} noBorder />
           </Section>
+
+          <View style={styles.footer}>
+            <Text style={[styles.footerText, { color: colors.textMuted }]}>UniGram for Campus</Text>
+            <Text style={[styles.footerText, { color: colors.textMuted }]}>Version 1.0.0 (Build 20260409)</Text>
+            <Text style={[styles.footerText, { color: colors.textMuted, marginTop: 8 }]}>© 2026 UniGram. All rights reserved.</Text>
+          </View>
         </ScrollView>
       </View>
 
@@ -609,7 +632,7 @@ export const SettingsScreen: React.FC<Props> = ({ visible, profile, onClose, onP
         visible={showEditProfile}
         profile={profile}
         onClose={() => setShowEditProfile(false)}
-        onSaved={updated => { onProfileUpdated(updated); setShowEditProfile(false); }}
+        onSaved={(updated: any) => { onProfileUpdated(updated); setShowEditProfile(false); }}
       />
       <PasswordModal visible={showPasswordModal} onClose={() => setShowPasswordModal(false)} />
       <PrivacyModal
@@ -710,4 +733,7 @@ const styles = StyleSheet.create({
   blockedUser: { fontSize: 12, marginTop: 1 },
   unblockBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
   unblockText: { fontSize: 13, fontWeight: '600' },
+
+  footer: { marginTop: 40, paddingHorizontal: 20, alignItems: 'center' },
+  footerText: { fontSize: 12, lineHeight: 18 },
 });

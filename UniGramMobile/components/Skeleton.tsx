@@ -144,3 +144,18 @@ export const ProfileHeaderSkeleton: React.FC = () => (
     </View>
   </View>
 );
+
+export const NotificationSkeleton: React.FC = () => (
+  <View style={{ padding: 16 }}>
+    {[1, 2, 3, 4, 5, 6].map(i => (
+      <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 12 }}>
+        <Skeleton width={46} height={46} borderRadius={23} />
+        <View style={{ flex: 1, gap: 8 }}>
+          <Skeleton width={'75%' as any} height={14} />
+          <Skeleton width={'25%' as any} height={10} />
+        </View>
+        <Skeleton width={44} height={44} borderRadius={6} />
+      </View>
+    ))}
+  </View>
+);

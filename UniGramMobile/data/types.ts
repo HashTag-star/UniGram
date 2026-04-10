@@ -1,4 +1,4 @@
-export type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff';
+export type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
 
 export interface User {
   id: string;

@@ -13,6 +13,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from '../services/notifications';
+import { NotificationSkeleton } from '../components/Skeleton';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       </View>
 
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 60 }} />
+        <NotificationSkeleton />
       ) : (
         <FlatList
           data={[1]}

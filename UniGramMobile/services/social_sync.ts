@@ -4,11 +4,13 @@ export type SocialEventType =
   | 'FOLLOW_CHANGE' 
   | 'POST_LIKE_CHANGE' 
   | 'REEL_LIKE_CHANGE'
-  | 'STORY_LIKE_CHANGE';
+  | 'STORY_LIKE_CHANGE'
+  | 'REEL_DELETE'
+  | 'POST_DELETE';
 
 export interface SocialEventData {
   targetId: string; // userId, postId, reelId, etc.
-  isActive: boolean; // isLiked, isFollowing, etc.
+  isActive?: boolean; // isLiked, isFollowing, etc.
   newCount?: number; // updated likes_count
 }
 

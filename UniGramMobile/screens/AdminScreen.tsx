@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, suspendUser as suspendUserAction } from '../services/reports';
+import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, suspendUser as suspendUserAction, deleteReportedContent, getAuthorIdForReport } from '../services/reports';
 import { sendAdminNotification } from '../services/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -798,13 +798,25 @@ const ReportsTab: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleAction = async (report: AdminReport, action: 'resolve' | 'dismiss' | 'ban') => {
+  const handleAction = async (report: AdminReport, action: 'resolve' | 'dismiss' | 'ban' | 'suspend' | 'delete') => {
     setActioning(report.id);
     try {
-      if (action === 'ban') {
-        await banUserAction(report.target_id);
+      if (action === 'delete') {
+        await deleteReportedContent(report.target_id, report.target_type);
         await updateReportStatus(report.id, 'resolved');
-        Alert.alert('Success', 'User has been banned and report resolved.');
+        Alert.alert('Success', 'Content deleted and report resolved.');
+      } else if (action === 'suspend' || action === 'ban') {
+        const authorId = await getAuthorIdForReport(report.target_id, report.target_type);
+        if (!authorId) throw new Error('Could not identify the user responsible for this content.');
+        
+        if (action === 'ban') {
+          await banUserAction(authorId);
+          Alert.alert('Success', 'User has been banned.');
+        } else {
+          await suspendUserAction(authorId, true);
+          Alert.alert('Success', 'User has been suspended.');
+        }
+        await updateReportStatus(report.id, 'resolved');
       } else if (action === 'resolve') {
         await updateReportStatus(report.id, 'resolved');
         Alert.alert('Success', 'Report marked as resolved.');
@@ -848,17 +860,30 @@ const ReportsTab: React.FC = () => {
         {actioning === r.id ? (
           <ActivityIndicator size="small" color="#6366f1" />
         ) : (
-          <>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDismiss]} onPress={() => handleAction(r, 'dismiss')}>
-              <Text style={styles.actionBtnText}>Dismiss</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnResolve]} onPress={() => handleAction(r, 'resolve')}>
-              <Text style={styles.actionBtnText}>Resolved</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBan]} onPress={() => handleAction(r, 'ban')}>
-              <Text style={styles.actionBtnText}>Ban User</Text>
-            </TouchableOpacity>
-          </>
+          <View style={{ flexDirection: 'column', gap: 8, width: '100%' }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDismiss, { flex: 1 }]} onPress={() => handleAction(r, 'dismiss')}>
+                <Text style={styles.actionBtnText}>Dismiss</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnResolve, { flex: 1 }]} onPress={() => handleAction(r, 'resolve')}>
+                <Text style={styles.actionBtnText}>Resolved</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {r.target_type !== 'member' && (
+                <TouchableOpacity style={[styles.actionBtn, { flex: 1, backgroundColor: '#f59e0b' }]} onPress={() => handleAction(r, 'delete')}>
+                  <Text style={styles.actionBtnText}>Delete Content</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[styles.actionBtn, { flex: 1, backgroundColor: '#ef4444' }]} onPress={() => handleAction(r, 'suspend')}>
+                <Text style={styles.actionBtnText}>Suspend User</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBan, { flex: 1 }]} onPress={() => handleAction(r, 'ban')}>
+                <Text style={styles.actionBtnText}>Ban User</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
       </View>
     </View>

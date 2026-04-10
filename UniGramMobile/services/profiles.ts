@@ -161,3 +161,91 @@ export async function updateActiveStatus(userId: string) {
     .eq('id', userId);
   if (error) console.error('Error updating active status', error);
 }
+
+/**
+ * Performs a cascading delete of all user-generated content.
+ * Direct Supabase Auth deletion requires admin keys, so from the client 
+ * we delete all associated rows in order.
+ */
+export async function deleteUserAccount(userId: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  // Order matters for some FK constraints
+  const tables = [
+    'notifications',
+    'follows', // where follower
+    'follows', // where following (if they follow themselves? anyway)
+    'reels_likes',
+    'post_likes',
+    'comment_likes',
+    'comments',
+    'reels',
+    'posts',
+    'profiles'
+  ];
+
+  for (const table of tables) {
+    const column = (table === 'follows' && tables.indexOf(table) === 1) ? 'follower_id' : 
+                   (table === 'follows' && tables.indexOf(table) === 2) ? 'following_id' : 'user_id';
+    
+    // Some tables might not have user_id, but profiles has 'id'
+    const targetCol = (table === 'profiles') ? 'id' : column;
+
+    try {
+      await supabase.from(table).delete().eq(targetCol, userId);
+    } catch (e) {
+      console.warn(`[Cleanup] Failed to delete from ${table}:`, e);
+    }
+  }
+
+  // Finally sign out
+  const { error: signOutError } = await supabase.auth.signOut();
+  if (signOutError) throw signOutError;
+}
+
+/**
+ * Blocks a user.
+ */
+export async function blockUser(blockedId: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+  
+  const { error } = await supabase
+    .from('blocked_users')
+    .insert({ blocker_id: user.id, blocked_id: blockedId });
+  
+  if (error) throw error;
+}
+
+/**
+ * Unblocks a user.
+ */
+export async function unblockUser(blockedId: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+  
+  const { error } = await supabase
+    .from('blocked_users')
+    .delete()
+    .eq('blocker_id', user.id)
+    .eq('blocked_id', blockedId);
+  
+  if (error) throw error;
+}
+
+/**
+ * Gets the list of blocked user IDs for the current user.
+ */
+export async function getBlockedUserIds() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+  
+  const { data, error } = await supabase
+    .from('blocked_users')
+    .select('blocked_id')
+    .eq('blocker_id', user.id);
+  
+  if (error) return [];
+  return data.map(b => b.blocked_id);
+}

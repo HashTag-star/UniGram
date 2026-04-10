@@ -2,7 +2,7 @@ import './global.css';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  StatusBar, Animated, ActivityIndicator,
+  StatusBar, Animated, ActivityIndicator, DeviceEventEmitter,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,15 +24,24 @@ import SignupScreen from './screens/auth/SignupScreen';
 import ResetPasswordScreen from './screens/auth/ResetPasswordScreen';
 import { OnboardingNavigator } from './screens/onboarding/OnboardingNavigator';
 import { QuickCaptureScreen } from './screens/QuickCaptureScreen';
+import PrivacyPolicyScreen from './screens/legal/PrivacyPolicyScreen';
+import TermsOfServiceScreen from './screens/legal/TermsOfServiceScreen';
+import CommunityGuidelinesScreen from './screens/legal/CommunityGuidelinesScreen';
 import PagerView from 'react-native-pager-view';
 import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
+// Screens will be loaded dynamically if safe
+// import { LiveScreen } from './screens/LiveScreen';
+// import { MediaEditScreen } from './screens/MediaEditScreen';
+import { createStory } from './services/stories';
+import { AccountService } from './services/accounts';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
+type LegalOverlay = 'privacy' | 'terms' | 'guidelines' | null;
 
 const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> = [
   { id: 'feed',     icon: 'home-outline',        activeIcon: 'home',        label: 'Home'     },
@@ -213,6 +222,30 @@ function AppShell() {
   const [activeTab, setActiveTab] = useState<Tab>('feed');
   const [prevTab, setPrevTab] = useState<Tab>('feed');
   const [showVerification, setShowVerification] = useState(false);
+  const [activeMedia, setActiveMedia] = useState<any>(null);
+  const [isLive, setIsLive] = useState(false);
+
+  const handleCapture = (media: any) => {
+    setActiveMedia(media);
+    // Stay on Page 0 (Camera side) but show the Edit full-screen overlay
+  };
+
+  const handleEditNext = (edited: any) => {
+    // If it's a story, we can post it right away. 
+    // If it's a post/reel, we move to the final CreatePostModal.
+    const mode = activeMedia.mode;
+    if (mode === 'STORY') {
+      setActiveMedia(null);
+      pagerRef.current?.setPage(1);
+      // Logic to actually upload story...
+      createStory(session.user.id, edited.uri).then(() => {
+        setFeedRefreshKey(k => k + 1);
+      });
+    } else {
+      setActiveMedia({ ...activeMedia, ...edited });
+      setShowCreate(true);
+    }
+  };
   const [showCreate, setShowCreate] = useState(false);
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
@@ -222,24 +255,74 @@ function AppShell() {
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
   const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const notifChannelRef = useRef<any>(null);
   const showNotifsRef = useRef(false);
   const pagerRef = useRef<PagerView>(null);
   const [pagerPage, setPagerPage] = useState(1);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [minSplashDone, setMinSplashDone] = useState(false);
+
+  // Sync badge count with app icon (native)
+  useEffect(() => {
+    const { setBadgeCount } = require('./services/pushNotifications');
+    setBadgeCount(notifBadge).catch(() => {});
+  }, [notifBadge]);
+
+  const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('setPagerScroll', (enabled: boolean) => {
+      setPagerScrollEnabled(enabled);
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     showNotifsRef.current = showNotifications;
   }, [showNotifications]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    // 1. Initial session check
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+    });
+
+    // 2. Auth listener
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
       setOnboardingDone(null);
     });
-    return () => listener.subscription.unsubscribe();
+
+    // 3. Minimum Splash Duration
+    const splashTimer = setTimeout(() => {
+      setMinSplashDone(true);
+    }, 1800);
+
+    // 4. Safety Fallback: Never stay on splash longer than 3.5s if session is known
+    const fallbackTimer = setTimeout(() => {
+      setOnboardingDone(prev => prev === null ? true : prev);
+    }, 3500);
+
+    const switchSub = DeviceEventEmitter.addListener('ACCOUNT_SWITCHED', (uid) => {
+      setProfileRefreshKey(k => k + 1);
+      setFeedRefreshKey(k => k + 1);
+    });
+
+    const logoutSub = DeviceEventEmitter.addListener('FORCE_LOGOUT', () => {
+      setSession(null);
+      setOnboardingDone(null);
+      setAuthScreen('login');
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+      switchSub.remove();
+      logoutSub.remove();
+      clearTimeout(splashTimer);
+      clearTimeout(fallbackTimer);
+    };
   }, []);
 
   // Handle deep links from auth emails (confirmation & password reset)
@@ -289,6 +372,8 @@ function AppShell() {
         if (data) {
           setUserProfile(data);
           setOnboardingDone(data.onboarding_completed ?? false);
+          // Register in multi-account service
+          AccountService.registerAccount(data, session).catch(() => {});
         } else {
           setOnboardingDone(true);
         }
@@ -414,9 +499,21 @@ function AppShell() {
     return () => sub?.remove();
   }, [session?.user?.id]);
 
-  if (session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
+  if (!minSplashDone || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
   if (!session) {
-    if (authScreen === 'signup') return <SignupScreen onNavigateLogin={() => setAuthScreen('login')} />;
+    if (authScreen === 'signup') return (
+      <View style={{ flex: 1 }}>
+        <SignupScreen 
+          onNavigateLogin={() => setAuthScreen('login')} 
+          onShowPrivacy={() => setActiveLegal('privacy')}
+          onShowTerms={() => setActiveLegal('terms')}
+          onShowGuidelines={() => setActiveLegal('guidelines')}
+        />
+        {activeLegal === 'privacy' && <PrivacyPolicyScreen onClose={() => setActiveLegal(null)} />}
+        {activeLegal === 'terms' && <TermsOfServiceScreen onClose={() => setActiveLegal(null)} />}
+        {activeLegal === 'guidelines' && <CommunityGuidelinesScreen onClose={() => setActiveLegal(null)} />}
+      </View>
+    );
     return <LoginScreen onNavigateSignup={() => setAuthScreen('signup')} />;
   }
   if (resetPasswordMode) {
@@ -466,6 +563,7 @@ function AppShell() {
         initialPage={1}
         onPageSelected={(e) => setPagerPage(e.nativeEvent.position)}
         scrollEnabled={
+          pagerScrollEnabled &&
           activeTab === 'feed' && 
           !showNotifications && 
           !showCreate && 
@@ -476,13 +574,10 @@ function AppShell() {
         {/* Page 0: Side-Swipe Camera (IG Style) */}
         <View key="0" style={{ flex: 1 }}>
           <QuickCaptureScreen 
-            isVisible={pagerPage === 0} 
+            isVisible={pagerPage === 0 && !activeMedia && !isLive} 
             onClose={() => pagerRef.current?.setPage(1)}
-            onCapture={(media) => {
-               pagerRef.current?.setPage(1);
-               // Future: pass media to CreatePostModal logic
-               console.log('Captured media:', media);
-            }}
+            onCapture={handleCapture}
+            onLiveStart={() => setIsLive(true)}
           />
         </View>
 
@@ -531,6 +626,9 @@ function AppShell() {
                 onVerifyPress={() => setShowVerification(true)}
                 onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
                 onMessagePress={navigateToMessages}
+                onShowPrivacy={() => setActiveLegal('privacy')}
+                onShowTerms={() => setActiveLegal('terms')}
+                onShowGuidelines={() => setActiveLegal('guidelines')}
               />
             </View>
 
@@ -546,7 +644,7 @@ function AppShell() {
           {showTabBar && !isReels && (
             <TouchableOpacity
               style={[styles.fab, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}
-              onPress={() => setShowCreate(true)}
+              onPress={() => pagerRef.current?.setPage(0)}
               activeOpacity={0.85}
             >
               <Ionicons name="add" size={28} color="#fff" />
@@ -598,14 +696,65 @@ function AppShell() {
         </View>
       )}
 
+      {/* Full-screen Media Edit Stage */}
+      {activeMedia && (
+        <View style={StyleSheet.absoluteFill}>
+          {(() => {
+            const { MediaEditScreen } = require('./screens/MediaEditScreen');
+            return (
+              <MediaEditScreen
+                uri={activeMedia.uri}
+                type={activeMedia.type}
+                mode={activeMedia.mode}
+                onNext={handleEditNext}
+                onCancel={() => setActiveMedia(null)}
+              />
+            );
+          })()}
+        </View>
+      )}
+
+      {/* Live Mode simulation */}
+      {isLive && (
+        <View style={StyleSheet.absoluteFill}>
+          {(() => {
+            const { LiveScreen } = require('./screens/LiveScreen');
+            return <LiveScreen onClose={() => setIsLive(false)} />;
+          })()}
+        </View>
+      )}
+
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
 
       <CreatePostModal
         visible={showCreate}
         userId={session.user.id}
-        onClose={() => setShowCreate(false)}
-        onPosted={() => setFeedRefreshKey(k => k + 1)}
+        onClose={() => { setShowCreate(false); setActiveMedia(null); }}
+        onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); }}
+        preCapturedMedia={activeMedia ? { 
+          uri: activeMedia.uri, 
+          type: activeMedia.type, 
+          mode: (activeMedia.mode === 'POST' ? 'post' : activeMedia.mode === 'REEL' ? 'reel' : 'story'),
+          song: activeMedia.music ? `${activeMedia.music.trackName} — ${activeMedia.music.artistName}` : undefined,
+          songPreviewUrl: activeMedia.music?.previewUrl
+        } : undefined}
       />
+
+      {activeLegal === 'privacy' && (
+        <View style={styles.notifOverlay}>
+          <PrivacyPolicyScreen onClose={() => setActiveLegal(null)} />
+        </View>
+      )}
+      {activeLegal === 'terms' && (
+        <View style={styles.notifOverlay}>
+          <TermsOfServiceScreen onClose={() => setActiveLegal(null)} />
+        </View>
+      )}
+      {activeLegal === 'guidelines' && (
+        <View style={styles.notifOverlay}>
+          <CommunityGuidelinesScreen onClose={() => setActiveLegal(null)} />
+        </View>
+      )}
     </View>
   );
 }

@@ -18,10 +18,13 @@ interface PostOptionsSheetProps {
   onCopyLink?: () => void;
   onSave?: () => void;
   isSaved?: boolean;
+  onReport?: () => void;
+  onBlock?: () => void;
 }
 
 export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({ 
-  visible, onClose, post, currentUserId, onDelete, onShare, onCopyLink, onSave, isSaved 
+  visible, onClose, post, currentUserId, onDelete, onShare, onCopyLink, onSave, isSaved,
+  onReport, onBlock
 }) => {
   const { colors } = useTheme();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -85,7 +88,12 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
             <ListItem name="person-remove-outline" label="Unfollow" />
             <ListItem name="information-circle-outline" label="Why you're seeing this post" />
             <ListItem name="eye-off-outline" label="Hide" />
-            <ListItem name="alert-circle-outline" label="Report" destructive />
+            
+            <ListItem name="alert-circle-outline" label="Report" destructive onPress={onReport} />
+            
+            {!isOwner && (
+              <ListItem name="ban-outline" label={`Block @${post.profiles?.username}`} destructive onPress={onBlock} />
+            )}
             
             {isOwner && (
               <ListItem 

@@ -8,11 +8,12 @@ interface Props {
 }
 
 const colors: Record<VerificationType, string> = {
-  student: '#3b82f6',
-  professor: '#eab308',
-  club: '#a855f7',
-  influencer: '#3b82f6',
-  staff: '#22c55e',
+  student: '#6366f1',    // Indigo
+  professor: '#eab308',  // Amber
+  club: '#a855f7',       // Purple
+  influencer: '#1d4ed8', // Royal Blue (Notable)
+  staff: '#22c55e',      // Green
+  alumni: '#14b8a6',     // Teal
 };
 
 export const VerifiedBadge: React.FC<Props> = ({ type = 'student', size = 'sm' }) => {

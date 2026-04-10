@@ -8,7 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { submitVerificationRequest } from '../services/verification';
 import { supabase } from '../lib/supabase';
-type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff';
+type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
 
 interface Props {
   visible: boolean;
@@ -29,9 +29,17 @@ const TIERS: Array<{
     type: 'student',
     title: 'Verified Student',
     subtitle: 'For enrolled students',
-    color: '#3b82f6',
+    color: '#6366f1',
     icon: '🎓',
     requirements: ['Valid .edu email', 'Student ID or enrollment proof', 'University matches profile'],
+  },
+  {
+    type: 'alumni',
+    title: 'Verified Alumni',
+    subtitle: 'For graduates',
+    color: '#14b8a6',
+    icon: '🏛️',
+    requirements: ['Graduation certificate or transcript', 'Alumni email (if available)', 'Degree details on profile'],
   },
   {
     type: 'professor',
@@ -46,14 +54,14 @@ const TIERS: Array<{
     title: 'Verified Organization',
     subtitle: 'For clubs & societies',
     color: '#a855f7',
-    icon: '🏛️',
+    icon: '🏢',
     requirements: ['University recognition letter', 'Official org status', '10+ active members'],
   },
   {
     type: 'influencer',
     title: 'Notable Account',
     subtitle: 'For campus creators',
-    color: '#3b82f6',
+    color: '#1d4ed8',
     icon: '⭐',
     requirements: ['1,000+ followers', 'Consistent posting', 'Campus presence'],
   },

@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
   ScrollView, Animated, StatusBar,
+  GestureResponderEvent,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +11,9 @@ import { signUp, signInWithGoogle, checkUsernameAvailable, detectUniversityFromE
 
 interface Props {
   onNavigateLogin: () => void;
+  onShowPrivacy: () => void;
+  onShowTerms: () => void;
+  onShowGuidelines: () => void;
 }
 
 // ─── Logo ─────────────────────────────────────────────────────────────────────
@@ -129,7 +133,9 @@ const Field: React.FC<{
 };
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
-export default function SignupScreen({ onNavigateLogin }: Props) {
+export default function SignupScreen({ 
+  onNavigateLogin, onShowPrivacy, onShowTerms, onShowGuidelines 
+}: Props) {
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -145,6 +151,11 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
   const [detectedUni, setDetectedUni] = useState<string | null>(null);
   const [uniChecking, setUniChecking] = useState(false);
   const uniTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [dobDay, setDobDay] = useState('');
+  const [dobMonth, setDobMonth] = useState('');
+  const [dobYear, setDobYear] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const heroAnim = useRef(new Animated.Value(0)).current;
   const formSlide = useRef(new Animated.Value(50)).current;
@@ -201,10 +212,34 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
   }, [email]);
 
   const handleSignup = async () => {
-    if (!fullName.trim() || !username.trim() || !email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please fill in all fields.');
+    if (!fullName.trim() || !username.trim() || !email.trim() || !password || !dobDay || !dobMonth || !dobYear) {
+      Alert.alert('Missing fields', 'Please fill in all fields, including your date of birth.');
       return;
     }
+
+    // Age validation (13+)
+    const birthDate = new Date(parseInt(dobYear), parseInt(dobMonth) - 1, parseInt(dobDay));
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+
+    if (isNaN(age) || age < 13) {
+      Alert.alert('Ineligible', 'You must be at least 13 years old to join UniGram.');
+      return;
+    }
+
+    // Email validation (.edu.gh)
+    if (!email.trim().toLowerCase().endsWith('.edu.gh')) {
+      Alert.alert('University Email Required', 'UniGram is currently exclusive to students with a .edu.gh email address.');
+      return;
+    }
+
+    if (!acceptedTerms) {
+      Alert.alert('Terms of Service', 'You must agree to the Terms of Service and Privacy Policy to continue.');
+      return;
+    }
+
     if (getStrength(password).level < 2) {
       Alert.alert('Weak password', 'Use at least 8 characters with a mix of letters and numbers.');
       return;
@@ -224,7 +259,8 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
     }
     setLoading(true);
     try {
-      await signUp(email.trim().toLowerCase(), password, cleanUsername, fullName.trim());
+      const dobStr = `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`;
+      await signUp(email.trim().toLowerCase(), password, cleanUsername, fullName.trim(), dobStr);
       Alert.alert(
         'Almost there!',
         'Check your email to confirm your account, then sign in.',
@@ -265,6 +301,8 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
 
   const showEduPrompt = !email.includes('@');
   const showPersonalHint = email.includes('@') && !uniChecking && !detectedUni && (email.split('@')[1]?.length ?? 0) > 3;
+
+
 
   return (
     <View style={styles.container}>
@@ -410,6 +448,55 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
             />
             <StrengthBar password={password} />
 
+            {/* Date of Birth */}
+            <Text style={styles.sectionLabel}>Date of Birth (13+ only)</Text>
+            <View style={styles.dobRow}>
+              <View style={{ flex: 1.5 }}>
+                <Field
+                  icon="calendar-outline"
+                  placeholder="DD"
+                  value={dobDay}
+                  onChangeText={t => setDobDay(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  keyboardType="number-pad"
+                />
+              </View>
+              <View style={{ flex: 1.5 }}>
+                <Field
+                  icon="calendar-outline"
+                  placeholder="MM"
+                  value={dobMonth}
+                  onChangeText={t => setDobMonth(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  keyboardType="number-pad"
+                />
+              </View>
+              <View style={{ flex: 2 }}>
+                <Field
+                  icon="calendar-outline"
+                  placeholder="YYYY"
+                  value={dobYear}
+                  onChangeText={t => setDobYear(t.replace(/[^0-9]/g, '').slice(0, 4))}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            {/* Consent */}
+            <TouchableOpacity 
+              style={styles.consentRow} 
+              onPress={() => setAcceptedTerms(!acceptedTerms)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkbox, acceptedTerms && styles.checkboxActive]}>
+                {acceptedTerms && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </View>
+              <Text style={styles.consentText}>
+                I agree to the{' '}
+                <Text style={styles.legalLink} onPress={onShowTerms}>Terms of Service</Text>
+                {' '}and{' '}
+                <Text style={styles.legalLink} onPress={onShowPrivacy}>Privacy Policy</Text>
+              </Text>
+            </TouchableOpacity>
+
             {/* Create account button */}
             <TouchableOpacity onPress={handleSignup} disabled={loading} activeOpacity={0.85} style={styles.primaryWrap}>
               <LinearGradient
@@ -448,9 +535,9 @@ export default function SignupScreen({ onNavigateLogin }: Props) {
             {/* Terms */}
             <Text style={styles.terms}>
               By creating an account you agree to our{' '}
-              <Text style={styles.termsLink}>Terms of Service</Text>
+              <Text style={styles.termsLink} onPress={onShowTerms}>Terms of Service</Text>
               {' '}and{' '}
-              <Text style={styles.termsLink}>Privacy Policy</Text>
+              <Text style={styles.termsLink} onPress={onShowPrivacy}>Privacy Policy</Text>
             </Text>
 
             {/* Switch to login */}
@@ -578,4 +665,17 @@ const styles = StyleSheet.create({
   switchBtn: { alignItems: 'center' },
   switchText: { color: 'rgba(255,255,255,0.38)', fontSize: 14 },
   switchLink: { color: '#818cf8', fontWeight: '700' },
+
+  sectionLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '600', marginBottom: 8, marginTop: 4, marginLeft: 2 },
+  dobRow: { flexDirection: 'row', gap: 10, width: '100%' },
+  
+  consentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10, marginBottom: 20 },
+  checkbox: { 
+    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)'
+  },
+  checkboxActive: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+  consentText: { flex: 1, color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 18 },
+  legalLink: { color: '#818cf8', fontWeight: 'bold' },
 });

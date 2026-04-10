@@ -40,11 +40,11 @@ export async function getUnreadNotificationCount(userId: string): Promise<number
 }
 
 const PUSH_TITLES: Record<string, string> = {
-  verification_approved: '✅ Verification Approved',
-  verification_rejected: '❌ Verification Update',
-  announcement: '📢 UniGram Announcement',
-  account_suspended: '🚫 Account Suspended',
-  account_unsuspended: '✅ Account Restored',
+  verification_approved: 'Verification Approved',
+  verification_rejected: 'Verification Update',
+  announcement: 'Announcement',
+  account_suspended: 'Account Suspended',
+  account_unsuspended: 'Account Restored',
 };
 
 /** Admin sends a notification to one user or all users */

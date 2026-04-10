@@ -27,8 +27,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import * as Audio from 'expo-audio';
+import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
+import { Keyboard } from 'react-native';
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
@@ -38,6 +39,7 @@ import Reanimated, {
   withTiming,
   interpolate,
 } from 'react-native-reanimated';
+import { EmojiKeyboard, type EmojiType } from 'rn-emoji-keyboard';
 
 import { supabase } from '../lib/supabase';
 import { ConvSkeleton } from '../components/Skeleton';
@@ -152,37 +154,64 @@ const VoiceWaveform: React.FC<{
   const { colors } = useTheme();
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const player = useRef<any>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   const bars = useMemo(() => {
     return Array.from({ length: 25 }, () => 3 + Math.random() * 15);
   }, []);
 
-  const togglePlayback = async () => {
-    if (!player.current) {
-      try {
-        if ((Audio as any).createPlayer) {
-          player.current = (Audio as any).createPlayer(uri);
-        }
-      } catch (e) { console.error(e); }
-    }
-
-    if (player.current) {
-      if (playing) {
-        player.current.pause();
-        setPlaying(false);
-      } else {
-        player.current.play();
-        setPlaying(true);
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
       }
-    } else {
-      setPlaying(!playing);
+    };
+  }, []);
+
+  const onPlaybackStatusUpdate = (status: any) => {
+    if (status.isLoaded) {
+      if (status.didJustFinish) {
+        setPlaying(false);
+        setProgress(0);
+        soundRef.current?.setPositionAsync(0);
+      } else {
+        const p = status.positionMillis / (status.durationMillis || duration || 1);
+        setProgress(p);
+      }
+    }
+  };
+
+  const togglePlayback = async () => {
+    try {
+      if (!soundRef.current) {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri },
+          { shouldPlay: true },
+          onPlaybackStatusUpdate
+        );
+        soundRef.current = sound;
+        setPlaying(true);
+      } else {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isLoaded) {
+          if (playing) {
+            await soundRef.current.pauseAsync();
+            setPlaying(false);
+          } else {
+            await soundRef.current.playAsync();
+            setPlaying(true);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Playback error:', e);
+      setPlaying(false);
     }
   };
 
   return (
     <View style={[styles.voiceBubble, isMe ? styles.voiceBubbleMe : [styles.voiceBubbleThem, { backgroundColor: colors.bg2 }]]}>
-      <TouchableOpacity onPress={togglePlayback} style={styles.voicePlayBtn}>
+      <TouchableOpacity onPress={togglePlayback} style={styles.voicePlayBtn} activeOpacity={0.8}>
         <Ionicons name={playing ? 'pause' : 'play'} size={20} color={isMe ? '#fff' : colors.text} />
       </TouchableOpacity>
       <View style={styles.waveformContainer}>
@@ -240,53 +269,154 @@ const VoiceRecorder: React.FC<{
 }> = ({ onRecordComplete }) => {
   const { colors } = useTheme();
   const [duration, setDuration] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<any>(null);
-  const isRecordingRef = useRef(false);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+      }
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+  
+  // Waveform shared values
+  const waveValues = [
+    useSharedValue(5), useSharedValue(15), useSharedValue(25),
+    useSharedValue(10), useSharedValue(20), useSharedValue(15),
+    useSharedValue(5)
+  ];
+
+  const animateWave = useCallback(() => {
+    waveValues.forEach((val) => {
+      val.value = withRepeat(
+        withSequence(
+          withTiming(10 + Math.random() * 30, { duration: 150 + Math.random() * 100 }),
+          withTiming(5 + Math.random() * 10, { duration: 150 + Math.random() * 100 })
+        ),
+        -1,
+        true
+      );
+    });
+  }, []);
+
+  const resetWave = useCallback(() => {
+    waveValues.forEach((val) => {
+      val.value = withSpring(8);
+    });
+  }, []);
 
   const start = async () => {
+    if (isRecording || isPreparing) return;
+    setIsPreparing(true);
+
     try {
-      if ((Audio as any).requestPermissionsAsync) {
-        await (Audio as any).requestPermissionsAsync();
+      // Ensure any stale recording is unloaded
+      if (recordingRef.current) {
+        try {
+          await recordingRef.current.stopAndUnloadAsync();
+        } catch (e) {}
+        recordingRef.current = null;
       }
-      isRecordingRef.current = true;
+
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Microphone access is required.');
+        setIsPreparing(false);
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+        staysActiveInBackground: false,
+      });
+
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.startAsync();
+      
+      recordingRef.current = recording;
+      setIsRecording(true);
       setDuration(0);
-      timerRef.current = setInterval(() => setDuration(d => d + 100), 100);
+      animateWave();
+      
+      timerRef.current = setInterval(() => {
+        setDuration(d => d + 100);
+      }, 100);
+      
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (err) {
       console.error('Failed to start recording', err);
+      Alert.alert('Error', 'Could not start recording.');
+    } finally {
+      setIsPreparing(false);
     }
   };
 
   const stop = async (cancel = false) => {
-    if (!isRecordingRef.current) return;
+    if (!recordingRef.current || isPreparing) return;
+    
+    const rec = recordingRef.current;
+    recordingRef.current = null; // Prevent concurrent stop calls
+    
     clearInterval(timerRef.current);
-    isRecordingRef.current = false;
-    const mockUri = 'file://voice.m4a';
-    const finalDuration = duration;
-    setDuration(0);
-    if (!cancel && finalDuration > 500) {
-      onRecordComplete(mockUri, finalDuration);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setIsRecording(false);
+    resetWave();
+    
+    try {
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      const finalDuration = duration;
+      setDuration(0);
+
+      if (!cancel && finalDuration > 800 && uri) {
+        onRecordComplete(uri, finalDuration);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (err) {
+      console.error('Failed to stop recording', err);
     }
   };
 
+  const animatedWaveStyles = waveValues.map(val => useAnimatedStyle(() => ({
+    height: val.value,
+    width: 3,
+    borderRadius: 1.5,
+    backgroundColor: colors.accent,
+    marginHorizontal: 1,
+  })));
+
   return (
-    <TouchableOpacity
-      onPressIn={start}
-      onPressOut={() => stop(false)}
-      style={styles.voiceRecordBtn}
-    >
-      <View style={[styles.voiceRecordIcon, duration > 0 && styles.voiceRecordIconActive]}>
-        <Ionicons name="mic" size={20} color={duration > 0 ? '#fff' : colors.textMuted} />
-      </View>
-      {duration > 0 && (
-        <View style={styles.voiceRecordingLabel}>
-          <Text style={styles.voiceRecordingTime}>
-            {Math.floor(duration / 1000)}:{(duration % 1000).toString().padStart(3, '0').slice(0, 1)}
+    <View style={styles.voiceRecorderContainer}>
+      {isRecording && (
+        <View style={[styles.recordingWaveContainer, { backgroundColor: colors.bg2 }]}>
+          <View style={styles.waveRows}>
+            {animatedWaveStyles.map((style, i) => (
+              <Reanimated.View key={i} style={style} />
+            ))}
+          </View>
+          <Text style={[styles.voiceRecordingTime, { color: colors.textSub }]}>
+            {Math.floor(duration / 1000)}:{(Math.floor(duration / 100) % 10)}
           </Text>
         </View>
       )}
-    </TouchableOpacity>
+      <TouchableOpacity
+        onPressIn={start}
+        onPressOut={() => stop(false)}
+        style={[styles.voiceRecordBtn, isRecording && { transform: [{ scale: 1.2 }] }]}
+      >
+        <View style={[styles.voiceRecordIcon, isRecording && styles.voiceRecordIconActive]}>
+          <Ionicons name="mic" size={22} color={isRecording ? '#fff' : colors.textMuted} />
+        </View>
+      </TouchableOpacity>
+    </View>
   );
 };
 
@@ -874,12 +1004,58 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [reactionTarget, setReactionTarget] = useState<{ msg: any; x: number; y: number } | null>(null);
   const [replyingTo, setReplyingTo] = useState<any | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [profile, setProfile] = useState<any>(otherProfile);
 
+  // Recovery effect for erased/missing names
+  useEffect(() => {
+    if (!profile || !profile.full_name) {
+      const fetchProfile = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('conversation_participants')
+            .select('profiles(*)')
+            .eq('conversation_id', convId)
+            .neq('user_id', currentUserId)
+            .maybeSingle();
+          
+          if (data?.profiles) {
+            setProfile(data.profiles);
+          } else if (otherProfile) {
+            // Fallback to initial prop if DB fetch somehow fails
+            setProfile(otherProfile);
+          }
+        } catch (e) {
+          console.error('Profile recovery failed:', e);
+        }
+      };
+      fetchProfile();
+    } else {
+      // Sync local state if prop changes
+      setProfile(otherProfile);
+    }
+  }, [convId, otherProfile, currentUserId]);
+
+  const isTypingSentRef = useRef(false);
   const flatRef = useRef<FlatList>(null);
   const msgChannelRef = useRef<RealtimeChannel | null>(null);
   const typingChannelRef = useRef<RealtimeChannel | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingSentRef = useRef(false);
+
+  // Scroll to bottom when keyboard OR emoji picker opens
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => {
+      setShowEmojiPicker(false);
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    return () => showSub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (showEmojiPicker) {
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+    }
+  }, [showEmojiPicker]);
 
   // Load messages and set up realtime
   useEffect(() => {
@@ -1124,7 +1300,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
     >
       {/* Header */}
       <View style={[styles.chatHeader, { paddingTop: insets.top + 6, backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
@@ -1133,8 +1309,8 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         </TouchableOpacity>
         <TouchableOpacity style={styles.chatHeaderUser} activeOpacity={0.8}>
           <View style={{ position: 'relative' }}>
-            {otherProfile?.avatar_url ? (
-              <Image source={{ uri: otherProfile.avatar_url }} style={styles.chatAvatar} />
+            {profile?.avatar_url ? (
+              <Image source={{ uri: profile.avatar_url }} style={styles.chatAvatar} />
             ) : (
               <View style={[styles.chatAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
                 <Ionicons name={isGroup ? 'people' : 'person'} size={16} color={colors.textMuted} />
@@ -1145,10 +1321,10 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           <View style={{ marginLeft: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>
-                {otherProfile?.full_name ?? otherProfile?.username ?? 'Chat'}
+                {profile?.full_name ?? profile?.username ?? 'Chat'}
               </Text>
-              {otherProfile?.is_verified && (
-                <VerifiedBadge type={otherProfile.verification_type} size="sm" />
+              {profile?.is_verified && (
+                <VerifiedBadge type={profile.verification_type} size="sm" />
               )}
             </View>
             <Text style={styles.chatStatus}>
@@ -1182,9 +1358,9 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
           ListHeaderComponent={
             <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
-              {otherProfile?.avatar_url ? (
+              {profile?.avatar_url ? (
                 <Image
-                  source={{ uri: otherProfile.avatar_url }}
+                  source={{ uri: profile.avatar_url }}
                   style={{ width: 72, height: 72, borderRadius: 36 }}
                 />
               ) : (
@@ -1193,17 +1369,17 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
                 </View>
               )}
               <Text style={[styles.chatIntroName, { color: colors.text }]}>
-                {otherProfile?.full_name ?? otherProfile?.username}
+                {profile?.full_name ?? profile?.username}
               </Text>
-              {otherProfile?.is_verified && (
+              {profile?.is_verified && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                  <VerifiedBadge type={otherProfile.verification_type} size="sm" />
+                  <VerifiedBadge type={profile.verification_type} size="sm" />
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>Verified</Text>
                 </View>
               )}
-              {otherProfile?.university ? (
+              {profile?.university ? (
                 <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 3 }}>
-                  {otherProfile.university}
+                  {profile.university}
                 </Text>
               ) : null}
             </View>
@@ -1212,8 +1388,8 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
             isOtherTyping ? (
               <View style={styles.typingRow}>
                 <View style={{ width: 30, marginRight: 6 }}>
-                  {otherProfile?.avatar_url ? (
-                    <Image source={{ uri: otherProfile.avatar_url }} style={styles.msgAvatar} />
+                  {profile?.avatar_url ? (
+                    <Image source={{ uri: profile.avatar_url }} style={styles.msgAvatar} />
                   ) : (
                     <View style={[styles.msgAvatar, { backgroundColor: colors.bg2 }]} />
                   )}
@@ -1226,18 +1402,29 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       )}
 
       {/* Input bar */}
-      <View style={[styles.inputRowContainer, { paddingBottom: Math.max(insets.bottom, 8), backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+      <View style={[
+        styles.inputRowContainer, 
+        { 
+          paddingBottom: showEmojiPicker ? 8 : Math.max(insets.bottom, 8), 
+          backgroundColor: colors.bg, 
+          borderTopColor: colors.border,
+          // On Android height behavior, we often don't want the extra inset
+          ...(Platform.OS === 'android' && { paddingBottom: showEmojiPicker ? 8 : 12 })
+        }
+      ]}>
         {replyingTo && (
           <ReplyingToHeader msg={replyingTo} onCancel={() => setReplyingTo(null)} />
         )}
-        <View style={[styles.inputRow, { borderTopColor: colors.border }]}>
-          <TouchableOpacity style={styles.inputIcon} onPress={pickAndSendImage} disabled={uploading}>
-            {uploading ? (
-              <ActivityIndicator size="small" color="#6366f1" />
-            ) : (
-              <Ionicons name="image-outline" size={23} color={colors.textMuted} />
-            )}
+        <View style={styles.inputRow}>
+          {/* 1. Emoji Button on the left (replacing Media) */}
+          <TouchableOpacity style={styles.inputIcon} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
+            <Ionicons 
+              name={showEmojiPicker ? "keypad-outline" : "happy-outline"} 
+              size={24} 
+              color={showEmojiPicker ? colors.accent : colors.textMuted} 
+            />
           </TouchableOpacity>
+          
           <View style={[styles.inputWrap, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
             <TextInput
               style={[styles.input, { color: colors.text }]}
@@ -1252,12 +1439,25 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
               maxLength={2000}
               numberOfLines={1}
             />
-            {!text.trim() && (
-              <TouchableOpacity style={{ paddingLeft: 4 }}>
-                <Ionicons name="camera-outline" size={19} color={colors.textMuted} />
+            
+            {/* 2. Attachment (Media) and Camera buttons inside the input at the end */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingRight: 8 }}>
+              {!text.trim() && (
+                <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Camera integration is in progress.')}>
+                  <Ionicons name="camera-outline" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={pickAndSendImage} disabled={uploading}>
+                {uploading ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Ionicons name="attach-outline" size={22} color={colors.textMuted} />
+                )}
               </TouchableOpacity>
-            )}
+            </View>
           </View>
+
+          {/* 3. Send or Voice on the right */}
           {text.trim() || uploading ? (
             <TouchableOpacity
               onPress={send}
@@ -1276,6 +1476,30 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           )}
         </View>
       </View>
+
+      {/* Professional Inline Emoji Keyboard */}
+      {showEmojiPicker && (
+        <View style={{ height: 300, backgroundColor: colors.bg }}>
+          <EmojiKeyboard
+            onEmojiSelected={(emoji: EmojiType) => {
+              setText(prev => prev + emoji.emoji);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            theme={{
+              backdrop: '#00000000',
+              container: colors.bg,
+              header: colors.text,
+              knob: colors.accent,
+              category: {
+                icon: colors.accent,
+                iconActive: colors.accent,
+                container: colors.bg2,
+                containerActive: colors.accent + '20',
+              },
+            }}
+          />
+        </View>
+      )}
 
       {/* Reaction picker overlay */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -1864,8 +2088,6 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.1)',
     backgroundColor: 'transparent',
   },
   inputIcon: { padding: 4 },
@@ -2144,5 +2366,37 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  voiceRecorderContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  recordingWaveContainer: {
+    position: 'absolute',
+    left: -180,
+    right: 40,
+    height: 44,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    zIndex: -1,
+  },
+  waveRows: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 40,
+  },
+  emojiBoard: {
+    height: 250,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  emojiItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
   },
 });

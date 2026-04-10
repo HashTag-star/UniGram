@@ -11,7 +11,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 // expo-secure-store has a ~2KB per-item limit on iOS, so we chunk large values.
 // Falls back to AsyncStorage if SecureStore is unavailable (e.g. web, some emulators).
-const CHUNK_SIZE = 1800;
+const CHUNK_SIZE = 1500;
 
 const SecureStoreAdapter = {
   async getItem(key: string): Promise<string | null> {

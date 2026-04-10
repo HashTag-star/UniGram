@@ -87,13 +87,13 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
 
       // Filter out already-following users from suggestions
       setSuggested(sugg.filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
-    });
 
-    getTrendingHashtags(8).then(tags => {
-      if (tags.length > 0) {
-        setTrendingTags(tags.map((t: any) => ({ tag: t.tag, posts: Number(t.post_count) })));
-      }
-    }).catch(() => {});
+      getTrendingHashtags(8, uid).then(tags => {
+        if (tags.length > 0) {
+          setTrendingTags(tags.map((t: any) => ({ tag: t.tag, posts: Number(t.post_count) })));
+        }
+      }).catch(() => {});
+    });
   }, []);
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -599,7 +599,7 @@ const PostDetailModal: React.FC<{
             currentUserId={currentUserId}
             isLiked={isLiked}
             isSaved={isSaved}
-            isActive={isVisible}
+            isActive={!!isVisible}
             isMuted={isMuted}
             setIsMuted={setIsMuted}
           />

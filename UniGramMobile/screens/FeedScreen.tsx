@@ -5,6 +5,7 @@ import {
   StatusBar, RefreshControl, Animated, Alert, Share,
   TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
   TextInput, InteractionManager, AppState,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,7 +23,8 @@ import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getS
 import { getPersonalizedFeed, recordImpression, recordShare } from '../services/algorithm';
 import { getReels } from '../services/reels';
 import { getSuggestedUsers } from '../services/onboarding';
-import { followUser, unfollowUser } from '../services/profiles';
+import { followUser, unfollowUser, blockUser } from '../services/profiles';
+import { createReport } from '../services/reports';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -37,6 +39,45 @@ function timeAgo(ts: string) {
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 86400)}d`;
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface PostProfile {
+  id: string;
+  username: string;
+  avatar_url?: string | null;
+  is_verified?: boolean;
+  verification_type?: string | null;
+  major?: string | null;
+}
+
+interface Post {
+  id: string;
+  user_id: string;
+  type: string;
+  caption?: string | null;
+  media_url?: string | null;
+  media_urls?: string[] | null;
+  location?: string | null;
+  song?: string | null;
+  likes_count?: number;
+  comments_count?: number;
+  created_at: string;
+  profiles?: PostProfile | null;
+  tagged_users?: string[];
+}
+
+interface FeedPostProps {
+  post: Post;
+  currentUserId: string;
+  isActive: boolean;
+  isLiked?: boolean;
+  isSaved?: boolean;
+  isMuted?: boolean;
+  setIsMuted?: (m: boolean) => void;
+  onCommentCountChange?: (postId: string, delta: number) => void;
+  onDeleted?: (id: string) => void;
 }
 
 function fmtCount(n: number) {
@@ -69,7 +110,11 @@ const StoryBar: React.FC<{
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}
-      style={styles.storyScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 12 }}>
+      style={styles.storyScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 12 }}
+      onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
+      onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+      onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+    >
       
       <TouchableOpacity 
         style={styles.storyItem} 
@@ -292,21 +337,34 @@ const StoryViewer: React.FC<{
   const toggleLike = async (emoji?: string) => {
     if (!story || !currentUserId) return;
     const reaction = emoji || '❤️';
+    const isLiking = !emoji && stats.isLiked;
+
+    // Optimistic Update
+    if (!emoji) {
+      setStats(ps => ({ ...ps, isLiked: !ps.isLiked, likes: Math.max(0, ps.isLiked ? ps.likes - 1 : ps.likes + 1) }));
+    } else {
+      Alert.alert('Sent!', `${emoji} sent to ${group.profile.username}`);
+      setPaused(false);
+      setIsTyping(false);
+    }
+
     try {
-      if (!emoji && stats.isLiked) {
+      if (isLiking) {
         await unlikeStory(story.id, currentUserId);
-        setStats(ps => ({ ...ps, isLiked: false, likes: Math.max(0, ps.likes - 1) }));
       } else {
         await likeStory(story.id, currentUserId, reaction);
-        setStats(ps => ({ ...ps, isLiked: true, likes: emoji ? ps.likes : (ps.isLiked ? ps.likes : ps.likes + 1) }));
-        if (emoji) {
-          Alert.alert('Sent!', `${emoji} sent to ${group.profile.username}`);
-          setPaused(false);
-          setIsTyping(false);
-        }
       }
-    } catch (e) {
-      console.error('Like toggle error', e);
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
+      // Revert if not schema error
+      if (!emoji) {
+        setStats(ps => ({ ...ps, isLiked: !ps.isLiked, likes: ps.isLiked ? ps.likes + 1 : Math.max(0, ps.likes - 1) }));
+      }
     }
   };
 
@@ -528,8 +586,46 @@ const StoryViewer: React.FC<{
   );
 };
 
+// ─── Reel Preview ─────────────────────────────────────────────────────────────
+const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => {
+  const player = useVideoPlayer(reel.video_url, p => {
+    p.loop = true;
+    p.muted = true;
+    if (isActive) p.play();
+  });
+
+  useEffect(() => {
+    if (!player) return;
+    if (isActive) player.play();
+    else player.pause();
+  }, [player, isActive]);
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      {reel.thumbnail_url ? (
+        <CachedImage 
+          uri={reel.thumbnail_url} 
+          style={StyleSheet.absoluteFill} 
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+           <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.15)" />
+        </View>
+      )}
+      {isActive && player && (
+        <VideoView
+          player={player}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          nativeControls={false}
+        />
+      )}
+    </View>
+  );
+});
+
 // ─── Video Post ───────────────────────────────────────────────────────────────
-const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }> = ({ uri, isMuted, isActive }) => {
+const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }> = React.memo(({ uri, isMuted, isActive }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = isMuted ?? false;
@@ -549,16 +645,23 @@ const VideoPost: React.FC<{ uri: string; isMuted?: boolean; isActive?: boolean }
   }, [player, isActive]);
 
   return (
-    <View style={{ position: 'relative' }}>
-      <VideoView
-        player={player}
-        style={[styles.postMedia, { width }]}
-        contentFit="cover"
-        nativeControls={false}
-      />
+    <View style={{ position: 'relative', width, height: 360, backgroundColor: '#000' }}>
+      {!isActive && (
+        <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+           <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
+        </View>
+      )}
+      {isActive && player && (
+        <VideoView
+          player={player}
+          style={[styles.postMedia, { width }]}
+          contentFit="cover"
+          nativeControls={false}
+        />
+      )}
     </View>
   );
-};
+});
 
 // ─── Post Meta Cycler ─────────────────────────────────────────────────────────
 const PostMetaCycler: React.FC<{ location?: string; song?: string }> = ({ location, song }) => {
@@ -601,7 +704,7 @@ const MediaCarousel: React.FC<{
   onSingleTap: () => void;
   isMuted?: boolean;
   isActive?: boolean;
-}> = ({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive }) => {
+}> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const lastTap = useRef(0);
 
@@ -611,7 +714,7 @@ const MediaCarousel: React.FC<{
       onDoubleTap();
     } else {
       setTimeout(() => {
-        if (Date.now() - lastTap.current >= 300) onSingleTap();
+        if (now - lastTap.current >= 300) onSingleTap();
       }, 300);
     }
     lastTap.current = now;
@@ -629,6 +732,12 @@ const MediaCarousel: React.FC<{
         snapToAlignment="center"
         scrollEventThrottle={16}
         nestedScrollEnabled={true}
+        windowSize={3}
+        initialNumToRender={1}
+        removeClippedSubviews={true}
+        onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
+        onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+        onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
         onScroll={e => {
           const x = e.nativeEvent.contentOffset.x;
           setCurrentIdx(Math.round(x / width));
@@ -660,7 +769,7 @@ const MediaCarousel: React.FC<{
       )}
     </View>
   );
-};
+});
 
 // ─── Full Video Modal (Reel-style) ───────────────────────────────────────────
 const FullVideoModal: React.FC<{
@@ -691,33 +800,49 @@ const FullVideoModal: React.FC<{
 };
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<{
-  post: any;
-  currentUserId: string;
-  isLiked?: boolean;
-  isSaved?: boolean;
-  isActive?: boolean;
-  isMuted: boolean;
-  setIsMuted: (m: boolean) => void;
-  onCommentCountChange?: (postId: string, delta: number) => void;
-  onDeleted?: (postId: string) => void;
-}> = React.memo(({ post, currentUserId, isLiked: initLiked, isSaved: initSaved, isActive, isMuted, setIsMuted, onCommentCountChange, onDeleted }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, onDeleted }) => {
   const { colors } = useTheme();
-  const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(post.id, 'POST', initLiked ?? false, post.likes_count ?? 0);
-  const [saved, setSaved] = useState(initSaved);
-  const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
-  const [showComments, setShowComments] = useState(false);
+  const { medium, success, selection } = useHaptics();
+  
   const [showOptions, setShowOptions] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  const [songLoading, setSongLoading] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [likes, setLikes] = useState(post.likes_count ?? 0);
+  const [saved, setSaved] = useState(false);
+  const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
+  const [isMuted, setIsMuted] = useState(true);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
+  const [songLoading, setSongLoading] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
   const songPlayer = useAudioPlayer(songPreviewUrl ?? '');
+
+  // Animations
+  const heartScale = useRef(new Animated.Value(1)).current;
+  const heartOverlayScale = useRef(new Animated.Value(0.5)).current;
+  const heartOverlayOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Check initial social state from service cache
+    const checkState = async () => {
+      try {
+        const likedArr = await getLikedPostIds(currentUserId);
+        const savedArr = await getSavedPostIds(currentUserId);
+        const likedIds = new Set(likedArr);
+        const savedIds = new Set(savedArr);
+        if (likedIds.has(post.id)) setLiked(true);
+        if (savedIds.has(post.id)) setSaved(true);
+      } catch (e) {
+        // Silently fails for cache
+      }
+    };
+    checkState();
+  }, [post.id]);
 
   useEffect(() => {
     if (songPlayer) {
       songPlayer.muted = isMuted;
-      songPlayer.loop = true; // redundancy to ensure it stays looped
+      songPlayer.loop = true;
     }
   }, [songPlayer, isMuted]);
 
@@ -728,6 +853,10 @@ export const FeedPost: React.FC<{
       songPlayer.pause();
     }
   }, [isActive]);
+
+  useEffect(() => {
+    if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
+  }, [post.id, currentUserId]);
 
   const toggleSongPreview = async () => {
     if (songPlayer.playing) {
@@ -740,7 +869,7 @@ export const FeedPost: React.FC<{
       setSongLoading(true);
       try {
         const res = await fetch(
-          `https://itunes.apple.com/search?term=${encodeURIComponent(post.song)}&media=music&entity=song&limit=1`
+          `https://itunes.apple.com/search?term=${encodeURIComponent(post.song!)}&media=music&entity=song&limit=1`
         );
         const json = await res.json();
         const url = json.results?.[0]?.previewUrl ?? null;
@@ -754,17 +883,6 @@ export const FeedPost: React.FC<{
     }
     songPlayer.play();
   };
-
-  const heartOverlayOpacity = useRef(new Animated.Value(0)).current;
-  const heartOverlayScale = useRef(new Animated.Value(0.5)).current;
-  const heartScale = useRef(new Animated.Value(1)).current;
-
-  const lastTap = useRef(0);
-  const { medium, success, selection } = useHaptics();
-
-  useEffect(() => {
-    if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
-  }, [post.id, currentUserId]);
 
   const bounceHeart = () => {
     Animated.sequence([
@@ -797,10 +915,15 @@ export const FeedPost: React.FC<{
     try {
       if (next) await likePost(post.id, currentUserId);
       else await unlikePost(post.id, currentUserId);
-      // rel-strength signal handled automatically by trg_algo_post_like trigger
-    } catch {
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
       setLiked(!next);
-      setLikes(likes);
+      setLikes(newCount + (next ? -1 : 1));
       SocialSync.emit('POST_LIKE_CHANGE', { targetId: post.id, isActive: !next, newCount: likes });
     }
   };
@@ -812,25 +935,63 @@ export const FeedPost: React.FC<{
     try {
       if (next) await savePost(post.id, currentUserId);
       else await unsavePost(post.id, currentUserId);
-      // rel-strength signal handled automatically by trg_algo_post_save trigger
-    } catch { setSaved(!next); }
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+      setSaved(!next);
+    }
   };
 
   const handleCommentChange = (delta: number) => {
     setCommentCount((n: number) => Math.max(0, n + delta));
-    onCommentCountChange?.(post.id, delta);
   };
 
   const handleDeletePost = () => {
     Alert.alert('Delete post?', 'This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => {
-        // Optimistic: remove from UI immediately
         onDeleted?.(post.id);
         deletePost(post.id, currentUserId).catch(() => {
           Alert.alert('Error', 'Could not delete post. Please refresh.');
         });
       }},
+    ]);
+  };
+
+  const handleReport = () => {
+    Alert.alert('Report Post', 'Why are you reporting this post?', [
+      { text: 'Inappropriate Content', onPress: () => submitReport('Inappropriate Content') },
+      { text: 'Spam', onPress: () => submitReport('Spam') },
+      { text: 'Harassment', onPress: () => submitReport('Harassment') },
+      { text: 'Other', onPress: () => submitReport('Other') },
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
+
+  const submitReport = async (reason: string) => {
+    try {
+      await createReport(post.id, 'post', reason);
+      Alert.alert('Report Received', 'Thank you for helping keep UniGram safe.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const handleBlock = () => {
+    Alert.alert('Block User', `Are you sure you want to block @${post.profiles?.username}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Block', style: 'destructive', onPress: async () => {
+        try {
+          await blockUser(post.user_id);
+          Alert.alert('User Blocked', 'You will no longer see content from this user.');
+          onDeleted?.(post.id);
+        } catch (e: any) {
+          Alert.alert('Error', e.message);
+        }
+      }}
     ]);
   };
 
@@ -854,16 +1015,13 @@ export const FeedPost: React.FC<{
           <View style={{ marginLeft: 10, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
-              {profile?.is_verified && <VerifiedBadge type={profile.verification_type} />}
+              {profile?.is_verified && <VerifiedBadge type={profile.verification_type as any} />}
             </View>
-            <PostMetaCycler location={post.location} song={post.song} />
+            <PostMetaCycler location={post.location ?? undefined} song={post.song ?? undefined} />
             <Text style={[styles.postMeta, { color: colors.textSub }]}>{profile?.major ? `${profile.major} · ` : ''}{timeAgo(post.created_at)}</Text>
           </View>
         </View>
-        <TouchableOpacity
-          style={{ padding: 4 }}
-          onPress={() => setShowOptions(true)}
-        >
+        <TouchableOpacity style={{ padding: 4 }} onPress={() => setShowOptions(true)}>
           <Ionicons name="ellipsis-horizontal" size={20} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
@@ -876,9 +1034,11 @@ export const FeedPost: React.FC<{
         isSaved={saved}
         onSave={toggleSave}
         onDelete={handleDeletePost}
+        onReport={handleReport}
+        onBlock={handleBlock}
         onShare={() => {
           setShowOptions(false);
-          Share.share({ message: `Check out this post on UniGram by @${post.profiles?.username ?? 'user'}:\n\n${post.caption ?? ''}` });
+          Share.share({ message: `Check out this post on UniGram by @${profile?.username ?? 'user'}:\n\n${post.caption ?? ''}` });
         }}
         onCopyLink={() => {
           setShowOptions(false);
@@ -897,7 +1057,7 @@ export const FeedPost: React.FC<{
             }}
             onSingleTap={() => {
               if (post.type === 'video') {
-                setFullVideoUri(post.media_url);
+                setFullVideoUri(post.media_url!);
               } else {
                 setIsMuted(!isMuted);
               }
@@ -905,17 +1065,11 @@ export const FeedPost: React.FC<{
             isMuted={isMuted}
             isActive={isActive}
           />
-          
           {(post.type === 'video' || post.song) && (
-            <TouchableOpacity 
-              style={styles.muteOverlayBtn} 
-              onPress={() => setIsMuted(!isMuted)}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.muteOverlayBtn} onPress={() => setIsMuted(!isMuted)} activeOpacity={0.8}>
               <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={16} color="#fff" />
             </TouchableOpacity>
           )}
-
           <Animated.View
             pointerEvents="none"
             style={[styles.heartOverlay, { opacity: heartOverlayOpacity, transform: [{ scale: heartOverlayScale }] }]}
@@ -940,19 +1094,10 @@ export const FeedPost: React.FC<{
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowComments(true)}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => {
+          <TouchableOpacity style={styles.actionBtn} onPress={async () => {
             setShowShare(true);
-            recordShare(post.id, post.user_id, currentUserId).catch(() => {});
+            try { await recordShare(post.id, post.user_id, currentUserId); } catch {}
           }}>
-            <Ionicons name="repeat-outline" size={26} color={colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => {
-              setShowShare(true);
-              recordShare(post.id, post.user_id, currentUserId).catch(() => {});
-            }}
-          >
             <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
           </TouchableOpacity>
         </View>
@@ -963,14 +1108,10 @@ export const FeedPost: React.FC<{
 
       <View style={styles.postInfo}>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
-          {likes > 0 && (
-            <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
-          )}
+          {likes > 0 && <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>}
           {commentCount > 0 && (
             <TouchableOpacity onPress={() => setShowComments(true)}>
-              <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>
-                {fmtCount(commentCount)} comments
-              </Text>
+              <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>{fmtCount(commentCount)} comments</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -980,9 +1121,6 @@ export const FeedPost: React.FC<{
             {post.caption}
           </Text>
         ) : null}
-        {post.tagged_users?.length > 0 && (
-          <Text style={styles.taggedText}>with {post.tagged_users.map((u: string) => `@${u}`).join(', ')}</Text>
-        )}
         <Text style={[styles.timeText, { color: colors.textMuted }]}>{timeAgo(post.created_at)}</Text>
       </View>
 
@@ -991,6 +1129,7 @@ export const FeedPost: React.FC<{
         targetId={post.id}
         targetType="post"
         currentUserId={currentUserId}
+        authorId={post.user_id}
         onClose={() => setShowComments(false)}
         onCountChange={handleCommentChange}
       />
@@ -998,16 +1137,12 @@ export const FeedPost: React.FC<{
       <ShareSheet
         visible={showShare}
         onClose={() => setShowShare(false)}
-        content={{
-          type: 'post',
-          id: post.id,
-          thumbnail: post.media_url,
-          username: profile?.username,
-        }}
+        content={{ type: 'post', id: post.id, thumbnail: post.media_url!, username: profile?.username }}
       />
     </View>
   );
 });
+
 
 // ─── Reel Strip Row ───────────────────────────────────────────────────────────
 
@@ -1019,15 +1154,17 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; colors: any 
         <Text style={feedInjStyles.seeAll}>See all</Text>
       </TouchableOpacity>
     </View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
-      {reels.map(reel => (
+    <ScrollView 
+      horizontal 
+      showsHorizontalScrollIndicator={false} 
+      contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+      onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
+      onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+      onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+    >
+      {reels.map((reel, idx) => (
         <TouchableOpacity key={reel.id} style={feedInjStyles.reelThumb} onPress={onSeeAll} activeOpacity={0.85}>
-          {reel.thumbnail_url
-            ? <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
-            : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name="film-outline" size={28} color="#444" />
-              </View>
-          }
+          <ReelPreview reel={reel} isActive={true} />
           <View style={feedInjStyles.reelPlayOverlay}>
             <Ionicons name="play" size={20} color="#fff" />
           </View>
@@ -1044,7 +1181,7 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; colors: any 
 
 // ─── Suggestion Row ───────────────────────────────────────────────────────────
 
-const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u: any) => void; colors: any }> = ({ user, currentUserId, onPress, colors }) => {
+const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u: any) => void; colors: any }> = React.memo(({ user, currentUserId, onPress, colors }) => {
   const [following, setFollowing] = useSocialFollow(user.id, false);
 
   const handleFollow = async () => {
@@ -1054,7 +1191,13 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
     try {
       if (next) await followUser(currentUserId, user.id);
       else await unfollowUser(currentUserId, user.id);
-    } catch {
+    } catch (e: any) {
+      const isSchemaError = e.message?.includes('relation') || 
+                          e.message?.includes('not found') || 
+                          e.message?.includes('schema cache') ||
+                          e.code === 'PGRST205';
+      if (isSchemaError) return;
+
       setFollowing(!next);
       SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
     }
@@ -1099,7 +1242,7 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
       </TouchableOpacity>
     </TouchableOpacity>
   );
-};
+});
 
 const SuggestionRow: React.FC<{ users: any[]; currentUserId: string; onUserPress?: (u: any) => void; colors: any }> = React.memo(({ users, currentUserId, onUserPress, colors }) => (
   <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
@@ -1109,7 +1252,14 @@ const SuggestionRow: React.FC<{ users: any[]; currentUserId: string; onUserPress
         <Text style={feedInjStyles.seeAll}>See all</Text>
       </TouchableOpacity>
     </View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10, paddingBottom: 12 }}>
+    <ScrollView 
+      horizontal 
+      showsHorizontalScrollIndicator={false} 
+      contentContainerStyle={{ paddingHorizontal: 12, gap: 10, paddingBottom: 12 }}
+      onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
+      onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+      onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+    >
       {users.map(user => (
         <SuggestionCard key={user.id} user={user} currentUserId={currentUserId} onPress={onUserPress} colors={colors} />
       ))}
@@ -1310,8 +1460,6 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
     return () => sub.remove();
   }, [load]);
 
-  useEffect(() => { if (refreshKey > 0) { pageRef.current = 0; load(true); } }, [refreshKey]);
-
   const handleCommentCountChange = useCallback((postId: string, delta: number) => {
     setPosts(prev => prev.map(p => p.id === postId
       ? { ...p, comments_count: Math.max(0, (p.comments_count ?? 0) + delta) }
@@ -1323,6 +1471,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
     setPosts(prev => prev.filter(p => p.id !== postId));
     cachedFeedPosts = cachedFeedPosts.filter((p: any) => p.id !== postId);
   }, []);
+
+  useEffect(() => {
+    const postSub = SocialSync.on('POST_DELETE', ({ targetId }) => {
+      handlePostDeleted(targetId);
+    });
+    const reelSub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
+      setPreviewReels(prev => prev.filter(r => r.id !== targetId));
+    });
+    return () => {
+      postSub.remove();
+      reelSub.remove();
+    };
+  }, [handlePostDeleted]);
 
   const onRefresh = () => { setRefreshing(true); load(true); };
 
@@ -1390,10 +1551,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({ refreshKey = 0, isVisibl
         keyExtractor={p => p.id}
         onScroll={handleScroll}
         scrollEventThrottle={16}
-        windowSize={4}
-        maxToRenderPerBatch={3}
+        windowSize={3}
+        maxToRenderPerBatch={2}
         initialNumToRender={2}
-        removeClippedSubviews={true}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListHeaderComponent={
           <>
             <View style={{ height: HEADER_HEIGHT }} />
