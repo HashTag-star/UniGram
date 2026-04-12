@@ -235,3 +235,14 @@ export async function getBlockedUserIds() {
   if (error) return [];
   return data.map(b => b.blocked_id);
 }
+/**
+ * Finds platform users that match a list of emails from phone contacts.
+ */
+export async function matchContactsByEmail(emails: string[]) {
+  const { data, error } = await supabase.rpc('match_contacts', { p_emails: emails });
+  if (error) {
+    console.error('Error matching contacts', error);
+    return [];
+  }
+  return data;
+}

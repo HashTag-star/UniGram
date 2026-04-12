@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Image, TouchableOpacity,
   StyleSheet, Dimensions, Modal, FlatList,
@@ -32,9 +32,8 @@ import { usePopup } from '../context/PopupContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
-import { getPersonalizedFeed, recordImpression, recordShare } from '../services/algorithm';
+import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions } from '../services/algorithm';
 import { getReels } from '../services/reels';
-import { getSuggestedUsers } from '../services/onboarding';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
 import { CampusPulse } from '../components/CampusPulse';
@@ -87,10 +86,10 @@ interface Post {
 interface FeedPostProps {
   post: Post;
   currentUserId: string;
-  isActive: boolean;
   isLiked?: boolean;
   isSaved?: boolean;
   isMuted?: boolean;
+  isActive?: boolean;
   setIsMuted?: (m: boolean) => void;
   onCommentCountChange?: (postId: string, delta: number) => void;
   onOpenComments?: (id: string, authorId: string) => void;
@@ -863,10 +862,25 @@ const FullVideoModal: React.FC<{
 };
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isLiked = false, isSaved = false, isMuted, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { medium, success, selection } = useHaptics();
+
+  // Self-managed active state — driven by 'feedActivePost' events so the parent
+  // FlatList's renderItem callback doesn't need activePostId in its deps.
+  // Self-managed active state — driven by 'feedActivePost' events 
+  // or explicitly passed via prop (e.g. from Detail modals)
+  const [isActiveInternal, setIsActiveInternal] = useState(false);
+  const isActive = isActiveProp ?? isActiveInternal;
+
+  useEffect(() => {
+    if (isActiveProp !== undefined) return; // Prop takes priority, skip listener
+    const sub = DeviceEventEmitter.addListener('feedActivePost', (id: string | null) => {
+      setIsActiveInternal(id === post.id);
+    });
+    return () => sub.remove();
+  }, [post.id, isActiveProp]);
 
   const [showOptions, setShowOptions] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -1468,8 +1482,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const [savedIds, setSavedIds] = useState<Set<string>>(cachedSavedIds ?? new Set());
   const [viewedIds, setViewedIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState('');
+  const currentUserIdRef = useRef('');
+  useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
   const [currentProfile, setCurrentProfile] = useState<any>(cachedCurrentProfile);
-  const [activePostId, setActivePostId] = useState<string | null>(null);
   const [showCommentsId, setShowCommentsId] = useState<string | null>(null);
   const [showCommentsType, setShowCommentsType] = useState<'post' | 'reel'>('post');
   const [showCommentsAuthorId, setShowCommentsAuthorId] = useState<string | null>(null);
@@ -1490,14 +1505,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
       const topId = viewableItems[0].key;
-      setActivePostId(topId);
-      
-      // Record impressions for all visible items if not already done this session
+      // Emit event instead of setting state — this avoids invalidating the
+      // renderItem useCallback on every scroll and cascading cell reconciliation.
+      DeviceEventEmitter.emit('feedActivePost', topId);
+
+      // Record impressions for all visible items if not already done this session.
+      // Use the ref so this closure always sees the current userId (not the stale
+      // empty string captured at initialization).
       viewableItems.forEach((info: any) => {
         const id = info.key;
         if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
           recordedImpressions.current.add(id);
-          if (currentUserId) recordImpression(id, currentUserId);
+          const uid = currentUserIdRef.current;
+          if (uid) recordImpression(id, uid);
         }
       });
     }
@@ -1549,7 +1569,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           .select('id, username, full_name, avatar_url, is_verified, verification_type')
           .eq('id', user.id).single().then(r => r.data),
         getReels(6, 0).catch(() => []),
-        getSuggestedUsers(user.id, 8).catch(() => []),
+        getFollowSuggestions(user.id, 8).catch(() => []),
       ]);
 
       setCurrentProfile(prof);
@@ -1661,6 +1681,11 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // Pause all active posts when the tab is backgrounded
+  useEffect(() => {
+    if (!isVisible) DeviceEventEmitter.emit('feedActivePost', null);
+  }, [isVisible]);
 
   // Background refresh when tab becomes visible and data is stale
   useEffect(() => {
@@ -1847,7 +1872,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         updateCellsBatchingPeriod={30}
         initialNumToRender={4}
         removeClippedSubviews={Platform.OS === 'android'}
-        ListHeaderComponent={
+        ListHeaderComponent={useMemo(() => (
           <>
             <View style={{ height: HEADER_HEIGHT }} />
             {loading ? <StorySkeleton /> : (
@@ -1864,16 +1889,15 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               />
             )}
             {!loading && currentUserId && (
-              <CampusPulse 
-                userId={currentUserId} 
-                onPostPress={(post) => {
-                  // Direct navigation to post
-                }} 
+              <CampusPulse
+                userId={currentUserId}
+                onPostPress={() => {}}
               />
             )}
             {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
           </>
-        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        ), [loading, storyGroups, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT])}
         ListEmptyComponent={loading ? null : (
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
             <Ionicons name="image-outline" size={48} color={colors.textMuted} />
@@ -1900,7 +1924,6 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               currentUserId={currentUserId}
               isLiked={likedIds.has(item.id)}
               isSaved={savedIds.has(item.id)}
-              isActive={isVisible && activePostId === item.id}
               isMuted={isMuted}
               setIsMuted={setIsMuted}
               onCommentCountChange={handleCommentCountChange}
@@ -1909,7 +1932,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               onUserPress={onUserPress}
             />
           );
-        }, [likedIds, savedIds, isVisible, activePostId, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
+        }, [likedIds, savedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}

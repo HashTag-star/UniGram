@@ -176,10 +176,11 @@ const FALLBACK_TRENDS = [
 
 interface Props {
   onUserPress?: (profile: any) => void;
+  onDiscoverPress?: () => void;
   isVisible?: boolean;
 }
 
-export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
+export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, isVisible }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { selection } = useHaptics();
@@ -431,6 +432,13 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
       {/* Header */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Text style={[styles.topBarTitle, { color: colors.text }]}>Explore</Text>
+        <TouchableOpacity 
+          onPress={onDiscoverPress} 
+          style={styles.discoverBtn}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="person-add-outline" size={24} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {/* Search bar */}
@@ -669,7 +677,6 @@ const PostDetailModal: React.FC<{
             currentUserId={currentUserId}
             isLiked={isLiked}
             isSaved={isSaved}
-            isActive={!!isVisible}
             isMuted={isMuted}
             setIsMuted={setIsMuted}
           />
@@ -683,6 +690,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 4 },
   topBarTitle: { fontSize: 22, fontWeight: '800', flex: 1 },
+  discoverBtn: { padding: 4 },
   hashtagPostCount: { fontSize: 12 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

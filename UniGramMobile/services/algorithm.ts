@@ -286,19 +286,28 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   );
   followingSet.add(userId);
 
-  // Friends-of-friends
+  // Friends-of-friends: who the people I follow also follow, AND who follows them.
+  // Both directions surface relevant connections from my existing graph.
   const myFollowIds = [...followingSet].filter(id => id !== userId).slice(0, 30);
   const fofMap = new Map<string, number>();
 
   if (myFollowIds.length > 0) {
-    const { data: fofRows } = await supabase
-      .from('follows')
-      .select('following_id')
-      .in('follower_id', myFollowIds);
+    const [fofFollowing, fofFollowers] = await Promise.all([
+      // Who the people I follow also follow
+      supabase.from('follows').select('following_id').in('follower_id', myFollowIds),
+      // Who follows the people I follow
+      supabase.from('follows').select('follower_id').in('following_id', myFollowIds),
+    ]);
 
-    (fofRows ?? []).forEach((r: any) => {
+    (fofFollowing.data ?? []).forEach((r: any) => {
       if (!followingSet.has(r.following_id)) {
         fofMap.set(r.following_id, (fofMap.get(r.following_id) ?? 0) + 1);
+      }
+    });
+    (fofFollowers.data ?? []).forEach((r: any) => {
+      if (!followingSet.has(r.follower_id)) {
+        // Weight slightly lower than mutual follows to keep the ranking sensible
+        fofMap.set(r.follower_id, (fofMap.get(r.follower_id) ?? 0) + 0.5);
       }
     });
   }

@@ -38,3 +38,17 @@ Now for the verification, I want to add one more type which is the alumini for p
 Now how do we check and validate the documents that are attached for a verification request. How do we confirm they are genuine how do we make sure it's secure and legal and what are the future plans to include AI in this and regulate the entire app. What do you also think of creating a web admin dashboard where we can regulate the app from with packed features and tools including AI agents that we can use on the web dashabord to help regulate the app
 
 ///
+
+
+CREATE OR REPLACE FUNCTION match_contacts(p_emails text[])
+  RETURNS TABLE(...profile columns...) SECURITY DEFINER AS $$
+    SELECT p.id, p.username, p.full_name, p.avatar_url,
+           p.is_verified, p.verification_type, p.university,
+           p.major, p.followers_count
+    FROM auth.users u
+    JOIN profiles p ON p.id = u.id
+    WHERE lower(u.email) = ANY(p_emails)
+      AND p.id != auth.uid()
+      AND p.is_banned = false
+      AND p.username IS NOT NULL;
+  $$ LANGUAGE sql;

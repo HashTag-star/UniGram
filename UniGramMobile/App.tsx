@@ -19,6 +19,7 @@ import { MarketScreen } from './screens/MarketScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { NotificationsScreen, NotificationsScreenProps } from './screens/NotificationsScreen';
 import { VerificationScreen } from './screens/VerificationScreen';
+import { DiscoverPeopleScreen } from './screens/DiscoverPeopleScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
@@ -352,6 +353,7 @@ function AppShell() {
   const [activeTab, setActiveTab] = useState<Tab>('feed');
   const [prevTab, setPrevTab] = useState<Tab>('feed');
   const [showVerification, setShowVerification] = useState(false);
+  const [showDiscoverPeople, setShowDiscoverPeople] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true);
@@ -579,6 +581,7 @@ function AppShell() {
     
     // Close other overlays
     setShowVerification(false);
+    setShowDiscoverPeople(false);
     setShowCreate(false);
 
     switch (tabMap[type] || type) {
@@ -745,6 +748,7 @@ function AppShell() {
                 <ExploreScreen
                   isVisible={activeTab === 'explore' && isMainVisible}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+                  onDiscoverPress={() => setShowDiscoverPeople(true)}
                 />
               </View>
             )}
@@ -906,6 +910,19 @@ function AppShell() {
       {activeLegal === 'guidelines' && (
         <View style={styles.notifOverlay}>
           <CommunityGuidelinesScreen onClose={() => setActiveLegal(null)} />
+        </View>
+      )}
+
+      {showDiscoverPeople && (
+        <View style={styles.notifOverlay}>
+          <DiscoverPeopleScreen 
+            onClose={() => setShowDiscoverPeople(false)} 
+            onUserPress={(u: any) => {
+              setViewedUserId(u.id);
+              setActiveTab('profile');
+              setShowDiscoverPeople(false);
+            }}
+          />
         </View>
       )}
     </View>

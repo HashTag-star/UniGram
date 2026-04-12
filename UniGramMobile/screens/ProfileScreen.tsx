@@ -437,12 +437,11 @@ export const ProfileScreen: React.FC<Props> = ({
           {activeTab === 'threads' && (
             <View>
               {posts.filter(p => p.type === 'thread').map(post => (
-                <FeedPost 
-                  key={post.id} 
-                  post={post} 
-                  currentUserId={currentUserId} 
+                <FeedPost
+                  key={post.id}
+                  post={post}
+                  currentUserId={currentUserId}
                   isLiked={likedIds.has(post.id)}
-                  isActive={!!isVisible}
                   isMuted={true}
                   setIsMuted={() => {}}
                 />
@@ -486,11 +485,10 @@ export const ProfileScreen: React.FC<Props> = ({
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
               {focusedPost && (
-                <FeedPost 
-                  post={focusedPost} 
-                  currentUserId={currentUserId} 
+                <FeedPost
+                  post={focusedPost}
+                  currentUserId={currentUserId}
                   isLiked={likedIds.has(focusedPost.id)}
-                  isActive={!!isVisible}
                   isMuted={false}
                   setIsMuted={() => {}}
                 />

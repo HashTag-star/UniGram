@@ -62,6 +62,18 @@ export async function requestImagePickerPermission(): Promise<boolean> {
   return status === 'granted';
 }
 
+export async function requestContactsPermission(): Promise<boolean> {
+  try {
+    const Contacts = await import('expo-contacts');
+    const { status: existing } = await Contacts.getPermissionsAsync();
+    if (existing === 'granted') return true;
+    const { status } = await Contacts.requestPermissionsAsync();
+    return status === 'granted';
+  } catch {
+    return false; // expo-contacts not installed
+  }
+}
+
 export async function checkAndRequestAllPermissions() {
   const camera = await requestCameraPermission();
   const mediaLibrary = await requestMediaLibraryPermission();
