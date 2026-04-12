@@ -1,4 +1,10 @@
+import GH_UNIVERSITIES_DATA from './gh_universities.json';
+
+// Combine the raw names for the legacy local list fallback
+const GH_NAMES = Array.from(new Set(GH_UNIVERSITIES_DATA.map(u => u.name)));
+
 export const UNIVERSITIES: string[] = [
+  ...GH_NAMES,
   // United States
   'Harvard University',
   'Massachusetts Institute of Technology',
@@ -405,7 +411,17 @@ export const UNIVERSITIES: string[] = [
 export async function searchUniversities(query: string): Promise<string[]> {
   if (!query.trim() || query.length < 2) return [];
 
-  // Try API first
+  const q = query.toLowerCase();
+
+  // 1. Check local Ghanaian list first (Instant/Offline)
+  const localGhanaMatches = GH_NAMES.filter(u => u.toLowerCase().includes(q));
+  
+  if (localGhanaMatches.length > 0) {
+    // Return local results immediately
+    return localGhanaMatches.slice(0, 15);
+  }
+
+  // 2. Try global API if no local matches
   try {
     const res = await fetch(
       `https://universities.hipolabs.com/search?name=${encodeURIComponent(query)}`
@@ -414,15 +430,15 @@ export async function searchUniversities(query: string): Promise<string[]> {
     const data = await res.json();
     
     if (Array.isArray(data) && data.length > 0) {
-      // Return unique names (API sometimes returns duplicates with different domains)
-      return Array.from(new Set(data.map((u: any) => u.name))).slice(0, 25);
+      // Return unique names
+      const apiResults = Array.from(new Set(data.map((u: any) => u.name)));
+      return apiResults.slice(0, 25);
     }
   } catch (error) {
-    console.warn('University API failed, falling back to local list:', error);
+    console.warn('University API failed, falling back to full local list:', error);
   }
 
-  // Fallback to local list
-  const q = query.toLowerCase();
+  // 3. Fallback to the full static list (includes global big names)
   return UNIVERSITIES.filter(u => u.toLowerCase().includes(q)).slice(0, 20);
 }
 

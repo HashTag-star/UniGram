@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProfilePostsSkeleton, ProfileHeaderSkeleton } from '../components/Skeleton';
+import { EditProfileModal } from './EditProfileModal';
 import { SettingsScreen } from './SettingsScreen';
 import { VerificationScreen } from './VerificationScreen';
 import { AdminScreen } from './AdminScreen';
@@ -81,14 +82,6 @@ export const ProfileScreen: React.FC<Props> = ({
   const [showEditPost, setShowEditPost] = useState(false);
   const [editPostCaption, setEditPostCaption] = useState('');
   const [saving, setSaving] = useState(false);
-  
-  const [editName, setEditName] = useState('');
-  const [editBio, setEditBio] = useState('');
-  const [editPronouns, setEditPronouns] = useState('');
-  const [editWebsite, setEditWebsite] = useState('');
-  const [editMajor, setEditMajor] = useState('');
-  const [editYear, setEditYear] = useState('');
-
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [activeAccounts, setActiveAccounts] = useState<any[]>([]);
 
@@ -204,37 +197,8 @@ export const ProfileScreen: React.FC<Props> = ({
   };
 
   const openEdit = () => {
-    setEditName(profile?.full_name ?? '');
-    setEditBio(profile?.bio ?? '');
-    setEditPronouns(profile?.pronouns ?? '');
-    setEditWebsite(profile?.website ?? '');
-    setEditMajor(profile?.major ?? '');
-    setEditYear(profile?.year ?? '');
+    medium();
     setShowEdit(true);
-  };
-
-  const saveEdit = async () => {
-    if (!profile) return;
-    setSaving(true);
-    try {
-      await updateProfile(profile.id, {
-        full_name: editName.trim(), bio: editBio.trim(),
-        pronouns: editPronouns.trim(), website: editWebsite.trim(),
-        major: editMajor.trim(), year: editYear.trim(),
-      });
-      await success();
-      await load();
-      setShowEdit(false);
-    } catch (e: any) {
-      showPopup({
-        title: 'Error',
-        message: e.message,
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
-    } finally {
-      setSaving(false);
-    }
   };
 
   const initiateEditPost = () => {
@@ -550,6 +514,16 @@ export const ProfileScreen: React.FC<Props> = ({
         </KeyboardAvoidingView>
       </Modal>
 
+      <EditProfileModal 
+        visible={showEdit} 
+        profile={profile} 
+        onClose={() => setShowEdit(false)} 
+        onSaved={(updated) => { 
+          setProfile(updated); 
+          setShowEdit(false); 
+          success();
+        }} 
+      />
       <SettingsScreen 
         visible={showSettings} 
         profile={profile} 
