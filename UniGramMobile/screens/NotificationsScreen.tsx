@@ -106,7 +106,7 @@ const NotifItem: React.FC<{
           <CachedImage uri={actor.avatar_url} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarPlaceholder]}>
-            <Ionicons name="person" size={18} color="rgba(255,255,255,0.3)" />
+            <Ionicons name="person" size={18} color={colors.textMuted} />
           </View>
         )}
         <View style={[styles.iconBadge, { backgroundColor: icon.bg }]}>
@@ -334,7 +334,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             <View>
               {notifs.length === 0 ? (
                 <View style={styles.empty}>
-                  <Ionicons name="notifications-off-outline" size={48} color="rgba(255,255,255,0.1)" />
+                  <Ionicons name="notifications-off-outline" size={48} color={colors.textMuted} />
                   <Text style={styles.emptyTitle}>No notifications yet</Text>
                   <Text style={styles.emptySubtitle}>
                     When people like, comment, or follow you, you'll see it here.

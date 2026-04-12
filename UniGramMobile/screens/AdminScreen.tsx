@@ -8,6 +8,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, suspendUser as suspendUserAction, deleteReportedContent, getAuthorIdForReport } from '../services/reports';
 import { sendAdminNotification } from '../services/notifications';
+import { usePopup } from '../context/PopupContext';
+import { useTheme } from '../context/ThemeContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ interface AdminVerificationRequest {
   status: string;
   full_name: string;
   email: string;
+  university: string | null;
   reason: string;
   document_urls: string[];
   submitted_at: string;
@@ -137,6 +140,7 @@ const OverviewTab: React.FC<{
   const [recentPosts, setRecentPosts] = useState<AdminPost[]>([]);
   const [recentMarket, setRecentMarket] = useState<AdminMarketItem[]>([]);
   const [pendingVerifs, setPendingVerifs] = useState<AdminVerificationRequest[]>([]);
+  const { showPopup } = usePopup();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -263,6 +267,8 @@ const UsersTab: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [actioning, setActioning] = useState<string | null>(null);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   const load = useCallback(async () => {
     try {
@@ -274,7 +280,12 @@ const UsersTab: React.FC = () => {
       if (error) throw error;
       setUsers((data as AdminUser[]) ?? []);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load users');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to load users',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -293,20 +304,26 @@ const UsersTab: React.FC = () => {
       if (error) throw error;
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_verified: true } : u));
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to verify user',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setActioning(null);
     }
   };
 
   const handleBan = async (userId: string, ban: boolean) => {
-    Alert.alert(
-      ban ? 'Ban User' : 'Unban User',
-      ban ? 'This will prevent the user from accessing the app.' : 'This will restore access for the user.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: ban ? 'Ban' : 'Unban',
+    showPopup({
+      title: ban ? 'Ban User' : 'Unban User',
+      message: ban ? 'This will prevent the user from accessing the app.' : 'This will restore access for the user.',
+      icon: ban ? 'ban-outline' : 'checkmark-circle-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { 
+          text: ban ? 'Ban' : 'Unban', 
           style: ban ? 'destructive' : 'default',
           onPress: async () => {
             setActioning(userId);
@@ -318,22 +335,28 @@ const UsersTab: React.FC = () => {
               if (error) throw error;
               setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_banned: ban } : u));
             } catch (e: any) {
-              Alert.alert('Error', e.message);
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Action failed',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
             } finally {
               setActioning(null);
             }
-          },
-        },
+          }
+        }
       ]
-    );
+    });
   };
 
   const handleSuspend = async (userId: string, suspend: boolean) => {
-    Alert.alert(
-      suspend ? 'Suspend User' : 'Unsuspend User',
-      suspend ? 'This will temporarily restrict the user\'s ability to post or sell.' : 'This will restore full access for the user.',
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showPopup({
+      title: suspend ? 'Suspend User' : 'Unsuspend User',
+      message: suspend ? "This will temporarily restrict the user's ability to post or sell." : "This will restore full access for the user.",
+      icon: suspend ? 'pause-circle-outline' : 'play-circle-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
         {
           text: suspend ? 'Suspend' : 'Unsuspend',
           style: suspend ? 'destructive' : 'default',
@@ -343,24 +366,28 @@ const UsersTab: React.FC = () => {
               await suspendUserAction(userId, suspend);
               setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_suspended: suspend } : u));
 
-              // Notify the user about the action
               const { data: { user: adminUser } } = await supabase.auth.getUser();
-              const adminId = adminUser?.id ?? userId; // fallback — unlikely
+              const adminId = adminUser?.id ?? userId;
               const message = suspend
-                ? 'Your account has been temporarily suspended for violating campus community guidelines. You can still browse, but posting and selling are restricted. If you believe this is a mistake, contact campus support.'
-                : 'Your account suspension has been lifted. You now have full access to post and sell on UniGram. Welcome back!';
+                ? 'Your account has been temporarily suspended for violating campus community guidelines. You can still browse, but posting and selling are restricted.'
+                : 'Your account suspension has been lifted. You now have full access to post and sell on UniGram.';
               const notifType = suspend ? 'account_suspended' : 'account_unsuspended';
 
               await sendAdminNotification(adminId, message, notifType as any, userId);
             } catch (e: any) {
-              Alert.alert('Error', e.message);
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Action failed',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
             } finally {
               setActioning(null);
             }
-          },
-        },
+          }
+        }
       ]
-    );
+    });
   };
 
   const filtered = users.filter(u => {
@@ -498,6 +525,8 @@ const PostsTab: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<PostFilter>('all');
   const [deleting, setDeleting] = useState<string | null>(null);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   const load = useCallback(async () => {
     try {
@@ -513,7 +542,12 @@ const PostsTab: React.FC = () => {
       })) as unknown as AdminPost[];
       setPosts(formatted);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load posts');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to load posts',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -523,25 +557,35 @@ const PostsTab: React.FC = () => {
   useEffect(() => { load(); }, [load]);
 
   const handleDelete = (postId: string) => {
-    Alert.alert('Delete Post', 'Permanently delete this post? This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(postId);
-          try {
-            const { error } = await supabase.from('posts').delete().eq('id', postId);
-            if (error) throw error;
-            setPosts(prev => prev.filter(p => p.id !== postId));
-          } catch (e: any) {
-            Alert.alert('Error', e.message);
-          } finally {
-            setDeleting(null);
-          }
+    showPopup({
+      title: 'Delete Post',
+      message: 'Permanently delete this post? This cannot be undone.',
+      icon: 'trash-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(postId);
+            try {
+              const { error } = await supabase.from('posts').delete().eq('id', postId);
+              if (error) throw error;
+              setPosts(prev => prev.filter(p => p.id !== postId));
+            } catch (e: any) {
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Delete failed',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            } finally {
+              setDeleting(null);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    });
   };
 
   const filtered = filter === 'flagged'
@@ -635,6 +679,8 @@ const MarketTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   const load = useCallback(async () => {
     try {
@@ -650,7 +696,12 @@ const MarketTab: React.FC = () => {
       })) as unknown as AdminMarketItem[];
       setItems(formatted);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load market items');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to load market items',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -660,25 +711,35 @@ const MarketTab: React.FC = () => {
   useEffect(() => { load(); }, [load]);
 
   const handleDelete = (itemId: string) => {
-    Alert.alert('Delete Listing', 'Permanently delete this market listing?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setActioning(itemId);
-          try {
-            const { error } = await supabase.from('market_items').delete().eq('id', itemId);
-            if (error) throw error;
-            setItems(prev => prev.filter(i => i.id !== itemId));
-          } catch (e: any) {
-            Alert.alert('Error', e.message);
-          } finally {
-            setActioning(null);
-          }
+    showPopup({
+      title: 'Delete Listing',
+      message: 'Permanently delete this market listing?',
+      icon: 'trash-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setActioning(itemId);
+            try {
+              const { error } = await supabase.from('market_items').delete().eq('id', itemId);
+              if (error) throw error;
+              setItems(prev => prev.filter(i => i.id !== itemId));
+            } catch (e: any) {
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Delete failed',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            } finally {
+              setActioning(null);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    });
   };
 
   const handleMarkSold = async (itemId: string) => {
@@ -691,7 +752,12 @@ const MarketTab: React.FC = () => {
       if (error) throw error;
       setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_sold: true } : i));
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Action failed',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setActioning(null);
     }
@@ -783,13 +849,20 @@ const ReportsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   const load = useCallback(async () => {
     try {
       const data = await getReports();
       setReports(data.filter(r => r.status === 'pending'));
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load reports');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to load reports',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -804,29 +877,59 @@ const ReportsTab: React.FC = () => {
       if (action === 'delete') {
         await deleteReportedContent(report.target_id, report.target_type);
         await updateReportStatus(report.id, 'resolved');
-        Alert.alert('Success', 'Content deleted and report resolved.');
+        showPopup({
+          title: 'Success',
+          message: 'Content deleted and report resolved.',
+          icon: 'checkmark-circle-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       } else if (action === 'suspend' || action === 'ban') {
         const authorId = await getAuthorIdForReport(report.target_id, report.target_type);
         if (!authorId) throw new Error('Could not identify the user responsible for this content.');
         
         if (action === 'ban') {
           await banUserAction(authorId);
-          Alert.alert('Success', 'User has been banned.');
+          showPopup({
+            title: 'Success',
+            message: 'User has been banned.',
+            icon: 'ban-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
         } else {
           await suspendUserAction(authorId, true);
-          Alert.alert('Success', 'User has been suspended.');
+          showPopup({
+            title: 'Success',
+            message: 'User has been suspended.',
+            icon: 'pause-circle-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
         }
         await updateReportStatus(report.id, 'resolved');
       } else if (action === 'resolve') {
         await updateReportStatus(report.id, 'resolved');
-        Alert.alert('Success', 'Report marked as resolved.');
+        showPopup({
+          title: 'Success',
+          message: 'Report marked as resolved.',
+          icon: 'checkmark-circle-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       } else {
         await updateReportStatus(report.id, 'dismissed');
-        Alert.alert('Success', 'Report dismissed.');
+        showPopup({
+          title: 'Success',
+          message: 'Report dismissed.',
+          icon: 'close-circle-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       }
       setReports(prev => prev.filter(r => r.id !== report.id));
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Action failed',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setActioning(null);
     }
@@ -930,6 +1033,8 @@ const VerificationsTab: React.FC = () => {
   const [selectedRequest, setSelectedRequest] = useState<AdminVerificationRequest | null>(null);
   const [docViewerVisible, setDocViewerVisible] = useState(false);
   const [viewingDocs, setViewingDocs] = useState<string[]>([]);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   // Derived list based on active filter
   const requests = React.useMemo(() => allRequests.filter(r => r.status === filter), [allRequests, filter]);
@@ -960,7 +1065,12 @@ const VerificationsTab: React.FC = () => {
       
       setAllRequests(formatted);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load requests');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to load requests',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1000,9 +1110,19 @@ const VerificationsTab: React.FC = () => {
         request.user_id,
       ).catch(e => console.error('Push notification failed:', e));
 
-      Alert.alert('Approved', `${request.profiles?.username ?? 'User'} is now verified.`);
+      showPopup({
+        title: 'Approved',
+        message: `${request.profiles?.username ?? 'User'} is now verified.`,
+        icon: 'checkmark-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Action failed',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setActioning(null);
     }
@@ -1038,9 +1158,19 @@ const VerificationsTab: React.FC = () => {
         selectedRequest.user_id,
       ).catch(e => console.error('Push notification failed:', e));
 
-      Alert.alert('Rejected', 'Request rejected with reason sent to user.');
+      showPopup({
+        title: 'Rejected',
+        message: 'Request rejected with reason sent to user.',
+        icon: 'close-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Action failed',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setActioning(null);
       setSelectedRequest(null);
@@ -1070,6 +1200,9 @@ const VerificationsTab: React.FC = () => {
       <View style={styles.requestDetails}>
         <Text style={styles.detailLabel}>Full Name: <Text style={styles.detailValue}>{r.full_name}</Text></Text>
         <Text style={styles.detailLabel}>Email: <Text style={styles.detailValue}>{r.email}</Text></Text>
+        {r.university ? (
+          <Text style={styles.detailLabel}>University: <Text style={styles.detailValue}>{r.university}</Text></Text>
+        ) : null}
         <Text style={styles.detailLabel}>Reason:</Text>
         <Text style={styles.reasonText}>{r.reason}</Text>
       </View>
@@ -1279,6 +1412,8 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
   const [targetUsername, setTargetUsername] = useState('');
   const [sending, setSending] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   // Load recent announcements sent by admin
   useEffect(() => {
@@ -1300,7 +1435,12 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
       let targetId: string | undefined;
       if (!broadcast) {
         if (!targetUsername.trim()) {
-          Alert.alert('Error', 'Enter a username to send to a specific user.');
+          showPopup({
+            title: 'Error',
+            message: 'Enter a username to send to a specific user.',
+            icon: 'alert-circle-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
           setSending(false);
           return;
         }
@@ -1310,7 +1450,12 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
           .eq('username', targetUsername.trim().replace('@', ''))
           .maybeSingle();
         if (!profile) {
-          Alert.alert('User not found', `@${targetUsername} does not exist.`);
+          showPopup({
+            title: 'User not found',
+            message: `@${targetUsername} does not exist.`,
+            icon: 'at-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
           setSending(false);
           return;
         }
@@ -1327,9 +1472,19 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
       }, ...prev]);
       setMessage('');
       setTargetUsername('');
-      Alert.alert('Sent!', broadcast ? 'Announcement sent to all users.' : `Notification sent to @${targetUsername}.`);
+      showPopup({
+        title: 'Sent!',
+        message: broadcast ? 'Announcement sent to all users.' : `Notification sent to @${targetUsername}.`,
+        icon: 'send-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to send.');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to send.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSending(false);
     }
@@ -1374,14 +1529,15 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
           <TouchableOpacity
             style={[annoStyles.sendBtn, annoStyles.sendBtnAll, !message.trim() && { opacity: 0.4 }]}
             onPress={() => {
-              Alert.alert(
-                'Broadcast to ALL users?',
-                'This will notify every user on the platform.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
+              showPopup({
+                title: 'Broadcast to ALL users?',
+                message: 'This will notify every user on the platform.',
+                icon: 'megaphone-outline',
+                buttons: [
+                  { text: 'Cancel', style: 'cancel', onPress: () => {} },
                   { text: 'Send', style: 'destructive', onPress: () => handleSend(true) },
                 ]
-              );
+              });
             }}
             disabled={sending || !message.trim()}
           >
@@ -1533,6 +1689,8 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const { showPopup } = usePopup();
+  const { colors } = useTheme();
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -1596,7 +1754,12 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
           dauEstimate: dauEstimate ?? 0,
         });
       } catch {
-        Alert.alert('Stats Error', 'Could not load dashboard stats.');
+        showPopup({
+          title: 'Stats Error',
+          message: 'Could not load dashboard stats.',
+          icon: 'bar-chart-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       }
     } finally {
       setStatsLoading(false);

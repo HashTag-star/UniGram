@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, FlatList, Image, TouchableOpacity,
+  View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Dimensions, ActivityIndicator, Modal, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import { FeedPost } from './FeedScreen';
 import { searchUsers, followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';
@@ -19,6 +20,148 @@ import { useTheme } from '../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 3) / 3;
+
+// ─── UserCard — standalone to satisfy Rules of Hooks ─────────────────────────
+interface UserCardProps {
+  user: any;
+  currentUserId: string;
+  isFollowing: boolean;
+  onPress?: (user: any) => void;
+  onDismiss?: (userId: string) => void;
+  onFollowToggle: (userId: string, next: boolean) => void;
+}
+const UserCard: React.FC<UserCardProps> = React.memo(({ user, currentUserId, isFollowing: initFollowing, onPress, onDismiss, onFollowToggle }) => {
+  const { colors } = useTheme();
+  const [following, setFollowing] = useSocialFollow(user.id, initFollowing);
+  const { selection } = useHaptics();
+
+  const handleToggle = async () => {
+    const next = !following;
+    setFollowing(next);
+    SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
+    selection();
+    onFollowToggle(user.id, next);
+    try {
+      if (next) await followUser(currentUserId, user.id);
+      else await unfollowUser(currentUserId, user.id);
+    } catch {
+      setFollowing(!next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
+      onFollowToggle(user.id, !next);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      style={[styles.suggestedCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}
+      onPress={() => onPress?.(user)}
+      activeOpacity={0.8}
+      accessibilityLabel={`View profile of ${user.username}`}
+    >
+      <TouchableOpacity
+        style={styles.cardClose}
+        onPress={() => onDismiss?.(user.id)}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityLabel="Dismiss suggestion"
+      >
+        <Ionicons name="close" size={14} color={colors.textMuted} />
+      </TouchableOpacity>
+
+      {user.avatar_url
+        ? <CachedImage uri={user.avatar_url} style={styles.cardAvatar} />
+        : <View style={[styles.cardAvatar, { backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="person" size={24} color={colors.textMuted} />
+          </View>}
+
+      <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{user.username}</Text>
+      <Text style={[styles.cardMeta, { color: colors.textMuted }]} numberOfLines={1}>{user.full_name}</Text>
+      {user.reason ? (
+        <Text style={[styles.cardReason, { color: colors.textMuted }]} numberOfLines={1}>{user.reason}</Text>
+      ) : null}
+
+      <TouchableOpacity
+        style={[styles.cardFollowBtn, { backgroundColor: following ? colors.bg : colors.accent }]}
+        onPress={handleToggle}
+        accessibilityLabel={following ? `Unfollow ${user.username}` : `Follow ${user.username}`}
+      >
+        <Text style={[styles.cardFollowText, { color: following ? colors.text : '#fff' }]}>
+          {following ? 'Following' : 'Follow'}
+        </Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+});
+
+// ─── UserRow — standalone to satisfy Rules of Hooks ──────────────────────────
+interface UserRowProps {
+  user: any;
+  currentUserId: string;
+  isFollowing: boolean;
+  onPress?: (user: any) => void;
+  onFollowToggle: (userId: string, next: boolean) => void;
+}
+const UserRow: React.FC<UserRowProps> = React.memo(({ user, currentUserId, isFollowing: initFollowing, onPress, onFollowToggle }) => {
+  const { colors } = useTheme();
+  const isSelf = user.id === currentUserId;
+  const [following, setFollowing] = useSocialFollow(user.id, initFollowing);
+  const { selection } = useHaptics();
+
+  const handleToggle = async () => {
+    const next = !following;
+    setFollowing(next);
+    SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
+    selection();
+    onFollowToggle(user.id, next);
+    try {
+      if (next) await followUser(currentUserId, user.id);
+      else await unfollowUser(currentUserId, user.id);
+    } catch {
+      setFollowing(!next);
+      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
+      onFollowToggle(user.id, !next);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      style={styles.userRow}
+      onPress={() => onPress?.(user)}
+      activeOpacity={0.75}
+      accessibilityLabel={`View profile of ${user.username}`}
+    >
+      {user.avatar_url
+        ? <CachedImage uri={user.avatar_url} style={styles.userAvatar} />
+        : <View style={[styles.userAvatar, styles.userAvatarPlaceholder, { backgroundColor: colors.bg2 }]}>
+            <Ionicons name="person" size={20} color={colors.textMuted} />
+          </View>}
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={[styles.userName, { color: colors.text }]}>{user.username}</Text>
+          {user.is_verified && <VerifiedBadge type={user.verification_type} />}
+        </View>
+        <Text style={[styles.userMeta, { color: colors.textMuted }]}>
+          {user.full_name}{user.university ? ` · ${user.university}` : ''}
+        </Text>
+      </View>
+      {!isSelf && (
+        <TouchableOpacity
+          style={[
+            styles.followBtn,
+            { borderColor: following ? 'transparent' : colors.border },
+            following && styles.followBtnActive,
+          ]}
+          onPress={handleToggle}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={following ? `Unfollow ${user.username}` : `Follow ${user.username}`}
+        >
+          <Text style={[styles.followBtnText, { color: following ? '#818cf8' : colors.text }]}>
+            {following ? 'Following' : 'Follow'}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </TouchableOpacity>
+  );
+});
 
 type SearchTab = 'top' | 'people' | 'posts' | 'tags';
 
@@ -163,129 +306,22 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
     setHashtagPosts(posts);
   }, [selection]);
 
+  // ── Follow sync callback (used by UserCard / UserRow) ────────────────────
+  const handleFollowToggle = useCallback((userId: string, next: boolean) => {
+    setFollowingIds(prev => {
+      const s = new Set(prev);
+      if (next) s.add(userId); else s.delete(userId);
+      return s;
+    });
+  }, []);
+
+  const handleDismiss = useCallback((userId: string) => {
+    setSuggested(prev => prev.filter(u => u.id !== userId));
+  }, []);
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   const isSearching = query.length > 0;
   const mediaGridPosts = useMemo(() => gridPosts.filter(p => p.media_url), [gridPosts]);
-
-  // ── Sub-components ────────────────────────────────────────────────────────
-  const UserCard = useCallback(({ user }: { user: any }) => {
-    const { colors } = useTheme();
-    const isSelf = user.id === currentUserId;
-    const [following, setFollowing] = useSocialFollow(user.id, followingIds.has(user.id));
-
-    const handleToggle = async () => {
-      const next = !following;
-      setFollowing(next);
-      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
-      selection();
-      try {
-        if (next) await followUser(currentUserId, user.id);
-        else await unfollowUser(currentUserId, user.id);
-      } catch {
-        setFollowing(!next);
-        SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
-      }
-    };
-
-    return (
-      <TouchableOpacity 
-        style={[styles.suggestedCard, { backgroundColor: colors.bg2, borderColor: colors.border }]} 
-        onPress={() => onUserPress?.(user)} 
-        activeOpacity={0.8}
-      >
-        <TouchableOpacity style={styles.cardClose} onPress={() => setSuggested(prev => prev.filter(u => u.id !== user.id))}>
-          <Ionicons name="close" size={14} color={colors.textMuted} />
-        </TouchableOpacity>
-        
-        {user.avatar_url
-          ? <Image source={{ uri: user.avatar_url }} style={styles.cardAvatar} />
-          : <View style={[styles.cardAvatar, { backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="person" size={24} color={colors.textMuted} />
-            </View>
-        }
-        
-        <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{user.username}</Text>
-        <Text style={[styles.cardMeta, { color: colors.textMuted }]} numberOfLines={1}>
-          {user.full_name}
-        </Text>
-        {user.reason ? (
-          <Text style={[styles.cardReason, { color: colors.textMuted }]} numberOfLines={1}>
-            {user.reason}
-          </Text>
-        ) : null}
-
-        <TouchableOpacity
-          style={[
-            styles.cardFollowBtn, 
-            { backgroundColor: following ? colors.bg : colors.accent }
-          ]}
-          onPress={handleToggle}
-        >
-          <Text style={[styles.cardFollowText, { color: following ? colors.text : '#fff' }]}>
-            {following ? 'Following' : 'Follow'}
-          </Text>
-        </TouchableOpacity>
-      </TouchableOpacity>
-    );
-  }, [currentUserId, followingIds, onUserPress, selection]);
-
-  const UserRow = useCallback(({ user }: { user: any }) => {
-    const { colors } = useTheme();
-    const isSelf = user.id === currentUserId;
-    const [following, setFollowing] = useSocialFollow(user.id, followingIds.has(user.id));
-
-    const handleToggle = async () => {
-      const next = !following;
-      setFollowing(next);
-      SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: next });
-      selection();
-      try {
-        if (next) await followUser(currentUserId, user.id);
-        else await unfollowUser(currentUserId, user.id);
-      } catch {
-        setFollowing(!next);
-        SocialSync.emit('FOLLOW_CHANGE', { targetId: user.id, isActive: !next });
-      }
-    };
-
-    return (
-      <TouchableOpacity style={styles.userRow} onPress={() => onUserPress?.(user)} activeOpacity={0.75}>
-        {user.avatar_url
-          ? <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />
-          : <View style={[styles.userAvatar, styles.userAvatarPlaceholder, { backgroundColor: colors.bg2 }]}>
-              <Ionicons name="person" size={20} color={colors.textMuted} />
-            </View>
-        }
-        <View style={{ flex: 1, marginLeft: 10 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={[styles.userName, { color: colors.text }]}>{user.username}</Text>
-            {user.is_verified && <VerifiedBadge type={user.verification_type} />}
-          </View>
-          <Text style={[styles.userMeta, { color: colors.textMuted }]}>
-            {user.full_name}{user.university ? ` · ${user.university}` : ''}
-          </Text>
-        </View>
-        {!isSelf && (
-          <TouchableOpacity
-            style={[
-              styles.followBtn, 
-              { borderColor: following ? 'transparent' : colors.border },
-              following && styles.followBtnActive
-            ]}
-            onPress={handleToggle}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[
-              styles.followBtnText, 
-              { color: following ? '#818cf8' : colors.text }
-            ]}>
-              {following ? 'Following' : 'Follow'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </TouchableOpacity>
-    );
-  }, [currentUserId, followingIds, onUserPress, selection]);
 
   // ── Search result tabs ────────────────────────────────────────────────────
   const SEARCH_TABS: Array<{ id: SearchTab; label: string }> = [
@@ -295,13 +331,14 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
     { id: 'tags', label: 'Tags' },
   ];
 
-  const PostGridItem = useCallback(({ post }: { post: any }) => (
+  const renderPostGridItem = useCallback(({ item: post }: { item: any }) => (
     <TouchableOpacity
       style={[styles.gridItem, { width: COL, height: COL }]}
       onPress={() => setDetailPost(post)}
       activeOpacity={0.85}
+      accessibilityLabel={`View post`}
     >
-      <Image source={{ uri: post.media_url }} style={{ width: '100%', height: '100%' }} />
+      <CachedImage uri={post.media_url} style={{ width: '100%', height: '100%' }} />
       {post.type === 'video' && (
         <View style={styles.videoIndicator}>
           <Ionicons name="play" size={12} color="#fff" />
@@ -338,7 +375,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
             data={hashtagPosts.filter(p => p.media_url)}
             keyExtractor={p => p.id}
             numColumns={3}
-            renderItem={({ item }) => <PostGridItem post={item} />}
+            renderItem={renderPostGridItem}
             contentContainerStyle={{ gap: 1, paddingBottom: 80 }}
             columnWrapperStyle={{ gap: 1 }}
             showsVerticalScrollIndicator={false}
@@ -470,11 +507,19 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
                     </TouchableOpacity>
                   );
                 }
-                if (item.username) return <UserRow user={item} />;
+                if (item.username) return (
+                  <UserRow
+                    user={item}
+                    currentUserId={currentUserId}
+                    isFollowing={followingIds.has(item.id)}
+                    onPress={onUserPress}
+                    onFollowToggle={handleFollowToggle}
+                  />
+                );
                 if (item.media_url) {
                   return (
                     <TouchableOpacity style={styles.postResultRow} onPress={() => setDetailPost(item)} activeOpacity={0.8}>
-                      <Image source={{ uri: item.media_url }} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
+                      <CachedImage uri={item.media_url} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={[styles.postResultCaption, { color: colors.text }]} numberOfLines={2}>{item.caption}</Text>
                         <Text style={[styles.postResultMeta, { color: colors.textMuted }]}>
@@ -491,66 +536,91 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, isVisible }) => {
         </View>
       ) : (
         // ─── Discovery home ──────────────────────────────────────────────
-        <FlatList
-          data={[]}
-          keyExtractor={() => ''}
-          renderItem={null}
+        <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 80 }}
-          ListHeaderComponent={
-            <>
-              {/* Trending hashtags */}
-              <View style={styles.section}>
-                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING ON CAMPUS</Text>
-                {trendingTags.map(({ tag, posts: count }, i) => (
-                  <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
-                    <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
-                    <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
-                      <Ionicons name="pricetag-outline" size={16} color={colors.accent} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
-                      <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Suggested people */}
-              {suggested.length > 0 && (
-                <View style={styles.section}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>SUGGESTED FOR YOU</Text>
-                    <TouchableOpacity onPress={() => {/* Link to all people */}}>
-                      <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '600' }}>See All</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 12, paddingRight: 20 }}
-                  >
-                    {suggested.map(user => <UserCard key={user.id} user={user} />)}
-                  </ScrollView>
+        >
+          {/* Trending hashtags */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING ON CAMPUS</Text>
+            {trendingTags.map(({ tag, posts: count }, i) => (
+              <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
+                <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
+                <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
+                  <Ionicons name="pricetag-outline" size={16} color={colors.accent} />
                 </View>
-              )}
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
+                  <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </View>
 
-              {/* Explore photo grid */}
-              <View style={styles.section}>
-                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>EXPLORE</Text>
+          {/* Suggested people */}
+          {suggested.length > 0 && (
+            <View style={styles.section}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>SUGGESTED FOR YOU</Text>
               </View>
-              <View style={styles.grid}>
-                {mediaGridPosts.map(post => <PostGridItem key={post.id} post={post} />)}
-                {mediaGridPosts.length === 0 && (
-                  <View style={{ alignItems: 'center', width: '100%', paddingVertical: 20 }}>
-                    <Text style={{ color: colors.textMuted, fontSize: 13 }}>No photos yet</Text>
-                  </View>
-                )}
-              </View>
-            </>
-          }
-        />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 12, paddingRight: 20 }}
+              >
+                {suggested.map(user => (
+                  <UserCard
+                    key={user.id}
+                    user={user}
+                    currentUserId={currentUserId}
+                    isFollowing={followingIds.has(user.id)}
+                    onPress={onUserPress}
+                    onDismiss={handleDismiss}
+                    onFollowToggle={handleFollowToggle}
+                  />
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Explore photo grid — plain View grid (all items visible, no virtualization needed) */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>EXPLORE</Text>
+          </View>
+          {mediaGridPosts.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+              <Text style={{ color: colors.textMuted, fontSize: 13 }}>No photos yet</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {mediaGridPosts.map(post => (
+                <TouchableOpacity
+                  key={post.id}
+                  style={[styles.gridItem, { width: COL, height: COL }]}
+                  onPress={() => setDetailPost(post)}
+                  activeOpacity={0.85}
+                  accessibilityLabel="View post"
+                >
+                  <CachedImage uri={post.media_url} style={{ width: '100%', height: '100%' }} />
+                  {post.type === 'video' && (
+                    <View style={styles.videoIndicator}>
+                      <Ionicons name="play" size={12} color="#fff" />
+                    </View>
+                  )}
+                  {(post.likes_count > 0 || post.comments_count > 0) && (
+                    <View style={styles.gridOverlay}>
+                      <View style={styles.gridStat}>
+                        <Ionicons name="heart" size={11} color="#fff" />
+                        <Text style={styles.gridStatText}>{post.likes_count ?? 0}</Text>
+                      </View>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </ScrollView>
       )}
 
       {/* Post detail modal */}
@@ -690,7 +760,7 @@ const styles = StyleSheet.create({
   hashIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   trendTag: { fontSize: 13, fontWeight: 'bold' },
   trendMeta: { fontSize: 11 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, marginBottom: 80 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 1 },
   gridItem: { overflow: 'hidden', position: 'relative' },
   videoIndicator: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 3 },
   gridOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.3)', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 4 },

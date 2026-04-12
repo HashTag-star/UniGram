@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
   StyleSheet, Modal, Alert,
@@ -6,8 +6,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import { submitVerificationRequest } from '../services/verification';
 import { supabase } from '../lib/supabase';
+import { usePopup } from '../context/PopupContext';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
 
 interface Props {
@@ -44,10 +46,18 @@ const TIERS: Array<{
   {
     type: 'professor',
     title: 'Verified Faculty',
-    subtitle: 'For professors & staff',
+    subtitle: 'For professors',
     color: '#eab308',
     icon: '📚',
     requirements: ['Faculty email', 'Faculty ID or appointment letter', 'Department on profile'],
+  },
+  {
+    type: 'staff',
+    title: 'Verified Staff',
+    subtitle: 'For university employees',
+    color: '#22c55e',
+    icon: '🆔',
+    requirements: ['Valid .edu email', 'Staff ID or employment proof', 'University matches profile'],
   },
   {
     type: 'club',
@@ -74,8 +84,28 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   const [email, setEmail] = useState('');
   const [reason, setReason] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [university, setUniversity] = useState('');
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<DocumentPicker.DocumentPickerAsset[]>([]);
+  const [profile, setProfile] = useState<any>(null);
+  const [sheerIdCleared, setSheerIdCleared] = useState(false);
+  const { showPopup } = usePopup();
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('profiles').select('university').eq('id', user.id).single();
+        if (data) {
+          setProfile(data);
+          if (data.university) {
+            setUniversity(data.university);
+          }
+        }
+      }
+    };
+    if (visible) loadProfile();
+  }, [visible]);
 
   const reset = () => { 
     setStep('select'); 
@@ -85,6 +115,13 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
     setReason(''); 
     setAgreed(false); 
     setDocuments([]); 
+    setSheerIdCleared(false);
+    // Do NOT reset university if it was loaded from profile
+    if (profile?.university) {
+       setUniversity(profile.university);
+    } else {
+       setUniversity('');
+    }
   };
   const handleClose = () => { reset(); onClose(); };
 
@@ -98,19 +135,21 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
       if (!res.canceled) {
         setDocuments(prev => [...prev, ...res.assets]);
       }
-    } catch (err) {
-      Alert.alert('Error', 'Failed to pick documents');
+    } catch (e) {
+      showPopup({
+        title: 'Selection Error',
+        message: 'There was a problem choosing your documents. Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
-
   const uploadFile = async (asset: DocumentPicker.DocumentPickerAsset, userId: string) => {
     const ext = asset.name.split('.').pop();
     const fileName = `${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
     const path = fileName;
 
     const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
-    const { decode } = require('base64-arraybuffer');
-    
     const { error } = await supabase.storage.from('verifications').upload(path, decode(base64), {
       contentType: asset.mimeType ?? 'application/octet-stream',
     });
@@ -121,33 +160,111 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
     return data.publicUrl;
   };
 
+  const isEmailValid = (email: string, type: VerificationType) => {
+    const isEDU = email.toLowerCase().trim().endsWith('.edu');
+    const needsEDU = type === 'student' || type === 'professor' || type === 'staff';
+    return !needsEDU || isEDU;
+  };
+
   const submit = async () => {
     if (!selected) return;
     if (!name.trim() || !email.trim()) {
-      Alert.alert('Required', 'Please fill in your name and email.');
+      showPopup({
+        title: 'Details Required',
+        message: 'Please provide your full legal name and university email.',
+        icon: 'information-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
-    if (documents.length === 0) {
-      Alert.alert('Documents Required', 'Please attach at least one supporting document.');
+
+    const isEdu = email.toLowerCase().endsWith('.edu') || email.includes('.ac.');
+    if (['student', 'professor', 'staff'].includes(selected.type) && !isEdu) {
+      showPopup({
+        title: 'Invalid Email',
+        message: 'Educational verification requires a valid .edu or academic email address.',
+        icon: 'mail-outline',
+        iconColor: '#ef4444',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
+
+    if ((selected.type === 'student' || selected.type === 'professor' || selected.type === 'staff' || selected.type === 'alumni') && !university.trim()) {
+      showPopup({
+        title: 'University Required',
+        message: 'Please specify the university you are affiliated with.',
+        icon: 'business-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
+
+    if (documents.length === 0 && !sheerIdCleared) {
+      showPopup({
+        title: 'Documents Required',
+        message: 'Please attach supporting documents (e.g. ID) or complete SheerID verification.',
+        icon: 'document-text-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // Refetch profile to be absolutely sure about the university matching
+      const { data: latestProfile } = await supabase.from('profiles').select('university').eq('id', user.id).single();
+      
+      if (latestProfile?.university && latestProfile.university.trim() !== university.trim()) {
+        showPopup({
+          title: 'University Mismatch',
+          message: `Your profile indicates you are at "${latestProfile.university}". Your verification must align with your profile.`,
+          icon: 'shield-outline',
+          iconColor: '#ef4444',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 1. Upload files
       const documentUrls = await Promise.all(
         documents.map(doc => uploadFile(doc, user.id))
       );
 
-      await submitVerificationRequest(user.id, selected.type, name, email, reason, documentUrls);
+      // 2. Submit request
+      await submitVerificationRequest(user.id, selected.type, name, email.trim(), university.trim(), reason, documentUrls, sheerIdCleared);
+
+      // 3. Sync university to profile if it was missing
+      if (!latestProfile?.university && university.trim()) {
+         await supabase.from('profiles').update({ university: university.trim() }).eq('id', user.id);
+      }
+
       setStep('success');
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to submit request.');
+      showPopup({
+        title: 'Submission Failed',
+        message: e.message ?? 'There was a problem submitting your request. Please check your connection.',
+        icon: 'cloud-offline-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
     }
   };
+
+  const universityLocked = !!profile?.university;
+  const eduRequired = selected?.type === 'student' || selected?.type === 'professor' || selected?.type === 'staff';
+  const canSubmit = name.trim() && 
+                    email.trim() && 
+                    agreed && 
+                    (documents.length > 0 || sheerIdCleared) && 
+                    !loading && 
+                    isEmailValid(email, selected?.type || 'student') &&
+                    (!((selected?.type === 'student' || selected?.type === 'professor' || selected?.type === 'staff' || selected?.type === 'alumni')) || university.trim());
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
@@ -217,8 +334,62 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
             <Text style={styles.formLabel}>Full Legal Name *</Text>
             <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Your full name" placeholderTextColor="rgba(255,255,255,0.25)" />
 
-            <Text style={styles.formLabel}>University Email (.edu) *</Text>
-            <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="you@university.edu" placeholderTextColor="rgba(255,255,255,0.25)" keyboardType="email-address" autoCapitalize="none" />
+            {(selected.type === 'student' || selected.type === 'professor' || selected.type === 'staff' || selected.type === 'alumni') && (
+              <>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.formLabel}>University / College Name *</Text>
+                  {universityLocked && (
+                    <Text style={{ fontSize: 10, color: '#818cf8', fontWeight: '600' }}>LINKED TO PROFILE</Text>
+                  )}
+                </View>
+                <TextInput 
+                  style={[styles.input, universityLocked && { opacity: 0.6, backgroundColor: 'rgba(255,255,255,0.02)' }]} 
+                  value={university} 
+                  onChangeText={setUniversity} 
+                  editable={!universityLocked}
+                  placeholder="e.g. Stanford University" 
+                  placeholderTextColor="rgba(255,255,255,0.25)" 
+                />
+              </>
+            )}
+
+            <Text style={styles.formLabel}>University Email {eduRequired ? '(.edu) ' : ''}*</Text>
+            <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder={selected.type === 'club' ? "Official org email" : "you@university.edu"} placeholderTextColor="rgba(255,255,255,0.25)" keyboardType="email-address" autoCapitalize="none" />
+
+            {eduRequired && (
+              <View style={styles.sheerIdBox}>
+                <View style={{flexDirection: 'row', alignItems: 'center', gap: 12}}>
+                  <View style={[styles.sheerIdIcon, sheerIdCleared && {backgroundColor: 'rgba(34,197,94,0.1)'}]}>
+                    <Ionicons name={sheerIdCleared ? "shield-checkmark" : "shield-half"} size={20} color={sheerIdCleared ? "#22c55e" : "#818cf8"} />
+                  </View>
+                  <View style={{flex: 1}}>
+                    <Text style={styles.sheerIdTitle}>{sheerIdCleared ? "Verified via SheerID" : "Instant Student Verification"}</Text>
+                    <Text style={styles.sheerIdDesc}>
+                      {sheerIdCleared ? 'Your identity has been confirmed. Document upload is now optional.' : 'Instantly verify your student status to bypass manual document review.'}
+                    </Text>
+                  </View>
+                </View>
+                {!sheerIdCleared && (
+                  <TouchableOpacity 
+                    style={styles.sheerIdBtn}
+                    onPress={() => {
+                      showPopup({
+                        title: 'SheerID Portal',
+                        message: 'Simulating SheerID verification success... (In production this would open a secure browser portal)',
+                        buttons: [{ 
+                          text: 'Simulate Success', 
+                          onPress: () => {
+                            setSheerIdCleared(true);
+                          } 
+                        }]
+                      });
+                    }}
+                  >
+                    <Text style={styles.sheerIdBtnText}>Verify with SheerID</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
 
             <Text style={styles.formLabel}>Why should you be verified?</Text>
             <TextInput
@@ -231,7 +402,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
               numberOfLines={3}
             />
 
-            <Text style={styles.formLabel}>Supporting Documents *</Text>
+            <Text style={styles.formLabel}>Supporting Documents {sheerIdCleared ? '(Optional)' : '*'}</Text>
             {documents.length > 0 && (
               <View style={styles.docList}>
                 {documents.map((doc, i) => (
@@ -272,10 +443,10 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
 
             <TouchableOpacity
               onPress={submit}
-              disabled={!name || !email || !agreed || documents.length === 0 || loading}
-              style={[styles.submitBtn, (!name || !email || !agreed || documents.length === 0) && styles.submitBtnDisabled]}
+              disabled={!canSubmit}
+              style={[styles.submitBtn, !canSubmit && styles.submitBtnDisabled]}
             >
-              <Text style={[styles.submitBtnText, (!name || !email || !agreed || documents.length === 0) && { color: 'rgba(255,255,255,0.3)' }]}>
+              <Text style={[styles.submitBtnText, !canSubmit && { color: 'rgba(255,255,255,0.3)' }]}>
                 {loading ? 'Submitting...' : 'Submit Verification Request'}
               </Text>
             </TouchableOpacity>
@@ -337,4 +508,10 @@ const styles = StyleSheet.create({
   successSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.5)', textAlign: 'center', lineHeight: 20, marginBottom: 32 },
   doneBtn: { backgroundColor: '#4f46e5', borderRadius: 20, paddingHorizontal: 40, paddingVertical: 14 },
   doneBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  sheerIdBox: { backgroundColor: 'rgba(99,102,241,0.05)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)', borderRadius: 12, padding: 16, marginBottom: 16 },
+  sheerIdIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: 'rgba(99,102,241,0.15)', alignItems: 'center', justifyContent: 'center' },
+  sheerIdTitle: { fontSize: 14, fontWeight: 'bold', color: '#fff' },
+  sheerIdDesc: { fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 2, lineHeight: 16 },
+  sheerIdBtn: { backgroundColor: '#4f46e5', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginTop: 12 },
+  sheerIdBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
 });

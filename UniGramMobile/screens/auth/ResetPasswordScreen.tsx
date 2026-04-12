@@ -7,6 +7,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
+import { usePopup } from '../../context/PopupContext';
 
 interface Props {
   onDone: () => void;
@@ -71,18 +72,34 @@ export default function ResetPasswordScreen({ onDone }: Props) {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { showPopup } = usePopup();
 
   const handleReset = async () => {
     if (!password || !confirm) {
-      Alert.alert('Missing fields', 'Please fill in both password fields.');
+      showPopup({
+        title: 'Missing fields',
+        message: 'Please fill in both password fields.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (password.length < 8) {
-      Alert.alert('Too short', 'Password must be at least 8 characters.');
+      showPopup({
+        title: 'Too short',
+        message: 'Password must be at least 8 characters.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (password !== confirm) {
-      Alert.alert('Mismatch', 'Passwords do not match.');
+      showPopup({
+        title: 'Mismatch',
+        message: 'Passwords do not match.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
@@ -90,11 +107,19 @@ export default function ResetPasswordScreen({ onDone }: Props) {
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-      Alert.alert('Password updated', 'Your password has been changed successfully.', [
-        { text: 'Sign in', onPress: onDone },
-      ]);
+      showPopup({
+        title: 'Password updated',
+        message: 'Your password has been changed successfully.',
+        icon: 'checkmark-circle-outline',
+        buttons: [{ text: 'Sign in', onPress: onDone }]
+      });
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Could not update password.');
+      showPopup({
+        title: 'Error',
+        message: err.message ?? 'Could not update password.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
     }

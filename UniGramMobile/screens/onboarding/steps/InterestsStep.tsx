@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { INTERESTS, INTEREST_CATEGORIES } from '../../../data/interests';
 import { saveUserInterests } from '../../../services/onboarding';
 import { useHaptics } from '../../../hooks/useHaptics';
+import { usePopup } from '../../../context/PopupContext';
 
 const MIN_INTERESTS = 3;
 
@@ -20,6 +21,7 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(false);
+  const { showPopup } = usePopup();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const { selection, success } = useHaptics();
 
@@ -43,7 +45,12 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
 
   const handleNext = async () => {
     if (selected.size < MIN_INTERESTS) {
-      Alert.alert('Pick more interests', `Select at least ${MIN_INTERESTS} interests to personalize your feed.`);
+      showPopup({
+        title: 'Pick more interests',
+        message: `Select at least ${MIN_INTERESTS} interests to personalize your feed.`,
+        icon: 'sparkles-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     setLoading(true);
@@ -55,7 +62,12 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
       await success();
       onNext();
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to save interests',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
     }
@@ -72,7 +84,7 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
           <Text style={styles.title}>What are you into?</Text>
         </View>
         <View style={styles.countBadge}>
-          <Text style={[styles.countText, selected.size >= MIN_INTERESTS && { color: '#818cf8' }]}>
+          <Text style={[styles.countText, selected.size >= MIN_INTERESTS && { color: '#a855f7' }]}>
             {selected.size}/{MIN_INTERESTS}+
           </Text>
         </View>
@@ -85,8 +97,9 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
       {/* Category filter */}
       <ScrollView
         horizontal showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 24, gap: 8, paddingBottom: 4 }}
-        style={{ flexGrow: 0, marginBottom: 16 }}
+        contentContainerStyle={{ paddingHorizontal: 28, gap: 12, paddingBottom: 4 }}
+        style={{ flexGrow: 0, flexShrink: 0, marginBottom: 20 }}
+        nestedScrollEnabled
       >
         {categories.map(cat => (
           <TouchableOpacity
@@ -103,6 +116,7 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.grid}
+        style={{ flex: 1 }}
       >
         {filtered.map(interest => {
           const isSelected = selected.has(interest.id);
@@ -119,7 +133,7 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
               </Text>
               {isSelected && (
                 <View style={styles.checkmark}>
-                  <Ionicons name="checkmark" size={10} color="#fff" />
+                  <Ionicons name="checkmark" size={12} color="#fff" />
                 </View>
               )}
             </TouchableOpacity>
@@ -150,31 +164,31 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 4 },
+  container: { flex: 1, backgroundColor: '#09090b' },
+  header: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 28, paddingTop: 16, paddingBottom: 8 },
   backBtn: { padding: 4, marginBottom: 2 },
-  stepLabel: { fontSize: 11, color: '#4f46e5', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  title: { fontSize: 26, fontWeight: '800', color: '#fff', marginTop: 2 },
-  countBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: '#111', borderWidth: 1, borderColor: '#222', marginBottom: 2 },
-  countText: { fontSize: 12, color: '#555', fontWeight: '700' },
-  subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.4)', paddingHorizontal: 24, marginBottom: 16, lineHeight: 18 },
-  catChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#1e1e1e', backgroundColor: '#0d0d0d' },
-  catChipActive: { backgroundColor: 'rgba(99,102,241,0.15)', borderColor: 'rgba(99,102,241,0.4)' },
-  catChipText: { color: '#666', fontSize: 12, fontWeight: '600' },
-  catChipTextActive: { color: '#818cf8' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 10, paddingBottom: 16 },
+  stepLabel: { fontSize: 12, color: '#8b5cf6', fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { fontSize: 28, fontWeight: '900', color: '#fff', marginTop: 4, letterSpacing: -0.5 },
+  countBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#18181b', borderWidth: 1, borderColor: '#27272a', marginBottom: 2 },
+  countText: { fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: '700' },
+  subtitle: { fontSize: 15, color: 'rgba(255,255,255,0.5)', paddingHorizontal: 28, marginBottom: 24, lineHeight: 22, marginTop: 4 },
+  catChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, borderWidth: 1, borderColor: '#27272a', backgroundColor: '#18181b' },
+  catChipActive: { backgroundColor: 'rgba(139,92,246,0.15)', borderColor: '#8b5cf6' },
+  catChipText: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' },
+  catChipTextActive: { color: '#a855f7' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 22, gap: 14, paddingBottom: 24 },
   interestCard: {
-    width: '30%', aspectRatio: 1, backgroundColor: '#0d0d0d', borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#1a1a1a',
-    padding: 8, position: 'relative',
+    width: '30%', aspectRatio: 1, backgroundColor: '#18181b', borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#27272a',
+    padding: 10, position: 'relative', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8
   },
-  interestCardActive: { backgroundColor: 'rgba(99,102,241,0.15)', borderColor: 'rgba(99,102,241,0.5)' },
-  emoji: { fontSize: 26, marginBottom: 6 },
-  interestLabel: { fontSize: 11, color: '#666', textAlign: 'center', fontWeight: '500', lineHeight: 14 },
-  interestLabelActive: { color: '#818cf8' },
-  checkmark: { position: 'absolute', top: 6, right: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center' },
-  bottom: { paddingHorizontal: 24, paddingBottom: 32 },
-  btn: { backgroundColor: '#4f46e5', borderRadius: 14, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  btnDisabled: { backgroundColor: '#1a1a2e' },
-  btnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  interestCardActive: { backgroundColor: 'rgba(139,92,246,0.15)', borderColor: 'rgba(139,92,246,0.6)' },
+  emoji: { fontSize: 32, marginBottom: 8 },
+  interestLabel: { fontSize: 12, color: 'rgba(255,255,255,0.7)', textAlign: 'center', fontWeight: '600', lineHeight: 16 },
+  interestLabelActive: { color: '#c084fc' },
+  checkmark: { position: 'absolute', top: 8, right: 8, width: 20, height: 20, borderRadius: 10, backgroundColor: '#8b5cf6', alignItems: 'center', justifyContent: 'center', shadowColor: '#8b5cf6', shadowOffset: { width:0, height:2 }, shadowOpacity: 0.5, shadowRadius: 4 },
+  bottom: { paddingHorizontal: 28, paddingBottom: 36, paddingTop: 10 },
+  btn: { backgroundColor: '#8b5cf6', borderRadius: 20, height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },
+  btnDisabled: { backgroundColor: '#27272a', shadowOpacity: 0, elevation: 0 },
+  btnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
 });

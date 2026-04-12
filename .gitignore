@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+.next/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vercel
+.turbo

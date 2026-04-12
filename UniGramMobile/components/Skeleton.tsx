@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, View, ViewStyle } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
 
 interface Props {
   width?: number | string;
@@ -9,18 +10,22 @@ interface Props {
 }
 
 export const Skeleton: React.FC<Props> = ({ width = '100%', height = 16, borderRadius = 8, style }) => {
+  const { isDark } = useTheme();
   const opacity = useRef(new Animated.Value(0.25)).current;
   useEffect(() => {
-    Animated.loop(
+    const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, { toValue: 0.65, duration: 850, useNativeDriver: true }),
         Animated.timing(opacity, { toValue: 0.25, duration: 850, useNativeDriver: true }),
       ])
-    ).start();
-  }, []);
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [opacity]);
+  const bgColor = isDark ? '#252525' : '#d4d4d8';
   return (
     <Animated.View
-      style={[{ width: width as any, height, borderRadius, backgroundColor: '#252525', opacity }, style]}
+      style={[{ width: width as any, height, borderRadius, backgroundColor: bgColor, opacity }, style]}
     />
   );
 };
@@ -123,11 +128,13 @@ export const CommentsSkeleton: React.FC = () => (
   </View>
 );
 
-export const ProfileHeaderSkeleton: React.FC = () => (
+export const ProfileHeaderSkeleton: React.FC = () => {
+  const { isDark } = useTheme();
+  return (
   <View>
     <Skeleton height={120} borderRadius={0} />
     <View style={{ paddingHorizontal: 14, marginTop: -44 }}>
-      <Skeleton width={90} height={90} borderRadius={45} style={{ borderWidth: 4, borderColor: '#000' }} />
+      <Skeleton width={90} height={90} borderRadius={45} style={{ borderWidth: 4, borderColor: isDark ? '#0a0a0a' : '#f5f5f7' }} />
       <View style={{ marginTop: 12, gap: 8 }}>
         <Skeleton width={'40%' as any} height={18} />
         <Skeleton width={'25%' as any} height={12} />
@@ -143,7 +150,8 @@ export const ProfileHeaderSkeleton: React.FC = () => (
       </View>
     </View>
   </View>
-);
+  );
+};
 
 export const NotificationSkeleton: React.FC = () => (
   <View style={{ padding: 16 }}>

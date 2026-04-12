@@ -28,7 +28,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { Audio } from 'expo-av';
-import * as Haptics from 'expo-haptics';
+import { useHaptics } from '../hooks/useHaptics';
 import { Keyboard } from 'react-native';
 import Reanimated, {
   useSharedValue,
@@ -44,6 +44,7 @@ import { EmojiKeyboard, type EmojiType } from 'rn-emoji-keyboard';
 import { supabase } from '../lib/supabase';
 import { ConvSkeleton } from '../components/Skeleton';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import {
   getConversations,
   getMessages,
@@ -65,6 +66,7 @@ import {
 } from '../services/messages';
 import { updateActiveStatus } from '../services/profiles';
 import { useTheme } from '../context/ThemeContext';
+import { usePopup } from '../context/PopupContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -268,11 +270,13 @@ const VoiceRecorder: React.FC<{
   onRecordComplete: (uri: string, duration: number) => void;
 }> = ({ onRecordComplete }) => {
   const { colors } = useTheme();
+  const { medium: hapticMedium, success: hapticSuccess } = useHaptics();
   const [duration, setDuration] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<any>(null);
+  const { showPopup } = usePopup();
 
   // Cleanup on unmount
   useEffect(() => {
@@ -325,7 +329,13 @@ const VoiceRecorder: React.FC<{
 
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Microphone access is required.');
+        showPopup({
+          title: 'Permission Denied',
+          message: 'UniGram needs microphone access to send voice messages.',
+          icon: 'mic-off-outline',
+          iconColor: '#ef4444',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
         setIsPreparing(false);
         return;
       }
@@ -351,10 +361,15 @@ const VoiceRecorder: React.FC<{
         setDuration(d => d + 100);
       }, 100);
       
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      hapticMedium();
     } catch (err) {
       console.error('Failed to start recording', err);
-      Alert.alert('Error', 'Could not start recording.');
+      showPopup({
+        title: 'Error',
+        message: 'Could not start recording. Please check your settings.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setIsPreparing(false);
     }
@@ -378,7 +393,7 @@ const VoiceRecorder: React.FC<{
 
       if (!cancel && finalDuration > 800 && uri) {
         onRecordComplete(uri, finalDuration);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        hapticSuccess();
       }
     } catch (err) {
       console.error('Failed to stop recording', err);
@@ -489,6 +504,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   onSwipeReply,
 }) => {
   const { colors } = useTheme();
+  const { light: hapticLight, medium: hapticMedium } = useHaptics();
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const swipeX = useSharedValue(0);
 
@@ -506,7 +522,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         onPanResponderRelease: (_, gesture) => {
           if (gesture.dx > 40) {
             onSwipeReply(msg);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            hapticLight();
           }
           swipeX.value = withSpring(0);
         },
@@ -517,7 +533,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const showUnsend = (e: any) => {
     const { pageX, pageY } = e.nativeEvent;
     onLongPress(msg, pageX, pageY);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    hapticMedium();
   };
 
   const isImage = msg.type === 'image';
@@ -583,7 +599,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           <View style={{ width: 30, marginRight: 6, alignSelf: 'flex-end' }}>
             {showAvatar ? (
               msg.profiles?.avatar_url ? (
-                <Image source={{ uri: msg.profiles.avatar_url }} style={styles.msgAvatar} />
+                <CachedImage uri={msg.profiles.avatar_url} style={styles.msgAvatar} />
               ) : (
                 <View style={[styles.msgAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
                   <Ionicons name="person" size={14} color={colors.textMuted} />
@@ -606,8 +622,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           >
             {isImage ? (
               <TouchableOpacity onPress={() => setLightboxUri(msg.media_url)} activeOpacity={0.9}>
-                <Image
-                  source={{ uri: msg.media_url }}
+                <CachedImage
+                  uri={msg.media_url}
                   style={[
                     styles.imageBubble,
                     isMe ? { borderBottomRightRadius: 4 } : { borderBottomLeftRadius: 4 },
@@ -673,6 +689,7 @@ type NewConvMode = 'dm' | 'group-pick' | 'group-name';
 const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onClose, onOpen }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { showPopup } = usePopup();
   const [mode, setMode] = useState<NewConvMode>('dm');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
@@ -727,7 +744,12 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
       reset();
       onOpen(convId, user);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to start conversation');
+      showPopup({
+        title: 'Failed to Connect',
+        message: e.message ?? 'Could not start a conversation with this user.',
+        icon: 'chatbubble-ellipses-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       setCreating(null);
     }
   }, [currentUserId, onOpen, reset]);
@@ -757,7 +779,12 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
       reset();
       onOpen(convId, fakeGroupProfile);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to create group');
+      showPopup({
+        title: 'Group Failed',
+        message: e.message ?? 'Could not create the group. Please try again.',
+        icon: 'people-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setCreatingGroup(false);
     }
@@ -775,7 +802,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
       >
         <View style={{ position: 'relative' }}>
           {item.avatar_url ? (
-            <Image source={{ uri: item.avatar_url }} style={styles.userResultAvatar} />
+            <CachedImage uri={item.avatar_url} style={styles.userResultAvatar} />
           ) : (
             <View style={[styles.userResultAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={20} color={colors.textMuted} />
@@ -872,7 +899,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
               {selectedUsers.map((u) => (
                 <View key={u.id} style={{ alignItems: 'center', width: 56 }}>
                   {u.avatar_url ? (
-                    <Image source={{ uri: u.avatar_url }} style={{ width: 48, height: 48, borderRadius: 24 }} />
+                    <CachedImage uri={u.avatar_url} style={{ width: 48, height: 48, borderRadius: 24 }} />
                   ) : (
                     <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
                       <Ionicons name="person" size={20} color={colors.textMuted} />
@@ -994,6 +1021,8 @@ interface ChatViewProps {
 
 const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
+  const { light: hapticLight } = useHaptics();
   const insets = useSafeAreaInsets();
   const { convId, otherProfile } = convData;
 
@@ -1154,7 +1183,12 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       setReplyingTo(null);
     } catch (e: any) {
       setText(t);
-      Alert.alert('Failed to send', e.message ?? 'Please try again.');
+      showPopup({
+        title: 'Failed to send',
+        message: e.message ?? 'Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   }, [text, uploading, convId, currentUserId, replyingTo]);
 
@@ -1164,7 +1198,12 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       await sendVoiceMessage(convId, currentUserId, uri, duration, replyingTo?.id);
       setReplyingTo(null);
     } catch (e: any) {
-      Alert.alert('Failed to send voice message', e.message);
+      showPopup({
+        title: 'Failed to send',
+        message: e.message ?? 'Could not send voice message.',
+        icon: 'mic-off-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setUploading(false);
     }
@@ -1177,14 +1216,24 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     try {
       await unsendMessage(msg.id, currentUserId);
     } catch (e: any) {
-      Alert.alert('Error', 'Could not unsend message.');
+      showPopup({
+        title: 'Error',
+        message: 'Could not unsend message.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   }, [reactionTarget, currentUserId]);
 
   const pickAndSendImage = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
-      Alert.alert('Permission required', 'Photo library access is needed to send images.');
+      showPopup({
+        title: 'Permission required',
+        message: 'Photo library access is needed to send images.',
+        icon: 'images-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -1197,7 +1246,12 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     try {
       await sendImageMessage(convId, currentUserId, result.assets[0].uri);
     } catch (e: any) {
-      Alert.alert('Upload failed', e.message ?? 'Could not send image.');
+      showPopup({
+        title: 'Upload failed',
+        message: e.message ?? 'Could not send image.',
+        icon: 'cloud-offline-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setUploading(false);
     }
@@ -1301,6 +1355,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       style={[styles.container, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
+      enabled={!showEmojiPicker}
     >
       {/* Header */}
       <View style={[styles.chatHeader, { paddingTop: insets.top + 6, backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
@@ -1310,7 +1365,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         <TouchableOpacity style={styles.chatHeaderUser} activeOpacity={0.8}>
           <View style={{ position: 'relative' }}>
             {profile?.avatar_url ? (
-              <Image source={{ uri: profile.avatar_url }} style={styles.chatAvatar} />
+              <CachedImage uri={profile.avatar_url} style={styles.chatAvatar} />
             ) : (
               <View style={[styles.chatAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
                 <Ionicons name={isGroup ? 'people' : 'person'} size={16} color={colors.textMuted} />
@@ -1359,8 +1414,8 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           ListHeaderComponent={
             <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
               {profile?.avatar_url ? (
-                <Image
-                  source={{ uri: profile.avatar_url }}
+                <CachedImage
+                  uri={profile.avatar_url}
                   style={{ width: 72, height: 72, borderRadius: 36 }}
                 />
               ) : (
@@ -1389,7 +1444,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
               <View style={styles.typingRow}>
                 <View style={{ width: 30, marginRight: 6 }}>
                   {profile?.avatar_url ? (
-                    <Image source={{ uri: profile.avatar_url }} style={styles.msgAvatar} />
+                    <CachedImage uri={profile.avatar_url} style={styles.msgAvatar} />
                   ) : (
                     <View style={[styles.msgAvatar, { backgroundColor: colors.bg2 }]} />
                   )}
@@ -1417,7 +1472,10 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         )}
         <View style={styles.inputRow}>
           {/* 1. Emoji Button on the left (replacing Media) */}
-          <TouchableOpacity style={styles.inputIcon} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
+          <TouchableOpacity style={styles.inputIcon} onPress={() => {
+            if (!showEmojiPicker) Keyboard.dismiss();
+            setShowEmojiPicker(p => !p);
+          }}>
             <Ionicons 
               name={showEmojiPicker ? "keypad-outline" : "happy-outline"} 
               size={24} 
@@ -1443,7 +1501,12 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
             {/* 2. Attachment (Media) and Camera buttons inside the input at the end */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingRight: 8 }}>
               {!text.trim() && (
-                <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Camera integration is in progress.')}>
+                <TouchableOpacity onPress={() => showPopup({
+                  title: 'Coming Soon',
+                  message: 'Camera integration is in progress.',
+                  icon: 'camera-outline',
+                  buttons: [{ text: 'OK', onPress: () => {} }]
+                })}>
                   <Ionicons name="camera-outline" size={22} color={colors.textMuted} />
                 </TouchableOpacity>
               )}
@@ -1483,7 +1546,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           <EmojiKeyboard
             onEmojiSelected={(emoji: EmojiType) => {
               setText(prev => prev + emoji.emoji);
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              hapticLight();
             }}
             theme={{
               backdrop: '#00000000',
@@ -1627,7 +1690,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
         >
           <View style={styles.convAvatarWrap}>
             {other?.avatar_url ? (
-              <Image source={{ uri: other.avatar_url }} style={styles.convAvatar} />
+              <CachedImage uri={other.avatar_url} style={styles.convAvatar} />
             ) : (
               <View style={[styles.convAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
                 <Ionicons name={isGroup ? 'people' : 'person'} size={21} color={colors.textMuted} />
@@ -1696,7 +1759,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
               >
                 <View style={styles.activeAvatarWrap}>
                   {other.avatar_url ? (
-                    <Image source={{ uri: other.avatar_url }} style={styles.activeAvatar} />
+                    <CachedImage uri={other.avatar_url} style={styles.activeAvatar} />
                   ) : (
                     <View style={[styles.activeAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
                       <Ionicons name="person" size={18} color={colors.textMuted} />

@@ -13,7 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useHaptics } from '../hooks/useHaptics';
 import { LiveService, LiveComment } from '../services/live';
 import { supabase } from '../lib/supabase';
-import { SocialSync } from '../services/social_sync'; // Verified path
+import { SocialSync } from '../services/social_sync';
+import { usePopup } from '../context/PopupContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -30,6 +31,7 @@ export const LiveScreen: React.FC<{
   viewerSessionId?: string;
 }> = ({ onClose, viewerSessionId }) => {
   const insets = useSafeAreaInsets();
+  const { showPopup } = usePopup();
   const haptics = useHaptics();
   const [comments, setComments] = useState<LiveComment[]>([]);
   const [viewers, setViewers] = useState(0);
@@ -112,7 +114,12 @@ export const LiveScreen: React.FC<{
 
     if (!uid) {
       console.warn('[Live] Cannot start: currentUserId is null');
-      Alert.alert('Session Error', 'Please log in again to start a live stream.');
+      showPopup({
+        title: 'Session Error',
+        message: 'Please log in again to start a live stream.',
+        icon: 'person-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (isStarting) return;
@@ -128,7 +135,12 @@ export const LiveScreen: React.FC<{
       haptics.success();
     } catch (err: any) {
       console.error('[Live] Failed to start live:', err);
-      Alert.alert('Streaming Error', err.message || 'Could not start live session. Please check your connection.');
+      showPopup({
+        title: 'Streaming Error',
+        message: err.message || 'Could not start live session. Please check your connection.',
+        icon: 'videocam-off-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setIsStarting(false);
     }

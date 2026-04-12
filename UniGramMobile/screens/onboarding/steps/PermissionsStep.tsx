@@ -8,7 +8,9 @@ import {
   requestCameraPermission,
   requestMediaLibraryPermission,
   requestNotificationPermission,
+  goToSettings,
 } from '../../../services/permissions';
+import { usePopup } from '../../../context/PopupContext';
 import { completeOnboarding } from '../../../services/onboarding';
 import { registerForPushNotifications } from '../../../services/pushNotifications';
 import { useHaptics } from '../../../hooks/useHaptics';
@@ -59,6 +61,7 @@ export function PermissionsStep({ userId, onNext, onBack }: Props) {
   const [granted, setGranted] = useState<Set<string>>(new Set());
   const [requesting, setRequesting] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
+  const { showPopup } = usePopup();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const { success, light } = useHaptics();
 
@@ -82,6 +85,16 @@ export function PermissionsStep({ userId, onNext, onBack }: Props) {
       if (ok) {
         setGranted(prev => new Set([...prev, id]));
         await success();
+      } else {
+        showPopup({
+          title: 'Permission Required',
+          message: `UniGram needs access to ${id} to work properly. Please enable it in Settings.`,
+          icon: id === 'notifications' ? 'notifications-outline' : id === 'camera' ? 'camera-outline' : 'images-outline',
+          buttons: [
+            { text: 'Cancel', style: 'cancel', onPress: () => {} },
+            { text: 'Open Settings', onPress: () => goToSettings() }
+          ]
+        });
       }
     } catch { } finally {
       setRequesting(null);
@@ -161,7 +174,7 @@ export function PermissionsStep({ userId, onNext, onBack }: Props) {
           {completing ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <LinearGradient colors={['#6366f1', '#4f46e5']} style={styles.btnGradient}>
+            <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{x:0, y:0}} end={{x:1, y:1}} style={styles.btnGradient}>
               <Text style={styles.btnText}>🎉 Enter UniGram</Text>
             </LinearGradient>
           )}
@@ -173,26 +186,26 @@ export function PermissionsStep({ userId, onNext, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 24 },
+  container: { flex: 1, backgroundColor: '#09090b', paddingHorizontal: 28 },
   header: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingTop: 16, paddingBottom: 8 },
   backBtn: { padding: 4, marginBottom: 2 },
-  stepLabel: { fontSize: 11, color: '#4f46e5', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  title: { fontSize: 26, fontWeight: '800', color: '#fff', marginTop: 2 },
-  subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.4)', marginBottom: 28, lineHeight: 18 },
-  permList: { gap: 14, flex: 1 },
-  permCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#0d0d0d', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
-  permIcon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  stepLabel: { fontSize: 12, color: '#8b5cf6', fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { fontSize: 28, fontWeight: '900', color: '#fff', marginTop: 4, letterSpacing: -0.5 },
+  subtitle: { fontSize: 15, color: 'rgba(255,255,255,0.5)', marginBottom: 32, lineHeight: 22, marginTop: 4 },
+  permList: { gap: 16, flex: 1 },
+  permCard: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: '#18181b', borderRadius: 20, padding: 18, borderWidth: 1, borderColor: '#27272a', shadowColor: '#000', shadowOffset: { width:0, height:4 }, shadowOpacity: 0.2, shadowRadius: 8 },
+  permIcon: { width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   permInfo: { flex: 1 },
-  permTitle: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  permDesc: { fontSize: 11, color: '#555', marginTop: 2, lineHeight: 15 },
-  permBtn: { paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#1e1e2e', borderRadius: 20, borderWidth: 1, borderColor: '#2a2a3a', minWidth: 60, alignItems: 'center' },
-  permBtnGranted: { backgroundColor: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.3)' },
-  permBtnText: { color: '#818cf8', fontSize: 13, fontWeight: '600' },
-  allowAllBtn: { marginTop: 16, alignItems: 'center', paddingVertical: 10 },
-  allowAllText: { color: '#818cf8', fontSize: 13, fontWeight: '600' },
-  bottom: { paddingBottom: 32, gap: 10 },
-  btn: { borderRadius: 14, overflow: 'hidden' },
-  btnGradient: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
-  btnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
-  note: { color: 'rgba(255,255,255,0.2)', fontSize: 11, textAlign: 'center' },
+  permTitle: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  permDesc: { fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4, lineHeight: 18, fontWeight: '500' },
+  permBtn: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#27272a', borderRadius: 20, borderWidth: 1, borderColor: '#3f3f46', minWidth: 68, alignItems: 'center' },
+  permBtnGranted: { backgroundColor: 'rgba(52,211,153,0.15)', borderColor: 'rgba(52,211,153,0.4)' },
+  permBtnText: { color: '#a855f7', fontSize: 14, fontWeight: '700' },
+  allowAllBtn: { marginTop: 24, alignItems: 'center', paddingVertical: 12 },
+  allowAllText: { color: '#a855f7', fontSize: 15, fontWeight: '700' },
+  bottom: { paddingBottom: 36, gap: 12 },
+  btn: { borderRadius: 20, overflow: 'hidden', shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },
+  btnGradient: { alignItems: 'center', justifyContent: 'center', paddingVertical: 18 },
+  btnText: { color: '#fff', fontSize: 18, fontWeight: '900' },
+  note: { color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', fontWeight: '500' },
 });

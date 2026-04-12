@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import { MarketSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import {
@@ -45,6 +46,7 @@ import {
 } from '../services/market';
 import { createDirectConversation } from '../services/messages';
 import { useTheme } from '../context/ThemeContext';
+import { usePopup } from '../context/PopupContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,12 @@ const MARKET_TTL = 3 * 60 * 1000; // 3 minutes
 let _cachedItems: any[] = [];
 let _cachedSavedIds: Set<string> = new Set();
 let _lastLoaded = 0;
+
+function clearMarketCache() {
+  _cachedItems = [];
+  _cachedSavedIds = new Set();
+  _lastLoaded = 0;
+}
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: '🛍️' },
@@ -173,7 +181,7 @@ const ItemCard = memo<CardProps>(({
       {/* Image */}
       <View style={styles.imageWrap}>
         {item.image_url ? (
-          <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
+          <CachedImage uri={item.image_url} style={styles.itemImage} resizeMode="cover" />
         ) : (
           <View style={[styles.itemImage, styles.imagePlaceholder, { backgroundColor: colors.bg }]}>
             <Ionicons name="image-outline" size={32} color={colors.textMuted} />
@@ -216,7 +224,7 @@ const ItemCard = memo<CardProps>(({
 
         <View style={styles.sellerRow}>
           {seller?.avatar_url ? (
-            <Image source={{ uri: seller.avatar_url }} style={styles.sellerAvatar} />
+            <CachedImage uri={seller.avatar_url} style={styles.sellerAvatar} />
           ) : (
             <View style={[styles.sellerAvatar, { backgroundColor: colors.bg }]} />
           )}
@@ -250,16 +258,7 @@ const ItemCard = memo<CardProps>(({
 
             <TouchableOpacity
               style={[styles.ownerActionBtn, { borderColor: '#ef444440' }]}
-              onPress={() => {
-                Alert.alert('Delete Listing', 'Remove this listing permanently?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: () => onDelete?.(item.id),
-                  },
-                ]);
-              }}
+              onPress={() => onDelete?.(item.id)}
             >
               <Ionicons name="trash-outline" size={12} color="#ef4444" />
               <Text style={[styles.ownerActionText, { color: '#ef4444' }]}>Del</Text>
@@ -301,6 +300,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
   const isOwn = item.seller_id === currentUserId;
   const [marking, setMarking] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const { showPopup } = usePopup();
   const seller = item.profiles;
 
   useEffect(() => {
@@ -313,31 +313,47 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
       await markItemSold(item.id, currentUserId);
       onSold(item.id);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to mark as sold.');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Failed to mark the item as sold.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setMarking(false);
     }
   }, [item.id, currentUserId, onSold]);
 
   const handleDelete = useCallback(() => {
-    Alert.alert('Delete Listing', 'Remove this listing permanently?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(true);
-          try {
-            await deleteMarketItem(item.id, currentUserId);
-            onDelete(item.id);
-          } catch (e: any) {
-            Alert.alert('Error', e.message ?? 'Failed to delete listing.');
-            setDeleting(false);
+    showPopup({
+      title: 'Delete Listing',
+      message: 'Remove this listing permanently from the campus market?',
+      icon: 'trash-outline',
+      iconColor: '#ef4444',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { 
+          text: 'Delete Permanently', 
+          style: 'destructive', 
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              await deleteMarketItem(item.id, currentUserId);
+              onDelete(item.id);
+            } catch (e: any) {
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Failed to delete listing.',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+              setDeleting(false);
+            }
           }
-        },
-      },
-    ]);
-  }, [item.id, currentUserId, onDelete]);
+        }
+      ]
+    });
+  }, [item.id, currentUserId, onDelete, showPopup]);
 
   const handleShare = useCallback(async () => {
     try {
@@ -361,7 +377,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
         {/* Hero Image */}
         <View style={dtl.heroWrap}>
           {item.image_url ? (
-            <Image source={{ uri: item.image_url }} style={dtl.heroImage} resizeMode="cover" />
+            <CachedImage uri={item.image_url} style={dtl.heroImage} resizeMode="cover" />
           ) : (
             <View style={[dtl.heroImage, dtl.heroPlaceholder]}>
               <Ionicons name="image-outline" size={56} color="#333" />
@@ -454,7 +470,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
           <Text style={[dtl.sectionLabel, { marginTop: 18, color: colors.textMuted }]}>Seller</Text>
           <View style={[dtl.sellerCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
             {seller?.avatar_url ? (
-              <Image source={{ uri: seller.avatar_url }} style={dtl.sellerAvatar} />
+              <CachedImage uri={seller.avatar_url} style={dtl.sellerAvatar} />
             ) : (
               <View style={[dtl.sellerAvatar, dtl.sellerAvatarFallback, { backgroundColor: colors.bg }]}>
                 <Ionicons name="person" size={20} color={colors.textMuted} />
@@ -570,6 +586,7 @@ const SellModal: React.FC<SellModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [isSuspended, setIsSuspended] = useState(propIsSuspended ?? false);
+  const { showPopup } = usePopup();
 
   useEffect(() => {
     if (propIsSuspended !== undefined) {
@@ -609,7 +626,12 @@ const SellModal: React.FC<SellModalProps> = ({
   const pickImage = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow photo access to add images.');
+      showPopup({
+        title: 'Permission needed',
+        message: 'Allow photo access to add images to your listing.',
+        icon: 'image-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -627,11 +649,21 @@ const SellModal: React.FC<SellModalProps> = ({
     const parsedPrice = parseFloat(price);
 
     if (!trimmedTitle) {
-      Alert.alert('Missing title', 'Please enter a title for your listing.');
+      showPopup({
+        title: 'Missing title',
+        message: 'Please enter a title for your listing.',
+        icon: 'text-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (!price || isNaN(parsedPrice) || parsedPrice < 0) {
-      Alert.alert('Invalid price', 'Please enter a valid price.');
+      showPopup({
+        title: 'Invalid price',
+        message: 'Please enter a valid price for your listing.',
+        icon: 'cash-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
@@ -659,7 +691,12 @@ const SellModal: React.FC<SellModalProps> = ({
         onPosted(item);
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Something went wrong. Please try again.');
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Something went wrong. Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSubmitting(false);
     }
@@ -836,6 +873,7 @@ interface MarketScreenProps {
 
 export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible, isSuspended }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const insets = useSafeAreaInsets();
 
   // Auth
@@ -878,6 +916,10 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) setCurrentUserId(data.user.id);
     });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') clearMarketCache();
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   // ── Debounced search ──
@@ -1058,7 +1100,12 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         };
         onMessagePress?.(convId, sellerProfile);
       } catch (e: any) {
-        Alert.alert('Error', e.message ?? 'Could not start conversation.');
+        showPopup({
+          title: 'Connection Failed',
+          message: e.message ?? 'Could not start a conversation with the seller.',
+          icon: 'chatbubble-ellipses-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       }
     },
     [currentUserId, onMessagePress, browseItems, savedItems, myItems],
@@ -1080,10 +1127,15 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
         await markItemSold(itemId, currentUserId);
         handleSoldFromDetail(itemId);
       } catch (e: any) {
-        Alert.alert('Error', e.message ?? 'Failed to mark as sold.');
+        showPopup({
+          title: 'Update Failed',
+          message: e.message ?? 'Could not mark the item as sold.',
+          icon: 'alert-circle-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       }
     },
-    [currentUserId, handleSoldFromDetail],
+    [currentUserId, handleSoldFromDetail, showPopup],
   );
 
   // ── Delete handlers ──
@@ -1095,15 +1147,35 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
   }, []);
 
   const handleDeleteFromCard = useCallback(
-    async (itemId: string) => {
-      try {
-        await deleteMarketItem(itemId, currentUserId);
-        handleDeleteFromDetail(itemId);
-      } catch (e: any) {
-        Alert.alert('Error', e.message ?? 'Failed to delete listing.');
-      }
+    (itemId: string) => {
+      showPopup({
+        title: 'Delete Listing',
+        message: 'Remove this listing permanently from the campus market?',
+        icon: 'trash-outline',
+        iconColor: '#ef4444',
+        buttons: [
+          { text: 'Cancel', style: 'cancel', onPress: () => {} },
+          { 
+            text: 'Delete', 
+            style: 'destructive', 
+            onPress: async () => {
+              try {
+                await deleteMarketItem(itemId, currentUserId);
+                handleDeleteFromDetail(itemId);
+              } catch (e: any) {
+                showPopup({
+                  title: 'Error',
+                  message: e.message ?? 'Failed to delete listing.',
+                  icon: 'alert-circle-outline',
+                  buttons: [{ text: 'OK', onPress: () => {} }]
+                });
+              }
+            }
+          }
+        ]
+      });
     },
-    [currentUserId, handleDeleteFromDetail],
+    [currentUserId, handleDeleteFromDetail, showPopup],
   );
 
   // ── Edit ──
@@ -1228,7 +1300,13 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
           style={styles.sellBtn}
           onPress={() => { 
             if (isSuspended) {
-              Alert.alert('Account Suspended', 'Your account is suspended and cannot create new listings at this time.');
+              showPopup({
+                title: 'Account Restricted',
+                message: 'Your account is currently restricted and cannot create new marketplace listings.',
+                icon: 'lock-closed-outline',
+                iconColor: '#ef4444',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
               return;
             }
             setEditItem(null); 
@@ -1363,7 +1441,13 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
                   style={[styles.sellBtn, { marginTop: 20 }]}
                   onPress={() => { 
                     if (isSuspended) {
-                      Alert.alert('Account Suspended', 'Your account is suspended and cannot create new listings at this time.');
+                      showPopup({
+                        title: 'Account Restricted',
+                        message: 'Your account is currently restricted and cannot create new marketplace listings.',
+                        icon: 'lock-closed-outline',
+                        iconColor: '#ef4444',
+                        buttons: [{ text: 'OK', onPress: () => {} }]
+                      });
                       return;
                     }
                     setEditItem(null); 

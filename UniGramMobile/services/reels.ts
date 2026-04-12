@@ -133,14 +133,27 @@ export async function getLikedReelIds(userId: string): Promise<string[]> {
   return data?.map((r: any) => r.reel_id) ?? [];
 }
 
-export async function getReelComments(reelId: string) {
+export async function getReelComments(reelId: string, currentUserId?: string) {
   const { data, error } = await supabase
     .from('reel_comments')
     .select(`*, profiles!reel_comments_user_id_fkey(*)`)
     .eq('reel_id', reelId)
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  const comments = data ?? [];
+
+  if (!currentUserId || comments.length === 0) return comments;
+
+  // Batch-fetch which reel comments the current user has liked
+  const ids = comments.map((c: any) => c.id);
+  const { data: liked } = await supabase
+    .from('reel_comment_likes')
+    .select('comment_id')
+    .eq('user_id', currentUserId)
+    .in('comment_id', ids);
+
+  const likedSet = new Set((liked ?? []).map((r: any) => r.comment_id));
+  return comments.map((c: any) => ({ ...c, isLiked: likedSet.has(c.id) }));
 }
 
 export async function addReelComment(reelId: string, userId: string, text: string, parentId?: string) {
@@ -191,6 +204,23 @@ export async function addReelComment(reelId: string, userId: string, text: strin
   }
 
   return res;
+}
+
+export async function deleteReelComment(commentId: string, userId: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+  const { error } = await supabase.from('reel_comments').delete().eq('id', commentId).eq('user_id', userId);
+  if (error) throw error;
+}
+
+export async function likeReelComment(commentId: string, userId: string) {
+  const { error } = await supabase.from('reel_comment_likes').insert({ comment_id: commentId, user_id: userId });
+  if (error && !error.message?.includes('duplicate')) throw error;
+}
+
+export async function unlikeReelComment(commentId: string, userId: string) {
+  const { error } = await supabase.from('reel_comment_likes').delete().eq('comment_id', commentId).eq('user_id', userId);
+  if (error) throw error;
 }
 
 export async function deleteReel(reelId: string, userId: string) {

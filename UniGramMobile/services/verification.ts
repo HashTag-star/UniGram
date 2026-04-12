@@ -5,8 +5,10 @@ export async function submitVerificationRequest(
   type: string, 
   fullName: string, 
   email: string, 
+  university: string,
   reason: string, 
-  documentUrls: string[]
+  documentUrls: string[],
+  sheeridVerified: boolean = false
 ) {
   // Check for existing pending request
   const { data: existing } = await supabase
@@ -24,8 +26,10 @@ export async function submitVerificationRequest(
       type, 
       full_name: fullName, 
       email, 
+      university,
       reason, 
-      document_urls: documentUrls 
+      document_urls: documentUrls,
+      sheerid_verified: sheeridVerified
     })
     .select()
     .single();

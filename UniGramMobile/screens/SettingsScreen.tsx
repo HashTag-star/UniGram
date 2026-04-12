@@ -9,8 +9,9 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { EditProfileModal } from './EditProfileModal';
-import { useTheme } from '../context/ThemeContext';
 import { deleteUserAccount } from '../services/profiles';
+import { usePopup } from '../context/PopupContext';
+import { useTheme } from '../context/ThemeContext';
 
 interface Props {
   visible: boolean;
@@ -76,27 +77,49 @@ const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { showPopup } = usePopup();
 
   const reset = () => { setNewPassword(''); setConfirmPassword(''); setSaving(false); };
 
   const handleSave = async () => {
     if (newPassword.length < 8) {
-      Alert.alert('Too short', 'Password must be at least 8 characters.');
+      showPopup({
+        title: 'Too short',
+        message: 'Your password must be at least 8 characters long.',
+        icon: 'lock-closed-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (newPassword !== confirmPassword) {
-      Alert.alert('Mismatch', 'Passwords do not match.');
+      showPopup({
+        title: 'Mismatch',
+        message: 'The passwords you entered do not match. Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     setSaving(true);
     try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
-      Alert.alert('Done', 'Your password has been updated.');
+      showPopup({
+        title: 'Updated',
+        message: 'Your password has been successfully changed.',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#10b981',
+        buttons: [{ text: 'Great', onPress: () => {} }]
+      });
       reset();
       onClose();
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Could not update password.');
+      showPopup({
+        title: 'Update Failed',
+        message: e.message ?? 'Could not update password. Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSaving(false);
     }
@@ -188,6 +211,7 @@ const PrivacyModal: React.FC<{
   onProfileUpdated: (p: any) => void;
 }> = ({ visible, profile, onClose, onProfileUpdated }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const insets = useSafeAreaInsets();
   const [isPrivate, setIsPrivate] = useState(false);
   const [showActivityStatus, setShowActivityStatus] = useState(true);
@@ -221,7 +245,12 @@ const PrivacyModal: React.FC<{
       onProfileUpdated({ ...profile, is_private: val });
     } catch (e: any) {
       setIsPrivate(!val);
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message ?? 'Could not register biometric authentication.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSaving(false);
     }
@@ -315,6 +344,7 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
   const insets = useSafeAreaInsets();
   const [blocked, setBlocked] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const { showPopup } = usePopup();
 
   useEffect(() => {
     if (!visible || !profile?.id) return;
@@ -337,20 +367,32 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
     fetchBlocked();
   }, [visible, profile?.id]);
 
-  const handleUnblock = (userId: string, name: string) => {
-    Alert.alert(`Unblock ${name}?`, 'They will be able to see your posts and follow you.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Unblock',
-        onPress: async () => {
-          await supabase.from('blocked_users')
-            .delete()
-            .eq('blocker_id', profile.id)
-            .eq('blocked_id', userId);
-          setBlocked(prev => prev.filter(u => u.id !== userId));
-        },
-      },
-    ]);
+  const handleUnblock = (id: string, name: string) => {
+    showPopup({
+      title: `Unblock ${name}?`,
+      message: 'They will be able to see your posts and potentially follow you again.',
+      icon: 'person-add-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Unblock',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.from('blocked_users').delete().eq('blocked_id', id).eq('blocker_id', profile.id);
+              if (error) throw error;
+              setBlocked(prev => prev.filter(u => u.id !== id));
+            } catch (e: any) {
+              showPopup({
+                title: 'Operation Failed',
+                message: e.message ?? 'Could not unblock user.',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            }
+          }
+        }
+      ]
+    });
   };
 
   return (
@@ -427,6 +469,7 @@ export const SettingsScreen: React.FC<Props> = ({
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const { showPopup } = usePopup();
 
   useEffect(() => {
     if (visible) {
@@ -442,54 +485,83 @@ export const SettingsScreen: React.FC<Props> = ({
   };
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log Out', style: 'destructive',
-        onPress: async () => { await supabase.auth.signOut(); onClose(); },
-      },
-    ]);
+    showPopup({
+      title: 'Log Out',
+      message: 'Are you sure you want to log out of your account? You will need to sign back in to access your feed.',
+      icon: 'log-out-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => { await supabase.auth.signOut(); onClose(); },
+        },
+      ]
+    });
   };
 
   const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'This will permanently delete your account and all your data. This action cannot be undone and complies with the "Right to be Forgotten" protocol.',
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showPopup({
+      title: 'Delete Account?',
+      message: 'This will permanently scrub your posts, reels, and profile from UniGram. This action complies with the "Right to be Forgotten" and cannot be undone.',
+      icon: 'trash-outline',
+      iconColor: '#ef4444',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
         {
-          text: 'Continue', style: 'destructive',
-          onPress: () => Alert.alert(
-            'Final Confirmation',
-            'Are you absolutely sure? This will scrub your posts, reels, and profiles from UniGram permanently.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Delete Permanently', 
-                style: 'destructive', 
-                onPress: async () => {
-                  try {
-                    await deleteUserAccount(profile.id);
-                    onClose();
-                  } catch (e: any) {
-                    Alert.alert('error', e.message);
-                  }
-                } 
-              },
-            ]
-          ),
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            setTimeout(() => {
+              showPopup({
+                title: 'Final Confirmation',
+                message: 'Are you absolutely sure? Once you proceed, there is no way to recover your data.',
+                icon: 'warning-outline',
+                iconColor: '#ef4444',
+                buttons: [
+                  { text: 'Cancel', style: 'cancel', onPress: () => {} },
+                  { 
+                    text: 'Delete Permanently', 
+                    style: 'destructive', 
+                    onPress: async () => {
+                      try {
+                        await deleteUserAccount(profile.id);
+                        onClose();
+                      } catch (e: any) {
+                        showPopup({
+                          title: 'Error',
+                          message: e.message,
+                          buttons: [{ text: 'OK', onPress: () => {} }]
+                        });
+                      }
+                    } 
+                  },
+                ]
+              });
+            }, 300);
+          },
         },
       ]
-    );
+    });
   };
 
-  const handleHelp = () => Linking.openURL('mailto:support@unigram.app').catch(() =>
-    Alert.alert('Help', 'Reach us at support@unigram.app')
-  );
+  const handleHelp = () => {
+    showPopup({
+      title: 'Help Center',
+      message: 'Need assistance? Reach out to us at support@unigram.app',
+      icon: 'help-circle-outline',
+      buttons: [{ text: 'Done', onPress: () => {} }]
+    });
+  };
 
-  const handleReport = () => Linking.openURL('mailto:support@unigram.app?subject=Bug%20Report&body=Describe%20the%20issue%20here...').catch(() =>
-    Alert.alert('Report', 'Reach us at support@unigram.app')
-  );
+  const handleReport = () => {
+    showPopup({
+      title: 'Report Problem',
+      message: 'Found a bug or issue? Reach out to us at support@unigram.app',
+      icon: 'flag-outline',
+      buttons: [{ text: 'Done', onPress: () => {} }]
+    });
+  };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -582,7 +654,12 @@ export const SettingsScreen: React.FC<Props> = ({
               icon="language-outline"
               label="Language"
               sublabel="English"
-              onPress={() => Alert.alert('Language', 'Additional languages coming in a future update.')}
+              onPress={() => showPopup({
+                title: 'Coming Soon',
+                message: 'Additional language support is currently in development.',
+                icon: 'language-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              })}
               noBorder
             />
           </Section>

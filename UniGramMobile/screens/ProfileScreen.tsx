@@ -12,6 +12,7 @@ import { VerificationScreen } from './VerificationScreen';
 import { AdminScreen } from './AdminScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import { getProfile, getFollowers, getFollowing, isFollowing, followUser, unfollowUser, uploadAvatar, updateProfile } from '../services/profiles';
 import { getUserPosts, getSavedPosts, getLikedPostIds, updatePost } from '../services/posts';
 import { getUserReels } from '../services/reels';
@@ -20,9 +21,10 @@ import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
-import { useTheme } from '../context/ThemeContext';
 import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
+import { useTheme } from '../context/ThemeContext';
+import { usePopup } from '../context/PopupContext';
 
 const { width, height } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -52,6 +54,7 @@ export const ProfileScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
+  const { showPopup } = usePopup();
   const { selection, success, medium } = useHaptics();
 
   const [profile, setProfile] = useState<any>(null);
@@ -170,7 +173,12 @@ export const ProfileScreen: React.FC<Props> = ({
                           e.code === 'PGRST205';
       if (isSchemaError) return;
 
-      Alert.alert('Error', 'Failed to update follow status');
+      showPopup({
+        title: 'Follow Failed',
+        message: 'There was a problem updating your follow status. Please check your connection.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       setIsFollowingUser(!next);
       SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: !next });
       setProfile((p: any) => ({ ...p, followers_count: !next ? p.followers_count + 1 : p.followers_count - 1 }));
@@ -186,7 +194,12 @@ export const ProfileScreen: React.FC<Props> = ({
         await success();
       }
     } catch (e: any) {
-      Alert.alert('Upload Error', e.message);
+      showPopup({
+        title: 'Upload Failed',
+        message: e.message,
+        icon: 'cloud-offline-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
@@ -213,7 +226,12 @@ export const ProfileScreen: React.FC<Props> = ({
       await load();
       setShowEdit(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message,
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSaving(false);
     }
@@ -235,7 +253,12 @@ export const ProfileScreen: React.FC<Props> = ({
       await success();
       setShowEditPost(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message,
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setSaving(false);
     }
@@ -255,7 +278,7 @@ export const ProfileScreen: React.FC<Props> = ({
       >
         {/* Cover & Header Section */}
         <View style={styles.coverSection}>
-          <Image source={{ uri: profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000' }} style={styles.cover} />
+          <CachedImage uri={profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000'} style={styles.cover} />
           <View style={styles.coverOverlay} />
           <View style={styles.headerTop}>
             {onBack && (
@@ -286,7 +309,7 @@ export const ProfileScreen: React.FC<Props> = ({
           <View style={styles.avatarRow}>
             <View style={styles.avatarContainer}>
               <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
-                <Image source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.avatar} />
+                <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
                 {isOwn && (
                   <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
                     <Ionicons name="camera" size={24} color="#fff" />
@@ -391,7 +414,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {posts.filter(p => p.type !== 'thread').map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
+                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
                   {post.media_urls?.length > 1 && <View style={styles.mediaBadge}><Ionicons name="layers" size={12} color="#fff" /></View>}
                   {post.type === 'video' && <View style={styles.mediaBadge}><Ionicons name="play" size={12} color="#fff" /></View>}
                 </TouchableOpacity>
@@ -404,7 +427,7 @@ export const ProfileScreen: React.FC<Props> = ({
               {reels.map(reel => (
                 <TouchableOpacity key={reel.id} style={styles.gridItem} activeOpacity={0.9} onPress={() => setFocusedPost(reel)}>
                   {reel.thumbnail_url ? (
-                    <Image source={{ uri: reel.thumbnail_url }} style={styles.gridImg} resizeMode="cover" />
+                    <CachedImage uri={reel.thumbnail_url} style={styles.gridImg} resizeMode="cover" />
                   ) : (
                     <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
                       <Ionicons name="film-outline" size={32} color="#333" />
@@ -423,7 +446,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {taggedPosts.map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
+                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
                 </TouchableOpacity>
               ))}
             </View>
@@ -433,7 +456,7 @@ export const ProfileScreen: React.FC<Props> = ({
             <View style={styles.grid}>
               {savedPosts.map(post => (
                 <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <Image source={{ uri: post.media_url || post.media_urls?.[0] }} style={styles.gridImg} resizeMode="cover" />
+                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
                 </TouchableOpacity>
               ))}
             </View>
@@ -551,7 +574,12 @@ export const ProfileScreen: React.FC<Props> = ({
             await AccountService.switchAccount(id);
             await success();
           } catch (e: any) {
-            Alert.alert('Switch Failed', e.message);
+            showPopup({
+              title: 'Switch Failed',
+              message: e.message,
+              icon: 'lock-closed-outline',
+              buttons: [{ text: 'OK', onPress: () => {} }]
+            });
             setLoading(false);
           }
         }}
@@ -586,7 +614,7 @@ const AccountSwitcherModal = ({ visible, onClose, accounts, currentUserId, onSwi
                   else onSwitch(acc.userId);
                 }}
               >
-                <Image source={{ uri: acc.avatarUrl || 'https://via.placeholder.com/150' }} style={styles.accAvatar} />
+                <CachedImage uri={acc.avatarUrl} style={styles.accAvatar} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.accName, { color: colors.text }]}>{acc.fullName || acc.username}</Text>
                   <Text style={[styles.accUser, { color: colors.textMuted }]}>@{acc.username}</Text>

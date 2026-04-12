@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList,
-  Animated, ActivityIndicator, Image,
+  Animated, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getSuggestedUsers } from '../../../services/onboarding';
 import { followUser } from '../../../services/profiles';
 import { VerifiedBadge } from '../../../components/VerifiedBadge';
+import { CachedImage } from '../../../components/CachedImage';
 import { useHaptics } from '../../../hooks/useHaptics';
 
 interface Props {
@@ -57,7 +58,7 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
         transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [20 + index * 5, 0] }) }],
       }]}>
         {item.avatar_url
-          ? <Image source={{ uri: item.avatar_url }} style={styles.avatar} />
+          ? <CachedImage uri={item.avatar_url} style={styles.avatar} />
           : <View style={[styles.avatar, { backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={20} color="#444" />
             </View>
@@ -69,8 +70,8 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
           </View>
           <Text style={styles.meta} numberOfLines={1}>
             {item.major ?? item.university ?? 'UniGram User'}
-            {item.common_interests > 0 && (
-              <Text style={styles.commonTag}> · {item.common_interests} shared interests</Text>
+            {item.mutual_friends > 0 && (
+              <Text style={styles.commonTag}> · {item.mutual_friends} mutual{item.mutual_friends === 1 ? '' : 's'}</Text>
             )}
           </Text>
         </View>
@@ -79,7 +80,7 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
           onPress={() => toggleFollow(item.id)}
         >
           {isFollowing
-            ? <Ionicons name="checkmark" size={16} color="#818cf8" />
+            ? <Ionicons name="checkmark" size={18} color="#c084fc" />
             : <Text style={styles.followBtnText}>Follow</Text>
           }
         </TouchableOpacity>
@@ -110,27 +111,28 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator color="#4f46e5" size="large" />
+          <ActivityIndicator color="#8b5cf6" size="large" />
           <Text style={styles.loadingText}>Finding people for you...</Text>
         </View>
       ) : suggestions.length === 0 ? (
         <View style={styles.loadingWrap}>
           <Ionicons name="people-outline" size={52} color="#333" />
-          <Text style={styles.loadingText}>No suggestions yet — more will appear as the community grows!</Text>
+          <Text style={styles.loadingText}>Be one of the first! More people will appear as the community grows.</Text>
         </View>
       ) : (
         <FlatList
+          style={{ flex: 1 }}
           data={suggestions}
           keyExtractor={item => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ paddingHorizontal: 24, gap: 4, paddingBottom: 16 }}
+          contentContainerStyle={{ paddingHorizontal: 28, gap: 8, paddingBottom: 16 }}
           showsVerticalScrollIndicator={false}
         />
       )}
 
       <View style={styles.bottom}>
         <TouchableOpacity style={styles.btn} onPress={handleNext}>
-          <LinearGradient colors={['#6366f1', '#4f46e5']} style={styles.btnGradient}>
+          <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{x:0, y:0}} end={{x:1, y:1}} style={styles.btnGradient}>
             <Text style={styles.btnText}>
               {followed.size > 0 ? `Follow ${followed.size} & Continue` : 'Continue'}
             </Text>
@@ -143,27 +145,27 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 4 },
+  container: { flex: 1, backgroundColor: '#09090b' },
+  header: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 28, paddingTop: 16, paddingBottom: 8 },
   backBtn: { padding: 4, marginBottom: 2 },
-  stepLabel: { fontSize: 11, color: '#4f46e5', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  title: { fontSize: 26, fontWeight: '800', color: '#fff', marginTop: 2 },
-  countBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: 'rgba(99,102,241,0.15)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)', marginBottom: 2 },
-  countText: { fontSize: 11, color: '#818cf8', fontWeight: '700' },
-  subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.4)', paddingHorizontal: 24, marginBottom: 16, marginTop: 8, lineHeight: 18 },
+  stepLabel: { fontSize: 12, color: '#8b5cf6', fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { fontSize: 28, fontWeight: '900', color: '#fff', marginTop: 4, letterSpacing: -0.5 },
+  countBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(139,92,246,0.1)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)', marginBottom: 2 },
+  countText: { fontSize: 13, color: '#a855f7', fontWeight: '800' },
+  subtitle: { fontSize: 15, color: 'rgba(255,255,255,0.5)', paddingHorizontal: 28, marginBottom: 20, marginTop: 12, lineHeight: 22 },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 40 },
-  loadingText: { color: '#555', fontSize: 14, textAlign: 'center' },
-  userCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 },
-  avatar: { width: 48, height: 48, borderRadius: 24 },
+  loadingText: { color: 'rgba(255,255,255,0.4)', fontSize: 15, textAlign: 'center', fontWeight: '500' },
+  userCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 16, backgroundColor: '#18181b', borderRadius: 20, paddingHorizontal: 16, marginBottom: 8, borderWidth: 1, borderColor: '#27272a' },
+  avatar: { width: 52, height: 52, borderRadius: 26 },
   userInfo: { flex: 1 },
-  username: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  meta: { fontSize: 11, color: '#555', marginTop: 2 },
-  commonTag: { color: '#4f46e5' },
-  followBtn: { backgroundColor: '#4f46e5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 7, minWidth: 76, alignItems: 'center' },
-  followingBtn: { backgroundColor: 'rgba(99,102,241,0.15)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.4)' },
-  followBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  bottom: { paddingHorizontal: 24, paddingBottom: 32 },
-  btn: { borderRadius: 14, overflow: 'hidden' },
-  btnGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16 },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  username: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  meta: { fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4, fontWeight: '500' },
+  commonTag: { color: '#a855f7' },
+  followBtn: { backgroundColor: '#8b5cf6', borderRadius: 20, paddingHorizontal: 18, paddingVertical: 8, minWidth: 84, alignItems: 'center', shadowColor: '#8b5cf6', shadowOffset: { width:0, height:4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  followingBtn: { backgroundColor: 'rgba(139,92,246,0.15)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)', shadowOpacity: 0 },
+  followBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  bottom: { paddingHorizontal: 28, paddingBottom: 36, paddingTop: 10 },
+  btn: { borderRadius: 20, overflow: 'hidden', shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },
+  btnGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 18 },
+  btnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
 });

@@ -28,6 +28,7 @@ import { CachedImage } from '../components/CachedImage';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
+import { usePopup } from '../context/PopupContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
@@ -43,6 +44,7 @@ import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 import { LiveScreen } from './LiveScreen';
+import { PopupButton } from '../components/PremiumPopup';
 
 const { width } = Dimensions.get('window');
 
@@ -93,6 +95,7 @@ interface FeedPostProps {
   onCommentCountChange?: (postId: string, delta: number) => void;
   onOpenComments?: (id: string, authorId: string) => void;
   onDeleted?: (id: string) => void;
+  onUserPress?: (profile: any) => void;
 }
 
 function fmtCount(n: number) {
@@ -107,6 +110,14 @@ let cachedLikedIds: Set<string> | null = null;
 let cachedSavedIds: Set<string> | null = null;
 let cachedCurrentProfile: any = null;
 
+function clearFeedCache() {
+  cachedFeedPosts = [];
+  cachedStoryGroups = [];
+  cachedLikedIds = null;
+  cachedSavedIds = null;
+  cachedCurrentProfile = null;
+}
+
 // ─── Story Bar ────────────────────────────────────────────────────────────────
 const StoryBar: React.FC<{
   storyGroups: any[];
@@ -118,7 +129,7 @@ const StoryBar: React.FC<{
   onYourStoryPress: () => void;
   hasOwnStories: boolean;
   ownGroupIdx: number;
-}> = ({ storyGroups, liveSessions, currentProfile, viewedIds, onStoryPress, onLivePress, onYourStoryPress, hasOwnStories, ownGroupIdx }) => {
+}> = React.memo(({ storyGroups, liveSessions, currentProfile, viewedIds, onStoryPress, onLivePress, onYourStoryPress, hasOwnStories, ownGroupIdx }) => {
   const { colors } = useTheme();
   const ownGroup = ownGroupIdx !== -1 ? storyGroups[ownGroupIdx] : null;
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
@@ -203,7 +214,7 @@ const StoryBar: React.FC<{
       })}
     </ScrollView>
   );
-};
+});
 
 // ─── Background Upload Indicator ──────────────────────────────────────────────
 const BackgroundUploadIndicator: React.FC = () => {
@@ -211,28 +222,28 @@ const BackgroundUploadIndicator: React.FC = () => {
   const [type, setType] = useState<string>('');
   const haptics = useHaptics();
   const slideAnim = useRef(new Animated.Value(-100)).current;
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('upload_status', (data) => {
       setStatus(data.status);
       setType(data.type.charAt(0).toUpperCase() + data.type.slice(1));
-      
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        tension: 50,
-        friction: 8
-      }).start();
 
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 8 }).start();
+
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
       if (data.status === 'success') {
         haptics.success();
-        setTimeout(dismiss, 3000);
+        dismissTimer.current = setTimeout(dismiss, 3000);
       } else if (data.status === 'error') {
         haptics.error();
-        setTimeout(dismiss, 4000);
+        dismissTimer.current = setTimeout(dismiss, 4000);
       }
     });
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    };
   }, [slideAnim]);
 
   const dismiss = () => {
@@ -368,6 +379,7 @@ const StoryViewer: React.FC<{
 
   useEffect(() => { if (visible) { setGi(groupIndex); setSi(0); } }, [groupIndex, visible]);
 
+  const { showPopup } = usePopup();
   const group = storyGroups[gi];
   const story = group?.stories[si];
 
@@ -386,7 +398,12 @@ const StoryViewer: React.FC<{
     if (!emoji) {
       setStats(ps => ({ ...ps, isLiked: !ps.isLiked, likes: Math.max(0, ps.isLiked ? ps.likes - 1 : ps.likes + 1) }));
     } else {
-      Alert.alert('Sent!', `${emoji} sent to ${group.profile.username}`);
+      showPopup({
+        title: 'Sent!',
+        message: `${emoji} sent to ${group.profile.username}`,
+        icon: 'heart-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       setPaused(false);
       setIsTyping(false);
     }
@@ -416,12 +433,22 @@ const StoryViewer: React.FC<{
     try {
       // In a real app, this would create a record in the 'messages' table
       // For now, we simulate a success notification
-      Alert.alert('Sent!', `Reply sent to ${group.profile.username}`);
+      showPopup({
+        title: 'Sent!',
+        message: `Reply sent to ${group.profile.username}`,
+        icon: 'paper-plane-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       setReply('');
       setIsTyping(false);
       setPaused(false);
     } catch (e) {
-      Alert.alert('Error', 'Could not send reply.');
+      showPopup({
+        title: 'Error',
+        message: 'Could not send reply.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
@@ -466,31 +493,43 @@ const StoryViewer: React.FC<{
 
   const showStoryOptions = () => {
     setPaused(true);
-    Alert.alert('Story Options', undefined, [
-      {
-        text: 'Delete story',
-        style: 'destructive',
-        onPress: () => {
-          Alert.alert('Delete story?', 'This will permanently remove this story.', [
-            { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
-            { 
-              text: 'Delete', 
-              style: 'destructive', 
-              onPress: async () => {
-                try {
-                  await deleteStory(story.id, currentUserId);
-                  onDeleted?.(story.id);
-                } catch {
-                  Alert.alert('Error', 'Could not delete story.');
-                  setPaused(false);
-                }
-              }
-            },
-          ]);
+    showPopup({
+      title: 'Story Options',
+      buttons: [
+        {
+          text: 'Delete story',
+          style: 'destructive',
+          onPress: () => {
+            showPopup({
+              title: 'Delete story?',
+              message: 'This will permanently remove this story.',
+              buttons: [
+                { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+                { 
+                  text: 'Delete', 
+                  style: 'destructive', 
+                  onPress: async () => {
+                    try {
+                      await deleteStory(story.id, currentUserId);
+                      onDeleted?.(story.id);
+                    } catch {
+                      showPopup({
+                        title: 'Error',
+                        message: 'Could not delete story.',
+                        icon: 'alert-circle-outline',
+                        buttons: [{ text: 'OK', onPress: () => {} }]
+                      });
+                      setPaused(false);
+                    }
+                  }
+                },
+              ]
+            });
+          },
         },
-      },
-      { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
-    ]);
+        { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+      ]
+    });
   };
 
   if (!visible || !group || !story) return null;
@@ -694,17 +733,19 @@ const VideoPost: React.FC<{
   const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : 360;
 
   return (
-    <View style={{ position: 'relative', width, height: containerHeight, backgroundColor: '#000' }}>
+    <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+      {/* Dark gradient background — keeps the frame filled behind letterbox bars */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111' }]} />
       {!isActive && (
         <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
-           <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
+          <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
         </View>
       )}
       {isActive && (
         <VideoView
           player={player}
-          style={[styles.postMedia, { width, height: containerHeight }]}
-          contentFit="cover"
+          style={StyleSheet.absoluteFill}
+          contentFit="contain"
           nativeControls={false}
         />
       )}
@@ -713,37 +754,49 @@ const VideoPost: React.FC<{
 });
 
 // ─── Post Meta Cycler ─────────────────────────────────────────────────────────
-const PostMetaCycler: React.FC<{ location?: string; song?: string }> = ({ location, song }) => {
+const PostMetaCycler: React.FC<{ location?: string; song?: string; onSongPress?: () => void; onLocationPress?: () => void }> = React.memo(({ location, song, onSongPress, onLocationPress }) => {
   const { colors } = useTheme();
   const [index, setIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const items = [location, song].filter(Boolean) as string[];
+  // Stable items ref — avoids new array reference on every render
+  const itemsRef = useRef<string[]>([]);
+  itemsRef.current = [location, song].filter(Boolean) as string[];
+  const itemCount = itemsRef.current.length;
 
   useEffect(() => {
-    if (items.length < 2) return;
+    if (itemCount < 2) return;
     const timer = setInterval(() => {
       Animated.timing(fadeAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start(({ finished }) => {
         if (finished) {
-          setIndex(prev => (prev + 1) % items.length);
+          setIndex(prev => (prev + 1) % itemsRef.current.length);
           Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
         }
       });
     }, 4000);
     return () => clearInterval(timer);
-  }, [items]);
+  }, [itemCount, fadeAnim]);
 
-  if (items.length === 0) return null;
+  if (itemsRef.current.length === 0) return null;
+  const currentItem = itemsRef.current[index] ?? '';
 
   return (
-    <Animated.View style={{ opacity: fadeAnim, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      <Ionicons
-        name={items[index] === song ? "musical-note" : "location-outline"}
-        size={10} color={colors.textMuted}
-      />
-      <Text style={[styles.postMeta, { color: colors.textSub }]} numberOfLines={1}>{items[index]}</Text>
-    </Animated.View>
+    <TouchableOpacity 
+      activeOpacity={0.8}
+      onPress={() => {
+        if (currentItem === song) onSongPress?.();
+        else if (currentItem === location) onLocationPress?.();
+      }}
+    >
+      <Animated.View style={{ opacity: fadeAnim, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Ionicons
+          name={currentItem === song ? 'musical-note' : 'location-outline'}
+          size={10} color={colors.textMuted}
+        />
+        <Text style={[styles.postMeta, { color: colors.textSub }]} numberOfLines={1}>{currentItem}</Text>
+      </Animated.View>
+    </TouchableOpacity>
   );
-};
+});
 
 // ─── Media Carousel ───────────────────────────────────────────────────────────
 const MediaCarousel: React.FC<{
@@ -820,15 +873,26 @@ const MediaCarousel: React.FC<{
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
           <GestureDetector gesture={composedGesture}>
-            <Reanimated.View style={[{ width, height: containerHeight, backgroundColor: '#111' }, animatedStyle]}>
+            <Reanimated.View style={[{ width, height: containerHeight, overflow: 'hidden' }, animatedStyle]}>
               {type === 'video' ? (
                 <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={aspectRatio} />
               ) : (
-                <CachedImage 
-                  uri={item} 
-                  style={[styles.postMedia, { width: '100%', height: '100%' }]} 
-                  resizeMode="cover" 
-                />
+                // Blurred cover background + sharp contain foreground
+                // Shows the full image without cropping while filling the frame
+                <View style={{ width: '100%', height: '100%' }}>
+                  <Image
+                    source={{ uri: item }}
+                    style={StyleSheet.absoluteFill}
+                    resizeMode="cover"
+                    blurRadius={22}
+                  />
+                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.28)' }]} />
+                  <CachedImage
+                    uri={item}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain"
+                  />
+                </View>
               )}
             </Reanimated.View>
           </GestureDetector>
@@ -879,44 +943,37 @@ const FullVideoModal: React.FC<{
 };
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isMuted, setIsMuted, onOpenComments, onCommentCountChange, onDeleted }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isActive, isLiked = false, isSaved = false, isMuted, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const { medium, success, selection } = useHaptics();
-  
+
   const [showOptions, setShowOptions] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  const [liked, setLiked] = useState(false);
+  // Initialize directly from parent-passed props — no per-post server round-trip
+  const [liked, setLiked] = useState(isLiked);
   const [likes, setLikes] = useState(post.likes_count ?? 0);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(isSaved);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
-  // Removed local isMuted state to use prop-based global muting (MOMA)
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [songLoading, setSongLoading] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
   const songPlayer = useAudioPlayer(songPreviewUrl ?? '');
+  const heartOverlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
   // Animations
   const heartScale = useRef(new Animated.Value(1)).current;
   const heartOverlayScale = useRef(new Animated.Value(0.5)).current;
   const heartOverlayOpacity = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    // Check initial social state from service cache
-    const checkState = async () => {
-      try {
-        const likedArr = await getLikedPostIds(currentUserId);
-        const savedArr = await getSavedPostIds(currentUserId);
-        const likedIds = new Set(likedArr);
-        const savedIds = new Set(savedArr);
-        if (likedIds.has(post.id)) setLiked(true);
-        if (savedIds.has(post.id)) setSaved(true);
-      } catch (e) {
-        // Silently fails for cache
-      }
-    };
-    checkState();
-  }, [post.id]);
+  // Sync if parent updates (e.g. feed refresh)
+  useEffect(() => { setLiked(isLiked); }, [isLiked]);
+  useEffect(() => { setSaved(isSaved); }, [isSaved]);
+
+  // Cleanup overlay timer on unmount
+  useEffect(() => () => { if (heartOverlayTimer.current) clearTimeout(heartOverlayTimer.current); }, []);
 
   useEffect(() => {
     if (songPlayer) {
@@ -973,10 +1030,9 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const showHeartOverlay = () => {
     heartOverlayOpacity.setValue(1);
     heartOverlayScale.setValue(0.5);
-    Animated.parallel([
-      Animated.spring(heartOverlayScale, { toValue: 1, useNativeDriver: true, tension: 80, friction: 6 }),
-    ]).start();
-    setTimeout(() => {
+    Animated.spring(heartOverlayScale, { toValue: 1, useNativeDriver: true, tension: 80, friction: 6 }).start();
+    if (heartOverlayTimer.current) clearTimeout(heartOverlayTimer.current);
+    heartOverlayTimer.current = setTimeout(() => {
       Animated.timing(heartOverlayOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
     }, 600);
   };
@@ -1029,49 +1085,99 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   };
 
   const handleDeletePost = () => {
-    Alert.alert('Delete post?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => {
-        onDeleted?.(post.id);
-        deletePost(post.id, currentUserId).catch(() => {
-          Alert.alert('Error', 'Could not delete post. Please refresh.');
-        });
-      }},
-    ]);
+    showPopup({
+      title: 'Delete post?',
+      message: 'This cannot be undone and will remove the post from your profile and feed.',
+      icon: 'trash-outline',
+      iconColor: '#ef4444',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { 
+          text: 'Delete Permanently', 
+          style: 'destructive', 
+          onPress: () => {
+            onDeleted?.(post.id);
+            deletePost(post.id, currentUserId).catch(() => {
+              showPopup({
+                title: 'Error',
+                message: 'Could not delete post. Please refresh.',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            });
+          }
+        },
+      ]
+    });
   };
 
   const handleReport = () => {
-    Alert.alert('Report Post', 'Why are you reporting this post?', [
-      { text: 'Inappropriate Content', onPress: () => submitReport('Inappropriate Content') },
-      { text: 'Spam', onPress: () => submitReport('Spam') },
-      { text: 'Harassment', onPress: () => submitReport('Harassment') },
-      { text: 'Other', onPress: () => submitReport('Other') },
-      { text: 'Cancel', style: 'cancel' }
-    ]);
+    showPopup({
+      title: 'Report Post',
+      message: 'Why are you reporting this post? Your feedback helps keep UniGram safe.',
+      icon: 'flag-outline',
+      buttons: [
+        { text: 'Inappropriate Content', onPress: () => submitReport('Inappropriate Content') },
+        { text: 'Spam', onPress: () => submitReport('Spam') },
+        { text: 'Harassment', onPress: () => submitReport('Harassment') },
+        { text: 'Cancel', style: 'cancel', onPress: () => {} }
+      ]
+    });
   };
 
   const submitReport = async (reason: string) => {
     try {
       await createReport(post.id, 'post', reason);
-      Alert.alert('Report Received', 'Thank you for helping keep UniGram safe.');
+      showPopup({
+        title: 'Report Received',
+        message: 'Thank you. We will review this post and take action if needed.',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#10b981',
+        buttons: [{ text: 'Done', onPress: () => {} }]
+      });
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message,
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
   const handleBlock = () => {
-    Alert.alert('Block User', `Are you sure you want to block @${post.profiles?.username}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Block', style: 'destructive', onPress: async () => {
-        try {
-          await blockUser(post.user_id);
-          Alert.alert('User Blocked', 'You will no longer see content from this user.');
-          onDeleted?.(post.id);
-        } catch (e: any) {
-          Alert.alert('Error', e.message);
+    showPopup({
+      title: 'Block User?',
+      message: `You will no longer see content from @${post.profiles?.username} and they won't be able to find your profile.`,
+      icon: 'ban-outline',
+      iconColor: '#ef4444',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { 
+          text: 'Block User', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              await blockUser(post.user_id);
+              onDeleted?.(post.id);
+              showPopup({
+                title: 'User Blocked',
+                message: 'You will no longer see content from this user.',
+                icon: 'checkmark-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            } catch (e: any) {
+              showPopup({
+                title: 'Error',
+                message: e.message,
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            }
+          }
         }
-      }}
-    ]);
+      ]
+    });
   };
 
   const profile = post.profiles;
@@ -1084,19 +1190,47 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
       <View style={[styles.postHeader, { backgroundColor: colors.background }]}>
         <View style={styles.postUserRow}>
-          <View style={styles.avatarRing}>
-            {profile?.avatar_url
-              ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
-              : <View style={[styles.postAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="person" size={18} color="#555" />
-                </View>}
-          </View>
+          <TouchableOpacity onPress={() => onUserPress?.(profile)}>
+            <View style={styles.avatarRing}>
+              {profile?.avatar_url
+                ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
+                : <View style={[styles.postAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Ionicons name="person" size={18} color="#555" />
+                  </View>}
+            </View>
+          </TouchableOpacity>
           <View style={{ marginLeft: 10, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
-              {profile?.is_verified && <VerifiedBadge type={profile.verification_type as any} />}
+              <TouchableOpacity onPress={() => onUserPress?.(profile)}>
+                <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
+              </TouchableOpacity>
+              {profile?.is_verified && (
+                <TouchableOpacity onPress={() => showPopup({
+                  title: `Verified ${profile.verification_type?.charAt(0).toUpperCase()}${profile.verification_type?.slice(1)}`,
+                  message: `This user is a verified ${profile.verification_type} on campus.`,
+                  icon: 'shield-checkmark-outline',
+                  buttons: [{ text: 'OK', onPress: () => {} }]
+                })}>
+                  <VerifiedBadge type={profile.verification_type as any} />
+                </TouchableOpacity>
+              )}
             </View>
-            <PostMetaCycler location={post.location ?? undefined} song={post.song ?? undefined} />
+            <PostMetaCycler 
+              location={post.location ?? undefined} 
+              song={post.song ?? undefined} 
+              onSongPress={() => showPopup({
+                title: 'Original Audio',
+                message: `Browse posts using "${post.song}"\n\n(Audio Gallery coming soon)`,
+                icon: 'musical-notes-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              })}
+              onLocationPress={() => showPopup({
+                title: 'Location Details',
+                message: `Browse posts from ${post.location}\n\n(Map view coming soon)`,
+                icon: 'location-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              })}
+            />
             <Text style={[styles.postMeta, { color: colors.textSub }]}>{profile?.major ? `${profile.major} · ` : ''}{timeAgo(post.created_at)}</Text>
           </View>
         </View>
@@ -1121,7 +1255,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         }}
         onCopyLink={() => {
           setShowOptions(false);
-          Alert.alert('Link Copied', 'Post link copied to clipboard.');
+          showPopup({
+            title: 'Link Copied',
+            message: 'Post link copied to clipboard.',
+            icon: 'copy-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
         }}
       />
 
@@ -1201,7 +1340,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         </View>
         {post.caption ? (
           <Text style={[styles.captionText, { color: colors.text }]} numberOfLines={3}>
-            <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'} </Text>
+            <Text style={[styles.postUsername, { color: colors.text }]} onPress={() => onUserPress?.(profile)}>{profile?.username ?? 'user'} </Text>
             {post.caption}
           </Text>
         ) : null}
@@ -1372,6 +1511,7 @@ interface FeedScreenProps {
   onCreateStory?: () => void;
   onCameraPress?: () => void; // New prop for manual camera access
   onNotifPress?: () => void;
+  onMessagePress?: () => void;
   notifBadge?: number;
   onReelPress?: () => void;
   onUserPress?: (user: any) => void;
@@ -1385,6 +1525,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   onCreateStory, 
   onCameraPress,
   onNotifPress, 
+  onMessagePress,
   notifBadge = 0, 
   onReelPress, 
   onUserPress, 
@@ -1393,6 +1534,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
@@ -1586,6 +1728,14 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     return () => task.cancel();
   }, [load]);
 
+  // Clear module-level caches on sign-out so stale data never leaks to a different account
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') clearFeedCache();
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   // Background refresh when tab becomes visible and data is stale
   useEffect(() => {
     if (isVisible && lastLoadedRef.current > 0) {
@@ -1670,7 +1820,15 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') { Alert.alert('Permission needed', 'Allow photo library access to add a story.'); return; }
+    if (status !== 'granted') {
+      showPopup({
+        title: 'Permission needed',
+        message: 'Allow photo library access to add a story.',
+        icon: 'images-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: 'images' as any, allowsEditing: true, aspect: [9, 16], quality: 0.85,
     });
@@ -1687,7 +1845,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         .then(() => load())
         .catch((e: any) => {
           setStoryGroups(prev => prev.filter(g => !g.stories?.some((s: any) => s.id === tempId)));
-          Alert.alert('Error', e.message ?? 'Could not post story.');
+          showPopup({
+            title: 'Error',
+            message: e.message ?? 'Could not post story.',
+            icon: 'alert-circle-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
         });
     }
   };
@@ -1705,14 +1868,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           </TouchableOpacity>
           <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
         </View>
-        <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
-          <Ionicons name="notifications-outline" size={24} color={colors.text} />
-          {notifBadge > 0 && (
-            <View style={styles.notifHeaderBadge}>
-              <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <TouchableOpacity onPress={onMessagePress} style={{ padding: 4 }}>
+            <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
+            <Ionicons name="notifications-outline" size={24} color={colors.text} />
+            {notifBadge > 0 && (
+              <View style={styles.notifHeaderBadge}>
+                <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </Animated.View>
 
       <BackgroundUploadIndicator />
@@ -1790,6 +1958,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
                 setShowCommentsAuthorId(authorId);
               }}
               onDeleted={handlePostDeleted}
+              onUserPress={onUserPress}
             />
           );
         }}
@@ -1819,6 +1988,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         onClose={() => setShowCommentsId(null)}
         onCountChange={(delta) => {
           if (showCommentsId) handleCommentCountChange(showCommentsId, delta);
+        }}
+        onCountSync={(count) => {
+          if (showCommentsId) {
+            setPosts(prev => prev.map(p =>
+              p.id === showCommentsId ? { ...p, comments_count: count } : p
+            ));
+          }
         }}
       />
 

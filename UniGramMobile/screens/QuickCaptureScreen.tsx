@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHaptics } from '../hooks/useHaptics';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
+import { usePopup } from '../context/PopupContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -32,6 +33,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
   const [recording, setRecording] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const { showPopup } = usePopup();
   
   const startTouchY = useRef<number | null>(null);
   const lockAnim = useRef(new Animated.Value(0)).current;
@@ -83,7 +85,12 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
         onCapture({ uri: photo.uri, type: 'image', mode });
       }
     } catch (e) {
-      Alert.alert('Error', 'Could not take photo');
+      showPopup({
+        title: 'Error',
+        message: 'Could not take photo',
+        icon: 'camera-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
@@ -104,7 +111,12 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
       console.error('Recording fail', e);
       setRecording(false);
       setIsLocked(false);
-      Alert.alert('Error', 'Recording failed. Check mic permissions.');
+      showPopup({
+        title: 'Error',
+        message: 'Recording failed. Check mic permissions.',
+        icon: 'mic-off-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
@@ -230,21 +242,21 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                     snap();
                   } else if (mode === 'LIVE') {
                     haptics.medium();
-                    Alert.alert(
-                      'Start Live Stream?',
-                      'Sharing your world in real-time with your campus. Followers will be notified.',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
+                    showPopup({
+                      title: 'Start Live Stream?',
+                      message: 'Sharing your world in real-time with your campus. Followers will be notified.',
+                      icon: 'videocam-outline',
+                      buttons: [
+                        { text: 'Cancel', style: 'cancel', onPress: () => {} },
                         { 
                           text: 'Start Live', 
-                          style: 'default',
                           onPress: () => {
                             haptics.success();
                             onLiveStart?.();
                           }
                         }
                       ]
-                    );
+                    });
                   } else {
                     if (recording && isLocked) {
                       stopRecord();

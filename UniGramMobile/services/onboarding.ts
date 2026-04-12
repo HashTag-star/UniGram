@@ -34,13 +34,27 @@ export async function isOnboardingComplete(userId: string): Promise<boolean> {
   return data?.onboarding_completed ?? false;
 }
 
-export async function getSuggestedUsers(userId: string, limit = 10): Promise<any[]> {
-  const { data, error } = await supabase.rpc('get_suggested_users', {
-    p_user_id: userId,
-    p_limit: limit,
-  });
-  if (error) throw error;
-  return data ?? [];
+export async function getSuggestedUsers(userId: string, limit = 15): Promise<any[]> {
+  // Try the scored RPC first (uses mutual follows + university matching)
+  try {
+    const { data, error } = await supabase.rpc('get_suggested_users', {
+      p_user_id: userId,
+      p_limit: limit,
+    });
+    if (!error && data && data.length > 0) return data;
+  } catch { /* fall through */ }
+
+  // Fallback: return active users ordered by followers_count (works for brand-new users)
+  const { data: fallback } = await supabase
+    .from('profiles')
+    .select('id, username, full_name, avatar_url, is_verified, verification_type, university, major, followers_count')
+    .neq('id', userId)
+    .eq('is_banned', false)
+    .not('username', 'is', null)
+    .order('followers_count', { ascending: false })
+    .limit(limit);
+
+  return (fallback ?? []).map(u => ({ ...u, mutual_friends: 0, follows_me: false }));
 }
 
 export async function updateProfileSetup(userId: string, updates: {

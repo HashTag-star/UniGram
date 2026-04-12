@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
-  Alert,
+  Alert, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { CachedImage } from '../components/CachedImage';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel } from '../services/reels';
@@ -17,6 +18,8 @@ import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { supabase } from '../lib/supabase';
 import { createReport } from '../services/reports';
+import { useHaptics } from '../hooks/useHaptics';
+import { usePopup } from '../context/PopupContext';
 
 const { width, height } = Dimensions.get('window');
 const ITEM_HEIGHT = height;
@@ -52,7 +55,7 @@ const ReelVideo: React.FC<{
 
   useEffect(() => {
     player.muted = muted;
-  }, [muted]);
+  }, [muted, player]);
 
   useEffect(() => {
     if (isActive && !isPaused) {
@@ -60,7 +63,7 @@ const ReelVideo: React.FC<{
     } else {
       player.pause();
     }
-  }, [isActive, isPaused]);
+  }, [isActive, isPaused, player]);
 
   useEffect(() => {
     const sub = player.addListener('timeUpdate', (event) => {
@@ -98,6 +101,7 @@ const ReelItem: React.FC<{
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [following, setFollowing] = useSocialFollow(reel.profiles?.id ?? '', initFollowing);
+  const { success: hapticSuccess, warning: hapticWarning, medium: hapticMedium } = useHaptics();
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showControls, setShowControls] = useState(false);
@@ -107,6 +111,7 @@ const ReelItem: React.FC<{
   const playerRef = useRef<any>(null);
   const lastTapRef = useRef(0);
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
+  const { showPopup } = usePopup();
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const seekBarRef = useRef<View>(null);
@@ -161,55 +166,79 @@ const ReelItem: React.FC<{
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete reel?', 'This action cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' } as const,
-      { 
-        text: 'Delete', 
-        style: 'destructive' as const, 
-        onPress: async () => {
-          try {
-            await deleteReel(reel.id, currentUserId);
-            // Pruning handled by SocialSync event in parent
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          } catch (e: any) {
-            Alert.alert('Error', e.message ?? 'Could not delete reel');
+    showPopup({
+      title: 'Delete reel?',
+      message: 'This action cannot be undone and will remove the reel from your profile.',
+      icon: 'trash-outline',
+      iconColor: '#ef4444',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { 
+          text: 'Delete Permanently', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              await deleteReel(reel.id, currentUserId);
+              hapticSuccess();
+            } catch (e: any) {
+              showPopup({
+                title: 'Error',
+                message: e.message ?? 'Could not delete reel',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
+            }
           }
-        }
-      },
-    ]);
+        },
+      ]
+    });
   };
 
   const handleReport = () => {
-    Alert.alert(
-      'Report Reel',
-      'Why are you reporting this reel?',
-      [
+    showPopup({
+      title: 'Report Reel',
+      message: 'Why are you reporting this reel? Your feedback helps keep the campus safe.',
+      icon: 'flag-outline',
+      buttons: [
         { text: 'Inappropriate Content', onPress: () => submitReport('Inappropriate Content') },
         { text: 'Spam', onPress: () => submitReport('Spam') },
         { text: 'Harassment', onPress: () => submitReport('Harassment') },
         { text: 'Academic Fraud', onPress: () => submitReport('Academic Fraud') },
-        { text: 'Other', onPress: () => submitReport('Other') },
-        { text: 'Cancel', style: 'cancel' }
+        { text: 'Cancel', style: 'cancel', onPress: () => {} }
       ]
-    );
+    });
   };
 
   const submitReport = async (reason: string) => {
     try {
       await createReport(reel.id, 'reel', reason);
-      Alert.alert('Report Received', 'Thank you for helping keep UniGram safe. Our moderators will review this shortly.');
+      showPopup({
+        title: 'Report Received',
+        message: 'Thank you. Our moderators will review this shortly.',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#10b981',
+        buttons: [{ text: 'Done', onPress: () => {} }]
+      });
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showPopup({
+        title: 'Error',
+        message: e.message,
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     }
   };
 
   const showOptions = () => {
     const isMe = reel.user_id === currentUserId;
-    Alert.alert('Options', '', [
-      { text: 'Cancel', style: 'cancel' } as const,
-      { text: 'Report', onPress: handleReport },
-      ...(isMe ? [{ text: 'Delete', style: 'destructive', onPress: handleDelete } as const] : [])
-    ]);
+    showPopup({
+      title: 'Options',
+      buttons: [
+        { text: 'Report', onPress: handleReport },
+        ...(isMe ? [{ text: 'Delete', style: 'destructive', onPress: handleDelete } as const] : []),
+        { text: 'Cancel', style: 'cancel', onPress: () => {} }
+      ]
+    });
   };
 
   const showHeartAnim = () => {
@@ -264,16 +293,16 @@ const ReelItem: React.FC<{
       player.seekBy(-10);
       setSeekFeedback('back');
       setTimeout(() => setSeekFeedback(null), 600);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      hapticWarning();
     } else if (x > width * 0.65) {
       player.seekBy(10);
       setSeekFeedback('forward');
       setTimeout(() => setSeekFeedback(null), 600);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      hapticWarning();
     } else {
       if (!liked) toggleLike();
       showHeartAnim();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      hapticMedium();
     }
   };
 
@@ -309,7 +338,7 @@ const ReelItem: React.FC<{
             onPlayerReady={(p) => { playerRef.current = p; }}
           />
         ) : reel.thumbnail_url ? (
-          <Image source={{ uri: reel.thumbnail_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
         ) : (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
             <Ionicons name="film-outline" size={64} color="#333" />
@@ -317,7 +346,12 @@ const ReelItem: React.FC<{
         )}
       </Pressable>
 
-      <View style={styles.gradient} pointerEvents="none" />
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.85)']}
+        locations={[0, 0.55, 1]}
+        style={styles.gradient}
+        pointerEvents="none"
+      />
 
       {/* Center overlays */}
       <View style={styles.centerOverlay} pointerEvents="none">
@@ -374,11 +408,11 @@ const ReelItem: React.FC<{
       <View style={[styles.bottomInfo, { bottom: 30 + insets.bottom }]}>
         <View style={styles.userRow}>
           {profile?.avatar_url
-            ? <Image source={{ uri: profile.avatar_url }} style={styles.reelAvatar} />
+            ? <CachedImage uri={profile.avatar_url} style={styles.reelAvatar} />
             : <View style={[styles.reelAvatar, { backgroundColor: '#222' }]} />
           }
           <Text style={styles.reelUsername}>{profile?.username ?? 'user'}</Text>
-          {profile?.is_verified && <VerifiedBadge type={profile.verification_type} />}
+          {profile?.is_verified && <VerifiedBadge type={profile.verification_type} ringColor="#000" />}
           {profile?.id !== currentUserId && (
             <TouchableOpacity
               onPress={toggleFollow}
@@ -426,6 +460,7 @@ const ReelItem: React.FC<{
         authorId={reel.user_id}
         onClose={() => setShowComments(false)}
         onCountChange={delta => setCommentCount((n: number) => Math.max(0, n + delta))}
+        onCountSync={count => setCommentCount(count)}
       />
 
       <ShareSheet
@@ -504,14 +539,14 @@ export const ReelsScreen: React.FC<{
   if (loading) {
     return (
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <StatusBar hidden />
+        <StatusBar hidden={false} translucent backgroundColor="transparent" />
         {onBack && (
           <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
         )}
-        <Ionicons name="film-outline" size={48} color="#333" />
-        <Text style={{ color: '#555', marginTop: 12 }}>Loading reels...</Text>
+        <ActivityIndicator size="large" color="#818cf8" />
+        <Text style={{ color: 'rgba(255,255,255,0.5)', marginTop: 14, fontSize: 14 }}>Loading reels...</Text>
       </View>
     );
   }
@@ -519,15 +554,15 @@ export const ReelsScreen: React.FC<{
   if (reels.length === 0) {
     return (
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <StatusBar hidden />
+        <StatusBar hidden={false} translucent backgroundColor="transparent" />
         {onBack && (
           <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
         )}
         <Ionicons name="film-outline" size={64} color="#333" />
-        <Text style={{ color: '#555', marginTop: 16, fontSize: 16 }}>No reels yet</Text>
-        <Text style={{ color: '#444', marginTop: 6, fontSize: 13 }}>Post a reel using the + button!</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 16, fontSize: 16, fontWeight: '600' }}>No reels yet</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.4)', marginTop: 6, fontSize: 13 }}>Post a reel using the + button!</Text>
       </View>
     );
   }
@@ -549,7 +584,7 @@ export const ReelsScreen: React.FC<{
               isLiked={likedIds.has(item.id)}
               isFollowingUser={followingIds.has(item.profiles?.id)}
               isActive={index === activeIndex}
-              isAdjacent={Math.abs(index - activeIndex) <= 2}
+              isAdjacent={Math.abs(index - activeIndex) === 1}
               muted={isMuted}
               onMuteToggle={() => setIsMuted(!isMuted)}
               itemHeight={containerHeight}
@@ -557,10 +592,10 @@ export const ReelsScreen: React.FC<{
           )}
           pagingEnabled
           showsVerticalScrollIndicator={false}
-          windowSize={5}
-          maxToRenderPerBatch={3}
-          initialNumToRender={2}
-          removeClippedSubviews={false}
+          windowSize={3}
+          maxToRenderPerBatch={2}
+          initialNumToRender={1}
+          removeClippedSubviews={true}
           getItemLayout={getItemLayout}
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}

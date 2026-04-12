@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { ColorValue } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Theme = 'dark' | 'light';
@@ -21,6 +22,7 @@ export interface ThemeColors {
 }
 
 const DARK: ThemeColors = {
+  background: '#0a0a0a',
   bg: '#0a0a0a',
   bg2: '#111',
   card: 'rgba(255,255,255,0.04)',
@@ -37,6 +39,7 @@ const DARK: ThemeColors = {
 };
 
 const LIGHT: ThemeColors = {
+  background: '#f5f5f7',
   bg: '#f5f5f7',
   bg2: '#ffffff',
   card: 'rgba(0,0,0,0.03)',

@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
+import { AccountService } from './accounts';
 
 export async function getProfile(userId: string) {
   const { data, error } = await supabase
@@ -163,43 +164,28 @@ export async function updateActiveStatus(userId: string) {
 }
 
 /**
- * Performs a cascading delete of all user-generated content.
- * Direct Supabase Auth deletion requires admin keys, so from the client 
- * we delete all associated rows in order.
+ * Performs a secure, complete delete of the user from auth.users.
+ * This triggers cascading deletions across all user data.
  */
 export async function deleteUserAccount(userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
-  // Order matters for some FK constraints
-  const tables = [
-    'notifications',
-    'follows', // where follower
-    'follows', // where following (if they follow themselves? anyway)
-    'reels_likes',
-    'post_likes',
-    'comment_likes',
-    'comments',
-    'reels',
-    'posts',
-    'profiles'
-  ];
-
-  for (const table of tables) {
-    const column = (table === 'follows' && tables.indexOf(table) === 1) ? 'follower_id' : 
-                   (table === 'follows' && tables.indexOf(table) === 2) ? 'following_id' : 'user_id';
-    
-    // Some tables might not have user_id, but profiles has 'id'
-    const targetCol = (table === 'profiles') ? 'id' : column;
-
-    try {
-      await supabase.from(table).delete().eq(targetCol, userId);
-    } catch (e) {
-      console.warn(`[Cleanup] Failed to delete from ${table}:`, e);
-    }
+  // Trigger secure RPC to delete identity from Supabase Auth
+  const { error } = await supabase.rpc('delete_current_user');
+  if (error) {
+    console.error('Account deletion error', error);
+    throw new Error('Could not securely delete account.');
   }
 
-  // Finally sign out
+  // Remove from local multi-account switcher registry
+  try {
+    await AccountService.removeAccount(userId);
+  } catch (e) {
+    console.warn('[Cleanup] Failed to remove account from registry:', e);
+  }
+
+  // Fully sign out and flush the local auth session
   const { error: signOutError } = await supabase.auth.signOut();
   if (signOutError) throw signOutError;
 }

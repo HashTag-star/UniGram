@@ -1,4 +1,4 @@
-import { Alert, Linking } from 'react-native';
+import { Linking } from 'react-native';
 import Constants from 'expo-constants';
 
 // expo-notifications removed from Expo Go in SDK 53
@@ -18,22 +18,13 @@ async function loadImagePicker() {
   try { return await import('expo-image-picker'); } catch { return null; }
 }
 
-function openSettings(feature: string) {
-  Alert.alert(
-    `${feature} Permission Required`,
-    `UniGram needs ${feature.toLowerCase()} access to work properly. Please enable it in Settings.`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Open Settings', onPress: () => Linking.openSettings() },
-    ]
-  );
-}
+// Manual settings opening if needed by UI
+export const goToSettings = () => Linking.openSettings();
 
 export async function requestCameraPermission(): Promise<boolean> {
   const Camera = await loadCamera();
   if (!Camera) return false;
   const { status } = await Camera.Camera.requestCameraPermissionsAsync();
-  if (status === 'denied') openSettings('Camera');
   return status === 'granted';
 }
 
@@ -48,7 +39,6 @@ export async function requestMediaLibraryPermission(): Promise<boolean> {
   const MediaLibrary = await loadMediaLibrary();
   if (!MediaLibrary) return false;
   const { status } = await MediaLibrary.requestPermissionsAsync();
-  if (status === 'denied') openSettings('Photo Library');
   return status === 'granted';
 }
 
@@ -69,7 +59,6 @@ export async function requestImagePickerPermission(): Promise<boolean> {
   const ImagePicker = await loadImagePicker();
   if (!ImagePicker) return false;
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status === 'denied') openSettings('Photo Library');
   return status === 'granted';
 }
 

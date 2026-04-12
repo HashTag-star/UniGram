@@ -41,7 +41,7 @@ export async function signUp(email: string, password: string, username: string, 
 }
 
 export function isUniversityEmail(email: string) {
-  return email.trim().toLowerCase().endsWith('.edu.gh');
+  return email.trim().toLowerCase().includes('.edu') || email.trim().toLowerCase().includes('.ac.');
 }
 
 export async function signIn(email: string, password: string) {

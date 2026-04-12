@@ -25,7 +25,7 @@ export function WelcomeStep({ onNext }: Props) {
     Animated.sequence([
       Animated.spring(logoScale, { toValue: 1, tension: 50, friction: 8, useNativeDriver: true }),
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
         Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 10, useNativeDriver: true }),
       ]),
     ]).start();
@@ -33,28 +33,27 @@ export function WelcomeStep({ onNext }: Props) {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#0f0f1a', '#000']} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={['#09090b', '#000']} style={StyleSheet.absoluteFill} />
 
-      {/* Logo */}
+      {/* Hero Graphic / Badge */}
       <Animated.View style={[styles.logoWrap, { transform: [{ scale: logoScale }] }]}>
-        <LinearGradient colors={['#6366f1', '#4f46e5', '#3730a3']} style={styles.logoGradient}>
-          <Text style={styles.logoLetter}>U</Text>
-        </LinearGradient>
+        <View style={styles.logoBadgeContainer}>
+          <LinearGradient colors={['#a855f7', '#8b5cf6', '#4338ca']} style={styles.logoGradient}>
+            <Ionicons name="sparkles" size={48} color="#fff" />
+          </LinearGradient>
+        </View>
         <View style={styles.logoGlow} />
       </Animated.View>
 
-      <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }], alignItems: 'center' }}>
-        <Text style={styles.title}>Welcome to UniGram</Text>
+      <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }], alignItems: 'flex-start', width: '100%' }}>
+        <Text style={styles.title}>Welcome{'\n'}to UniGram</Text>
         <Text style={styles.subtitle}>The social network built exclusively for your campus community.</Text>
 
         <View style={styles.features}>
           {FEATURES.map((f, i) => (
-            <Animated.View
-              key={f.icon}
-              style={[styles.featureRow, { opacity: fadeAnim }]}
-            >
+            <Animated.View key={f.icon} style={[styles.featureRow, { opacity: fadeAnim }]}>
               <View style={styles.featureIcon}>
-                <Ionicons name={f.icon as any} size={20} color="#818cf8" />
+                <Ionicons name={f.icon as any} size={22} color="#c084fc" />
               </View>
               <Text style={styles.featureText}>{f.label}</Text>
             </Animated.View>
@@ -64,7 +63,7 @@ export function WelcomeStep({ onNext }: Props) {
 
       <Animated.View style={[styles.bottom, { opacity: fadeAnim }]}>
         <TouchableOpacity style={styles.btn} onPress={onNext} activeOpacity={0.85}>
-          <LinearGradient colors={['#6366f1', '#4f46e5']} style={styles.btnGradient}>
+          <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{x:0, y:0}} end={{x:1, y:1}} style={styles.btnGradient}>
             <Text style={styles.btnText}>Get Started</Text>
             <Ionicons name="arrow-forward" size={18} color="#fff" />
           </LinearGradient>
@@ -76,20 +75,21 @@ export function WelcomeStep({ onNext }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'space-between', paddingVertical: 48, paddingHorizontal: 28, minHeight: height - 55 },
-  logoWrap: { alignItems: 'center', marginTop: 20, position: 'relative' },
-  logoGradient: { width: 96, height: 96, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'space-between', paddingVertical: 56, paddingHorizontal: 28, minHeight: height - 55 },
+  logoWrap: { alignItems: 'center', marginTop: 30, position: 'relative' },
+  logoBadgeContainer: { padding: 12, borderRadius: 40, backgroundColor: 'rgba(139,92,246,0.1)' },
+  logoGradient: { width: 100, height: 100, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   logoLetter: { fontSize: 56, fontWeight: '900', color: '#fff' },
-  logoGlow: { position: 'absolute', width: 120, height: 120, borderRadius: 60, backgroundColor: '#4f46e5', opacity: 0.2, top: -12, left: -12 },
-  title: { fontSize: 32, fontWeight: '800', color: '#fff', textAlign: 'center', marginTop: 24, letterSpacing: -0.5 },
-  subtitle: { fontSize: 15, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginTop: 10, lineHeight: 22, paddingHorizontal: 10 },
-  features: { marginTop: 36, gap: 16, width: '100%' },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  featureIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: 'rgba(99,102,241,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
-  featureText: { fontSize: 15, color: 'rgba(255,255,255,0.8)', fontWeight: '500' },
-  bottom: { width: '100%', gap: 14 },
-  btn: { borderRadius: 16, overflow: 'hidden' },
-  btnGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16 },
-  btnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  terms: { color: 'rgba(255,255,255,0.25)', fontSize: 11, textAlign: 'center', lineHeight: 16 },
+  logoGlow: { position: 'absolute', width: 140, height: 140, borderRadius: 70, backgroundColor: '#8b5cf6', opacity: 0.25, top: 4, left: 4 },
+  title: { fontSize: 44, fontWeight: '900', color: '#fff', textAlign: 'left', marginTop: 32, letterSpacing: -1, lineHeight: 48 },
+  subtitle: { fontSize: 16, color: 'rgba(255,255,255,0.4)', textAlign: 'left', marginTop: 12, lineHeight: 24, paddingRight: 40, fontWeight: '500' },
+  features: { marginTop: 40, gap: 20, width: '100%' },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  featureIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(139,92,246,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(139,92,246,0.15)' },
+  featureText: { fontSize: 17, color: 'rgba(255,255,255,0.9)', fontWeight: '600' },
+  bottom: { width: '100%', gap: 16 },
+  btn: { borderRadius: 20, overflow: 'hidden', shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },
+  btnGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 18 },
+  btnText: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  terms: { color: 'rgba(255,255,255,0.3)', fontSize: 12, textAlign: 'center', lineHeight: 18 },
 });

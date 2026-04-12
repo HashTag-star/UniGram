@@ -216,14 +216,27 @@ export async function getSavedPosts(userId: string) {
 }
 
 // Comments
-export async function getPostComments(postId: string) {
+export async function getPostComments(postId: string, currentUserId?: string) {
   const { data, error } = await supabase
     .from('post_comments')
     .select(`*, profiles!post_comments_user_id_fkey(*)`)
     .eq('post_id', postId)
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  const comments = data ?? [];
+
+  if (!currentUserId || comments.length === 0) return comments;
+
+  // Batch-fetch which comments the current user has liked
+  const ids = comments.map((c: any) => c.id);
+  const { data: liked } = await supabase
+    .from('comment_likes')
+    .select('comment_id')
+    .eq('user_id', currentUserId)
+    .in('comment_id', ids);
+
+  const likedSet = new Set((liked ?? []).map((r: any) => r.comment_id));
+  return comments.map((c: any) => ({ ...c, isLiked: likedSet.has(c.id) }));
 }
 
 export async function addPostComment(postId: string, userId: string, text: string, parentId?: string) {

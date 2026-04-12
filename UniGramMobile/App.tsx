@@ -34,6 +34,7 @@ import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
 import { supabase } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
+import { PopupProvider } from './context/PopupContext';
 // Screens will be loaded dynamically if safe
 // import { LiveScreen } from './screens/LiveScreen';
 // import { MediaEditScreen } from './screens/MediaEditScreen';
@@ -50,7 +51,6 @@ const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> 
   { id: 'explore',  icon: 'search-outline',       activeIcon: 'search',      label: 'Explore'  },
   { id: 'reels',    icon: 'film-outline',          activeIcon: 'film',        label: 'Reels'    },
   { id: 'market',   icon: 'bag-outline',           activeIcon: 'bag',         label: 'Market'   },
-  { id: 'messages', icon: 'chatbubble-outline',    activeIcon: 'chatbubble',  label: 'Messages' },
   { id: 'profile',  icon: 'person-outline',        activeIcon: 'person',      label: 'Profile'  },
 ];
 
@@ -66,88 +66,86 @@ const LoadingScreen: React.FC = () => {
   const ring3Scale = useRef(new Animated.Value(0.4)).current;
   const ring3Opacity = useRef(new Animated.Value(0)).current;
 
-  const textSlide = useRef(new Animated.Value(16)).current;
+  const textSlide = useRef(new Animated.Value(20)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
   const indicatorOpacity = useRef(new Animated.Value(0)).current;
+  const bgOrbAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     // Entrance sequence
     Animated.sequence([
-      // Logo springs in
       Animated.parallel([
-        Animated.spring(logoScale, { toValue: 1, tension: 65, friction: 7, useNativeDriver: true }),
-        Animated.timing(logoOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(logoScale, { toValue: 1, tension: 55, friction: 8, useNativeDriver: true }),
+        Animated.timing(logoOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(bgOrbAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
       ]),
-      // Rings cascade out
-      Animated.stagger(80, [
+      Animated.stagger(120, [
         Animated.parallel([
-          Animated.spring(ring1Scale, { toValue: 1, tension: 50, friction: 9, useNativeDriver: true }),
-          Animated.timing(ring1Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.spring(ring1Scale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
+          Animated.timing(ring1Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
         ]),
         Animated.parallel([
-          Animated.spring(ring2Scale, { toValue: 1, tension: 45, friction: 9, useNativeDriver: true }),
-          Animated.timing(ring2Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.spring(ring2Scale, { toValue: 1, tension: 35, friction: 10, useNativeDriver: true }),
+          Animated.timing(ring2Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
         ]),
         Animated.parallel([
-          Animated.spring(ring3Scale, { toValue: 1, tension: 40, friction: 9, useNativeDriver: true }),
-          Animated.timing(ring3Opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.spring(ring3Scale, { toValue: 1, tension: 30, friction: 10, useNativeDriver: true }),
+          Animated.timing(ring3Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
         ]),
       ]),
-      // Text slides up
       Animated.parallel([
-        Animated.spring(textSlide, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
-        Animated.timing(textOpacity, { toValue: 1, duration: 320, useNativeDriver: true }),
+        Animated.spring(textSlide, { toValue: 0, tension: 70, friction: 12, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
       ]),
-      // Spinner
-      Animated.timing(indicatorOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.timing(indicatorOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
     ]).start();
 
-    // Outer ring breathes independently after entrance
     setTimeout(() => {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(ring3Scale, { toValue: 1.12, duration: 1600, useNativeDriver: true }),
-          Animated.timing(ring3Scale, { toValue: 1, duration: 1600, useNativeDriver: true }),
+          Animated.timing(ring3Scale, { toValue: 1.15, duration: 2000, useNativeDriver: true }),
+          Animated.timing(ring3Scale, { toValue: 1, duration: 2000, useNativeDriver: true }),
         ])
       ).start();
-    }, 900);
+    }, 1200);
+
+    // Orb slow pulse
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(bgOrbAnim, { toValue: 1.2, duration: 3000, useNativeDriver: true }),
+        Animated.timing(bgOrbAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
+      ])
+    ).start();
   }, []);
 
   return (
     <View style={loadStyles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#05050a" />
+      <StatusBar barStyle="light-content" backgroundColor="#09090b" />
+
+      {/* Abstract Glowing Aura Orbs */}
+      <Animated.View style={[loadStyles.orb1, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.15, 0.25] }) }]} />
+      <Animated.View style={[loadStyles.orb2, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.1, 0.2] }) }]} />
 
       {/* Background gradient */}
       <LinearGradient
-        colors={['rgba(99,102,241,0.22)', 'rgba(67,56,202,0.1)', 'transparent']}
+        colors={['rgba(139,92,246,0.15)', 'rgba(79,70,229,0.05)', 'transparent']}
         style={[loadStyles.bgGrad, { pointerEvents: 'none' }]}
       />
       <LinearGradient
-        colors={['transparent', 'rgba(79,70,229,0.1)', 'rgba(109,40,217,0.06)']}
+        colors={['transparent', 'rgba(109,40,217,0.1)', 'rgba(76,29,149,0.15)']}
         style={[loadStyles.bgGradBottom, { pointerEvents: 'none' }]}
       />
 
       {/* Concentric rings */}
-      <Animated.View style={[loadStyles.ring, loadStyles.ring3, {
-        transform: [{ scale: ring3Scale }],
-        opacity: ring3Opacity,
-      }]} />
-      <Animated.View style={[loadStyles.ring, loadStyles.ring2, {
-        transform: [{ scale: ring2Scale }],
-        opacity: ring2Opacity,
-      }]} />
-      <Animated.View style={[loadStyles.ring, loadStyles.ring1, {
-        transform: [{ scale: ring1Scale }],
-        opacity: ring1Opacity,
-      }]} />
+      <Animated.View style={[loadStyles.ring, loadStyles.ring3, { transform: [{ scale: ring3Scale }], opacity: ring3Opacity }]} />
+      <Animated.View style={[loadStyles.ring, loadStyles.ring2, { transform: [{ scale: ring2Scale }], opacity: ring2Opacity }]} />
+      <Animated.View style={[loadStyles.ring, loadStyles.ring1, { transform: [{ scale: ring1Scale }], opacity: ring1Opacity }]} />
 
       {/* Logo */}
-      <Animated.View style={[loadStyles.logoWrap, {
-        transform: [{ scale: logoScale }],
-        opacity: logoOpacity,
-      }]}>
+      <Animated.View style={[loadStyles.logoWrap, { transform: [{ scale: logoScale }], opacity: logoOpacity }]}>
+        <View style={loadStyles.logoGlow} />
         <LinearGradient
-          colors={['#818cf8', '#6366f1', '#4338ca']}
+          colors={['#a855f7', '#8b5cf6', '#4338ca']}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
           style={loadStyles.logo}
         >
@@ -156,61 +154,61 @@ const LoadingScreen: React.FC = () => {
       </Animated.View>
 
       {/* Wordmark + tagline */}
-      <Animated.View style={[loadStyles.textWrap, {
-        opacity: textOpacity,
-        transform: [{ translateY: textSlide }],
-      }]}>
+      <Animated.View style={[loadStyles.textWrap, { opacity: textOpacity, transform: [{ translateY: textSlide }] }]}>
         <Text style={loadStyles.appName}>UniGram</Text>
         <Text style={loadStyles.tagline}>Your campus, connected.</Text>
       </Animated.View>
 
       {/* Spinner */}
       <Animated.View style={[loadStyles.indicatorWrap, { opacity: indicatorOpacity }]}>
-        <ActivityIndicator size="small" color="rgba(129,140,248,0.55)" />
+        <ActivityIndicator size="small" color="rgba(167,139,250,0.6)" />
       </Animated.View>
     </View>
   );
 };
 
 const loadStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#05050a', alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: '#09090b', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
 
-  bgGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: '55%' },
-  bgGradBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '35%' },
+  bgGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: '60%' },
+  bgGradBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%' },
+  orb1: { position: 'absolute', width: 400, height: 400, borderRadius: 200, backgroundColor: '#8b5cf6', top: -100, right: -150, opacity: 0.15 },
+  orb2: { position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: '#c084fc', bottom: -50, left: -100, opacity: 0.1 },
 
   ring: {
     position: 'absolute',
     borderRadius: 9999,
-    borderWidth: 1,
+    borderWidth: 1.5,
   },
   ring1: {
-    width: 148, height: 148,
-    borderColor: 'rgba(99,102,241,0.4)',
-    backgroundColor: 'rgba(79,70,229,0.07)',
+    width: 170, height: 170,
+    borderColor: 'rgba(139,92,246,0.3)',
+    backgroundColor: 'rgba(139,92,246,0.04)',
   },
   ring2: {
-    width: 210, height: 210,
-    borderColor: 'rgba(99,102,241,0.2)',
+    width: 250, height: 250,
+    borderColor: 'rgba(139,92,246,0.15)',
     backgroundColor: 'transparent',
   },
   ring3: {
-    width: 284, height: 284,
-    borderColor: 'rgba(99,102,241,0.1)',
+    width: 350, height: 350,
+    borderColor: 'rgba(139,92,246,0.06)',
     backgroundColor: 'transparent',
   },
 
-  logoWrap: { zIndex: 10, marginBottom: 28 },
+  logoWrap: { zIndex: 10, marginBottom: 40, position: 'relative' },
+  logoGlow: { position: 'absolute', width: 140, height: 140, borderRadius: 70, backgroundColor: '#8b5cf6', top: -15, left: -15, opacity: 0.25 },
   logo: {
-    width: 90, height: 90, borderRadius: 28,
+    width: 110, height: 110, borderRadius: 36,
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.75, shadowRadius: 30, elevation: 30,
+    shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.8, shadowRadius: 40, elevation: 30,
   },
-  logoText: { fontSize: 54, fontWeight: '900', color: '#fff', letterSpacing: -2 },
+  logoText: { fontSize: 64, fontWeight: '900', color: '#fff', letterSpacing: -3 },
 
-  textWrap: { alignItems: 'center', gap: 7 },
-  appName: { fontSize: 32, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
-  tagline: { fontSize: 13, color: 'rgba(255,255,255,0.32)', letterSpacing: 0.3 },
+  textWrap: { alignItems: 'center', gap: 8, marginTop: 10 },
+  appName: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: -1.5 },
+  tagline: { fontSize: 15, color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5, fontWeight: '500' },
 
   indicatorWrap: { position: 'absolute', bottom: 64 },
 });
@@ -258,6 +256,8 @@ function AppShell() {
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  // Lazy-mount tabs: a screen only mounts on first visit, then stays alive (display:none)
+  const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
   const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const notifChannelRef = useRef<any>(null);
@@ -533,6 +533,8 @@ function AppShell() {
     if (tab !== 'messages') setInitialConv(null);
     setActiveTab(tab);
     setHideTabBar(false);
+    // Mark tab as mounted so it stays alive after first visit
+    setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
   };
 
   const openNotifications = () => {
@@ -547,11 +549,13 @@ function AppShell() {
 
 
   // Reels is full-screen video — unmount when not active to free GPU/memory.
-  // All other tabs stay permanently mounted so switching is instant (display:none trick).
+  // Other tabs use lazy-mount + display:none: mount on first visit, keep alive after.
   const isReels = activeTab === 'reels';
   const showTabBar = !hideTabBar;
   const TAB_BAR_HEIGHT = 58;
   const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
+  // Returns true if a screen should be rendered (first visit or already visited)
+  const shouldMount = (tab: Tab) => mountedTabs.has(tab) || activeTab === tab;
 
   // Each screen should only be "active" (playing media) if its tab is active
   // AND no full-screen overlays (like Notifications) are currently visible.
@@ -593,6 +597,7 @@ function AppShell() {
                   onCreateStory={() => setShowCreate(true)}
                   onCameraPress={() => pagerRef.current?.setPage(0)}
                   onNotifPress={openNotifications}
+                  onMessagePress={() => setActiveTab('messages')}
                   notifBadge={notifBadge}
                   onReelPress={() => setActiveTab('reels')}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
@@ -600,40 +605,48 @@ function AppShell() {
                   setIsMuted={setGlobalMuted}
                 />
             </View>
-            <View style={[styles.screen, hide('explore')]}>
-              <ExploreScreen
-                isVisible={activeTab === 'explore' && isMainVisible}
-                onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-              />
-            </View>
-            <View style={[styles.screen, hide('market')]}>
-              <MarketScreen 
-                isVisible={activeTab === 'market' && isMainVisible} 
-                onMessagePress={navigateToMessages} 
-                isSuspended={userProfile?.is_suspended}
-              />
-            </View>
-            <View style={[styles.screen, hide('messages')]}>
-              <MessagesScreen
-                isVisible={activeTab === 'messages' && isMainVisible}
-                onChatStateChange={setHideTabBar}
-                initialConv={initialConv}
-              />
-            </View>
-            <View style={[styles.screen, hide('profile')]}>
-              <ProfileScreen
-                key={`${viewedUserId ?? session.user.id}-${profileRefreshKey}`}
-                userId={viewedUserId ?? session.user.id}
-                isOwn={!viewedUserId}
-                isVisible={activeTab === 'profile' && isMainVisible}
-                onVerifyPress={() => setShowVerification(true)}
-                onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
-                onMessagePress={navigateToMessages}
-                onShowPrivacy={() => setActiveLegal('privacy')}
-                onShowTerms={() => setActiveLegal('terms')}
-                onShowGuidelines={() => setActiveLegal('guidelines')}
-              />
-            </View>
+            {shouldMount('explore') && (
+              <View style={[styles.screen, hide('explore')]}>
+                <ExploreScreen
+                  isVisible={activeTab === 'explore' && isMainVisible}
+                  onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
+                />
+              </View>
+            )}
+            {shouldMount('market') && (
+              <View style={[styles.screen, hide('market')]}>
+                <MarketScreen
+                  isVisible={activeTab === 'market' && isMainVisible}
+                  onMessagePress={navigateToMessages}
+                  isSuspended={userProfile?.is_suspended}
+                />
+              </View>
+            )}
+            {shouldMount('messages') && (
+              <View style={[styles.screen, hide('messages')]}>
+                <MessagesScreen
+                  isVisible={activeTab === 'messages' && isMainVisible}
+                  onChatStateChange={setHideTabBar}
+                  initialConv={initialConv}
+                />
+              </View>
+            )}
+            {shouldMount('profile') && (
+              <View style={[styles.screen, hide('profile')]}>
+                <ProfileScreen
+                  key={`${viewedUserId ?? session.user.id}-${profileRefreshKey}`}
+                  userId={viewedUserId ?? session.user.id}
+                  isOwn={!viewedUserId}
+                  isVisible={activeTab === 'profile' && isMainVisible}
+                  onVerifyPress={() => setShowVerification(true)}
+                  onBack={viewedUserId ? () => { setViewedUserId(null); setActiveTab('explore'); } : undefined}
+                  onMessagePress={navigateToMessages}
+                  onShowPrivacy={() => setActiveLegal('privacy')}
+                  onShowTerms={() => setActiveLegal('terms')}
+                  onShowGuidelines={() => setActiveLegal('guidelines')}
+                />
+              </View>
+            )}
 
             {/* Reels: full-screen video, only mount when active to free GPU memory */}
             {isReels && (
@@ -675,11 +688,10 @@ function AppShell() {
                       <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '15' }]}>
                         <Ionicons
                           name={(isActive ? tab.activeIcon : tab.icon) as any}
-                          size={22}
+                          size={26}
                           color={isActive ? colors.accent : colors.textMuted}
                         />
                       </View>
-                      <Text style={[styles.tabLabel, { color: colors.textMuted }, isActive && { color: colors.accent }]}>{tab.label}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -779,11 +791,13 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
-        <BottomSheetModalProvider>
-          <SafeAreaProvider>
-            <AppShell />
-          </SafeAreaProvider>
-        </BottomSheetModalProvider>
+        <PopupProvider>
+          <BottomSheetModalProvider>
+            <SafeAreaProvider>
+              <AppShell />
+            </SafeAreaProvider>
+          </BottomSheetModalProvider>
+        </PopupProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

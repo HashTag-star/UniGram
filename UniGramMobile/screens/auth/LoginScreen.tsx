@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { signIn, signInWithGoogle, sendPasswordReset } from '../../services/auth';
 import { supabase } from '../../lib/supabase';
+import { usePopup } from '../../context/PopupContext';
 
 const { width } = Dimensions.get('window');
 
@@ -173,6 +174,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const { showPopup } = usePopup();
 
   const heroAnim = useRef(new Animated.Value(0)).current;
   const formSlide = useRef(new Animated.Value(50)).current;
@@ -197,7 +199,12 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      showPopup({
+        title: 'Missing fields',
+        message: 'Please enter your email and password.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     setLoading(true);
@@ -213,16 +220,22 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
         if (profile?.is_banned) {
           // Sign them back out right away — no access to the app
           await supabase.auth.signOut();
-          Alert.alert(
-            '🚫 Account Banned',
-            'Your account has been permanently banned from UniGram for violating campus community guidelines.\n\nIf you believe this is a mistake, contact campus support.',
-            [{ text: 'Got it', style: 'destructive' }]
-          );
+          showPopup({
+            title: '🚫 Account Banned',
+            message: 'Your account has been permanently banned from UniGram for violating campus community guidelines.\n\nIf you believe this is a mistake, contact campus support.',
+            icon: 'ban-outline',
+            buttons: [{ text: 'Got it', style: 'destructive', onPress: () => {} }]
+          });
           return;
         }
       }
     } catch (err: any) {
-      Alert.alert('Sign in failed', err.message ?? 'Something went wrong.');
+      showPopup({
+        title: 'Sign in failed',
+        message: err.message ?? 'Something went wrong.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
     }
@@ -235,36 +248,55 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
       // 'cancelled' means user closed the browser — no alert needed
       if (result === 'cancelled') return;
     } catch (err: any) {
-      Alert.alert('Google sign in failed', err.message ?? 'Could not sign in with Google.');
+      showPopup({
+        title: 'Google sign in failed',
+        message: err.message ?? 'Could not sign in with Google.',
+        icon: 'logo-google',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setGoogleLoading(false);
     }
   };
 
-  const handleForgotPassword = () => {
     if (!email.trim()) {
-      Alert.alert('Enter your email', 'Type your email address above, then tap "Forgot password?"');
+      showPopup({
+        title: 'Enter your email',
+        message: 'Type your email address above, then tap "Forgot password?"',
+        icon: 'mail-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
-    Alert.alert(
-      'Reset password',
-      `Send a reset link to ${email.trim()}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showPopup({
+      title: 'Reset password',
+      message: `Send a reset link to ${email.trim()}?`,
+      icon: 'key-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
         {
           text: 'Send',
           onPress: async () => {
             try {
               await sendPasswordReset(email.trim());
-              Alert.alert('Email sent', 'Check your inbox for a password reset link.');
+              showPopup({
+                title: 'Email sent',
+                message: 'Check your inbox for a password reset link.',
+                icon: 'checkmark-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
             } catch (err: any) {
-              Alert.alert('Error', err.message ?? 'Could not send reset email.');
+              showPopup({
+                title: 'Error',
+                message: err.message ?? 'Could not send reset email.',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }]
+              });
             }
           },
         },
       ]
-    );
-  };
+    });
 
   return (
     <View style={styles.container}>

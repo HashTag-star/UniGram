@@ -8,6 +8,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { signUp, signInWithGoogle, checkUsernameAvailable, detectUniversityFromEmail } from '../../services/auth';
+import { usePopup } from '../../context/PopupContext';
 
 interface Props {
   onNavigateLogin: () => void;
@@ -143,6 +144,7 @@ export default function SignupScreen({
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const { showPopup } = usePopup();
 
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
@@ -213,7 +215,12 @@ export default function SignupScreen({
 
   const handleSignup = async () => {
     if (!fullName.trim() || !username.trim() || !email.trim() || !password || !dobDay || !dobMonth || !dobYear) {
-      Alert.alert('Missing fields', 'Please fill in all fields, including your date of birth.');
+      showPopup({
+        title: 'Missing fields',
+        message: 'Please fill in all fields to create your account.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
@@ -225,49 +232,80 @@ export default function SignupScreen({
     if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
 
     if (isNaN(age) || age < 13) {
-      Alert.alert('Ineligible', 'You must be at least 13 years old to join UniGram.');
+      showPopup({
+        title: 'Ineligible',
+        message: 'You must be at least 13 years old to join UniGram.',
+        icon: 'shield-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
-    // Email validation (.edu.gh)
-    if (!email.trim().toLowerCase().endsWith('.edu.gh')) {
-      Alert.alert('University Email Required', 'UniGram is currently exclusive to students with a .edu.gh email address.');
-      return;
-    }
 
     if (!acceptedTerms) {
-      Alert.alert('Terms of Service', 'You must agree to the Terms of Service and Privacy Policy to continue.');
+      showPopup({
+        title: 'Terms of Service',
+        message: 'You must agree to the Terms of Service and Privacy Policy to continue.',
+        icon: 'document-text-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
     if (getStrength(password).level < 2) {
-      Alert.alert('Weak password', 'Use at least 8 characters with a mix of letters and numbers.');
+      showPopup({
+        title: 'Weak password',
+        message: 'Use at least 8 characters with a mix of letters and numbers.',
+        icon: 'lock-open-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
     if (cleanUsername.length < 3) {
-      Alert.alert('Invalid username', 'Username must be at least 3 characters (letters, numbers, _ or .)');
+      showPopup({
+        title: 'Invalid username',
+        message: 'Username must be at least 3 characters.',
+        icon: 'at-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (usernameAvailable === false) {
-      Alert.alert('Username taken', 'Please choose a different username.');
+      showPopup({
+        title: 'Username taken',
+        message: 'Please choose a different username.',
+        icon: 'close-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if (usernameAvailable === null && usernameChecking) {
-      Alert.alert('Please wait', 'Checking username availability...');
+      showPopup({
+        title: 'Please wait',
+        message: 'Checking username availability...',
+        icon: 'time-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     setLoading(true);
     try {
       const dobStr = `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`;
       await signUp(email.trim().toLowerCase(), password, cleanUsername, fullName.trim(), dobStr);
-      Alert.alert(
-        'Almost there!',
-        'Check your email to confirm your account, then sign in.',
-        [{ text: 'OK', onPress: onNavigateLogin }]
-      );
+      showPopup({
+        title: 'Almost there!',
+        message: 'Check your email to confirm your account, then sign in.',
+        icon: 'mail-open-outline',
+        buttons: [{ text: 'OK', onPress: onNavigateLogin }]
+      });
     } catch (err: any) {
-      Alert.alert('Sign up failed', err.message ?? 'Something went wrong.');
+      showPopup({
+        title: 'Sign up failed',
+        message: err.message ?? 'Something went wrong.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLoading(false);
     }
@@ -279,7 +317,12 @@ export default function SignupScreen({
       const result = await signInWithGoogle();
       if (result === 'cancelled') return;
     } catch (err: any) {
-      Alert.alert('Google sign in failed', err.message ?? 'Could not sign in with Google.');
+      showPopup({
+        title: 'Google sign in failed',
+        message: err.message ?? 'Could not sign in with Google.',
+        icon: 'logo-google',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setGoogleLoading(false);
     }

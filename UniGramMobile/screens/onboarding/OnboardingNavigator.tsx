@@ -81,6 +81,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
   progressBar: { height: 3, backgroundColor: '#1a1a1a', marginTop: 52 },
   progressFill: { height: '100%', backgroundColor: '#4f46e5', borderRadius: 2 },
-  slidesWrap: { flex: 1, flexDirection: 'row' },
-  slide: { flex: 0 },
+  slidesWrap: { flex: 1, flexDirection: 'row', width: width * STEPS.length },
+  slide: { height: '100%' },
 });

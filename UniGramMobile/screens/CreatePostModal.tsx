@@ -21,6 +21,8 @@ import { createReel } from '../services/reels';
 import { getFollowing } from '../services/profiles';
 import { supabase } from '../lib/supabase';
 import { MusicPicker } from '../components/MusicPicker';
+import { usePopup } from '../context/PopupContext';
+import { useTheme } from '../context/ThemeContext';
 
 export const SafeBlur = ({ intensity, tint, style, children }: any) => {
   if (SafeModules.hasBlur()) {
@@ -48,10 +50,15 @@ interface Props {
   };
 }
 
-async function requestPickerPermission(): Promise<boolean> {
+async function requestPickerPermission(showPopup: any): Promise<boolean> {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (status !== 'granted') {
-    Alert.alert('Permission needed', 'Please allow photo library access in your device settings.');
+    showPopup({
+      title: 'Permission needed',
+      message: 'Please allow photo library access in your device settings.',
+      icon: 'images-outline',
+      buttons: [{ text: 'OK', onPress: () => {} }]
+    });
     return false;
   }
   return true;
@@ -59,6 +66,8 @@ async function requestPickerPermission(): Promise<boolean> {
 
 export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onPosted, initialType, preCapturedMedia }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const [step, setStep] = useState<'type' | 'compose'>('type');
   const [postType, setPostType] = useState<PostType>(initialType ?? 'post');
   const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
@@ -139,7 +148,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const pickMedia = async (type: PostType) => {
     setPostType(type);
     if (type === 'thread') { setStep('compose'); return; }
-    const ok = await requestPickerPermission();
+    const ok = await requestPickerPermission(showPopup);
     if (!ok) return;
 
     const isStory = type === 'story';
@@ -164,7 +173,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   };
 
   const addMoreMedia = async () => {
-    const ok = await requestPickerPermission();
+    const ok = await requestPickerPermission(showPopup);
     if (!ok) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
@@ -187,7 +196,12 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location access is needed to tag your location.');
+        showPopup({
+          title: 'Permission denied',
+          message: 'Location access is needed to tag your location.',
+          icon: 'location-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
         return;
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -201,7 +215,12 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         setLocation(loc);
       }
     } catch (e) {
-      Alert.alert('Could not get location', 'Please try again or enter manually.');
+      showPopup({
+        title: 'Could not get location',
+        message: 'Please try again or enter manually.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
     } finally {
       setLocationLoading(false);
     }
@@ -228,11 +247,21 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   const handlePost = () => {
     if (postType === 'thread' && !caption.trim()) {
-      Alert.alert('Empty post', 'Write something first.');
+      showPopup({
+        title: 'Empty post',
+        message: 'Write something first.',
+        icon: 'chatbubble-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
     if ((postType === 'post' || postType === 'reel') && mediaAssets.length === 0) {
-      Alert.alert('No media', `Please select ${postType === 'reel' ? 'a video' : 'an image'}.`);
+      showPopup({
+        title: 'No media',
+        message: `Please select ${postType === 'reel' ? 'a video' : 'an image'}.`,
+        icon: 'images-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
       return;
     }
 
@@ -278,7 +307,12 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         DeviceEventEmitter.emit('upload_status', { status: 'success', type: postType });
       } catch (e: any) {
         DeviceEventEmitter.emit('upload_status', { status: 'error', type: postType });
-        Alert.alert('Upload Failed', 'Your post could not be uploaded.');
+        showPopup({
+          title: 'Upload Failed',
+          message: 'Your post could not be uploaded.',
+          icon: 'cloud-offline-outline',
+          buttons: [{ text: 'OK', onPress: () => {} }]
+        });
       }
     };
 
