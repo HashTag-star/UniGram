@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Dimensions, TouchableOpacity,
   Image, ScrollView, TextInput, KeyboardAvoidingView,
-  Platform, Animated, PanResponder, Alert, StatusBar
+  Platform, Animated, PanResponder, Alert, StatusBar, FlatList
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,15 +35,15 @@ try {
 const { width, height } = Dimensions.get('window');
 
 interface MediaEditScreenProps {
-  uri: string;
-  type: 'image' | 'video';
+  items: Array<{ uri: string; type: 'image' | 'video' }>;
   mode: 'POST' | 'STORY' | 'REEL';
-  onNext: (editedMedia: { 
+  onNext: (editedItems: Array<{ 
     uri: string; 
+    type: 'image' | 'video';
     filters?: string; 
     textOverlays?: any[]; 
     music?: any;
-  }) => void;
+  }>) => void;
   onCancel: () => void;
 }
 
@@ -56,29 +56,46 @@ const FILTERS = [
   { id: 'sepia', name: 'Earlybird', color: 'rgba(112, 66, 20, 0.25)', overlay: 'rgba(112, 66, 20, 0.15)' },
 ];
 
-export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mode, onNext, onCancel }) => {
+export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, onNext, onCancel }) => {
   const insets = useSafeAreaInsets();
   const haptics = useHaptics();
   const { colors } = useTheme();
 
-  const [activeFilter, setActiveFilter] = useState(FILTERS[0]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  // Track state for each item individually
+  const [itemsState, setItemsState] = useState(
+    items.map(item => ({
+      uri: item.uri,
+      type: item.type,
+      activeFilter: FILTERS[0],
+      textItems: [] as any[],
+      music: null as any,
+    }))
+  );
+
+  const currentItem = itemsState[currentIndex];
+
   const [showFilters, setShowFilters] = useState(false);
   const [showMusicPicker, setShowMusicPicker] = useState(false);
-  const [selectedMusic, setSelectedMusic] = useState<any>(null);
-  const [textItems, setTextItems] = useState<any[]>([]);
   const [isAddingText, setIsAddingText] = useState(false);
   const [currentText, setCurrentText] = useState('');
 
+  const updateCurrentItem = (patch: Partial<(typeof itemsState)[0]>) => {
+    setItemsState(prev => prev.map((it, i) => i === currentIndex ? { ...it, ...patch } : it));
+  };
+
   const handleAddText = () => {
     if (currentText.trim()) {
-      setTextItems([...textItems, {
+      const newText = {
         id: Date.now().toString(),
         text: currentText,
         x: width / 2 - 50,
         y: height / 2 - 20,
         color: '#fff',
         fontSize: 24,
-      }]);
+      };
+      updateCurrentItem({ textItems: [...currentItem.textItems, newText] });
       setCurrentText('');
       setIsAddingText(false);
       haptics.medium();
@@ -87,25 +104,49 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
     }
   };
 
+  const currentTextItems = currentItem.textItems;
+
   return (
     <View style={styles.container}>
       <StatusBar hidden />
       
       {/* Background Media */}
+      {/* Background Media */}
       <View style={styles.mediaContainer}>
-        {type === 'image' ? (
-          <Image source={{ uri }} style={styles.fullMedia} resizeMode="contain" />
-        ) : (
-          <VideoPreview uri={uri} />
-        )}
-        
-        {/* Filter Overlay */}
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: activeFilter.overlay }]} pointerEvents="none" />
+        <FlatList
+          data={itemsState}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={(e) => {
+            const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+            setCurrentIndex(idx);
+          }}
+          keyExtractor={(_, i) => String(i)}
+          renderItem={({ item }) => (
+            <View style={{ width, height: '100%' }}>
+              {item.type === 'image' ? (
+                <Image source={{ uri: item.uri }} style={styles.fullMedia} resizeMode="contain" />
+              ) : (
+                <VideoPreview uri={item.uri} />
+              )}
+              {/* Filter Overlay */}
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: item.activeFilter.overlay }]} pointerEvents="none" />
+            </View>
+          )}
+        />
       </View>
 
-      {/* Text Overlays */}
-      {textItems.map((item) => (
-        <DraggableText key={item.id} item={item} />
+      {/* Text Overlays - Only show for current item */}
+      {currentTextItems.map((item) => (
+        <DraggableText 
+          key={item.id} 
+          item={item} 
+          onUpdate={(patch) => {
+            const nextTexts = currentTextItems.map(t => t.id === item.id ? { ...t, ...patch } : t);
+            updateCurrentItem({ textItems: nextTexts });
+          }}
+        />
       ))}
 
       {/* Top Tools */}
@@ -128,10 +169,10 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
             <Ionicons name="color-filter" size={26} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity 
-            style={[styles.iconBtn, selectedMusic && { backgroundColor: colors.accent + '30' }]} 
+            style={[styles.iconBtn, currentItem.music && { backgroundColor: colors.accent + '30' }]} 
             onPress={() => setShowMusicPicker(true)}
           >
-            <Ionicons name="musical-notes" size={26} color={selectedMusic ? colors.accent : "#fff"} />
+            <Ionicons name="musical-notes" size={26} color={currentItem.music ? colors.accent : "#fff"} />
           </TouchableOpacity>
         </View>
       </LinearGradient>
@@ -147,14 +188,15 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
 
         <TouchableOpacity 
           style={styles.nextBtn} 
-          onPress={() => onNext({ 
-            uri, 
-            filters: activeFilter.id, 
-            textOverlays: textItems,
-            music: selectedMusic
-          })}
+          onPress={() => onNext(itemsState.map(it => ({
+            uri: it.uri,
+            type: it.type,
+            filters: it.activeFilter.id,
+            textOverlays: it.textItems,
+            music: it.music
+          })))}
         >
-          <Text style={styles.nextBtnText}>{mode === 'STORY' ? 'Your Story' : 'Next'}</Text>
+          <Text style={styles.nextBtnText}>{mode === 'STORY' ? 'Your Story' : 'Submit'}</Text>
           <Ionicons name="chevron-forward" size={20} color="#000" />
         </TouchableOpacity>
       </LinearGradient>
@@ -167,14 +209,14 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
             {FILTERS.map((f) => (
               <TouchableOpacity
                 key={f.id}
-                onPress={() => { setActiveFilter(f); haptics.selection(); }}
+                onPress={() => { updateCurrentItem({ activeFilter: f }); haptics.selection(); }}
                 style={styles.filterItem}
               >
                 <View style={[styles.filterPreview, { backgroundColor: f.color }]}>
-                   <Image source={{ uri }} style={styles.filterPreviewImg} resizeMode="contain" />
+                   <Image source={{ uri: currentItem.uri }} style={styles.filterPreviewImg} resizeMode="contain" />
                    <View style={[StyleSheet.absoluteFill, { backgroundColor: f.overlay }]} />
                 </View>
-                <Text style={[styles.filterName, activeFilter.id === f.id && styles.filterNameActive]}>
+                <Text style={[styles.filterName, currentItem.activeFilter.id === f.id && styles.filterNameActive]}>
                   {f.name}
                 </Text>
               </TouchableOpacity>
@@ -214,7 +256,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ uri, type, mod
         visible={showMusicPicker} 
         onClose={() => setShowMusicPicker(false)} 
         onSelect={(music) => {
-          setSelectedMusic(music);
+          updateCurrentItem({ music });
           haptics.success();
         }}
       />
@@ -261,7 +303,7 @@ const LegacyVideoPlayer = ({ uri }: { uri: string }) => {
 
 
 
-const DraggableText = ({ item }: { item: any }) => {
+const DraggableText = ({ item, onUpdate }: { item: any, onUpdate?: (patch: any) => void }) => {
   const pan = useRef(new Animated.ValueXY({ x: item.x, y: item.y })).current;
 
   const panResponder = useRef(
@@ -279,6 +321,7 @@ const DraggableText = ({ item }: { item: any }) => {
       ),
       onPanResponderRelease: () => {
         pan.flattenOffset();
+        onUpdate?.({ x: (pan.x as any)._value, y: (pan.y as any)._value });
       },
     })
   ).current;

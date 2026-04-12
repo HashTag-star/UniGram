@@ -226,24 +226,29 @@ function AppShell() {
   const [isLive, setIsLive] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true);
 
-  const handleCapture = (media: any) => {
-    setActiveMedia(media);
+  const handleCapture = (items: any[]) => {
+    setActiveMedia(items);
     // Stay on Page 0 (Camera side) but show the Edit full-screen overlay
   };
 
-  const handleEditNext = (edited: any) => {
+  const handleEditNext = (editedItems: any[]) => {
     // If it's a story, we can post it right away. 
     // If it's a post/reel, we move to the final CreatePostModal.
-    const mode = activeMedia.mode;
+    const mode = activeMedia[0].mode;
     if (mode === 'STORY') {
       setActiveMedia(null);
       pagerRef.current?.setPage(1);
-      // Logic to actually upload story...
-      createStory(session.user.id, edited.uri).then(() => {
-        setFeedRefreshKey(k => k + 1);
+      // Post all as stories
+      editedItems.forEach(item => {
+        createStory(session.user.id, item.uri);
       });
+      setFeedRefreshKey(k => k + 1);
     } else {
-      setActiveMedia({ ...activeMedia, ...edited });
+      // For POST/REEL, we merge edited info back
+      setActiveMedia(editedItems.map((it, idx) => ({
+        ...activeMedia[idx],
+        ...it
+      })));
       setShowCreate(true);
     }
   };
@@ -722,9 +727,8 @@ function AppShell() {
             const { MediaEditScreen } = require('./screens/MediaEditScreen');
             return (
               <MediaEditScreen
-                uri={activeMedia.uri}
-                type={activeMedia.type}
-                mode={activeMedia.mode}
+                items={activeMedia}
+                mode={activeMedia[0].mode}
                 onNext={handleEditNext}
                 onCancel={() => setActiveMedia(null)}
               />
@@ -750,13 +754,13 @@ function AppShell() {
         userId={session.user.id}
         onClose={() => { setShowCreate(false); setActiveMedia(null); }}
         onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); }}
-        preCapturedMedia={activeMedia ? { 
-          uri: activeMedia.uri, 
-          type: activeMedia.type, 
-          mode: (activeMedia.mode === 'POST' ? 'post' : activeMedia.mode === 'REEL' ? 'reel' : 'story'),
-          song: activeMedia.music ? `${activeMedia.music.trackName} — ${activeMedia.music.artistName}` : undefined,
-          songPreviewUrl: activeMedia.music?.previewUrl
-        } : undefined}
+        preCapturedMedia={activeMedia ? activeMedia.map((m: any) => ({ 
+          uri: m.uri, 
+          type: m.type, 
+          mode: (m.mode === 'POST' ? 'post' : m.mode === 'REEL' ? 'reel' : 'story'),
+          song: m.music ? `${m.music.trackName} — ${m.music.artistName}` : undefined,
+          songPreviewUrl: m.music?.previewUrl
+        })) : undefined}
       />
 
       {activeLegal === 'privacy' && (

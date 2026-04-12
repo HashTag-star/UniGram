@@ -41,13 +41,13 @@ interface Props {
   onClose: () => void;
   onPosted?: (optimisticPost?: any) => void;
   initialType?: PostType;
-  preCapturedMedia?: { 
+  preCapturedMedia?: Array<{ 
     uri: string; 
     type: 'image' | 'video'; 
     mode: PostType;
     song?: string;
     songPreviewUrl?: string;
-  };
+  }>;
 }
 
 async function requestPickerPermission(showPopup: any): Promise<boolean> {
@@ -99,11 +99,17 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           setIsSuspended(!!data?.is_suspended);
         });
 
-      if (preCapturedMedia) {
-        setPostType(preCapturedMedia.mode);
-        setMediaAssets([{ uri: preCapturedMedia.uri, type: preCapturedMedia.type === 'video' ? 'video' : 'image' } as any]);
-        if (preCapturedMedia.song) setSong(preCapturedMedia.song);
-        if (preCapturedMedia.songPreviewUrl) setSongPreviewUrl(preCapturedMedia.songPreviewUrl);
+      if (preCapturedMedia && preCapturedMedia.length > 0) {
+        setPostType(preCapturedMedia[0].mode);
+        setMediaAssets(preCapturedMedia.map(m => ({
+          uri: m.uri,
+          type: m.type === 'video' ? 'video' : 'image'
+        } as any)));
+        
+        // Use music from first item if present
+        if (preCapturedMedia[0].song) setSong(preCapturedMedia[0].song);
+        if (preCapturedMedia[0].songPreviewUrl) setSongPreviewUrl(preCapturedMedia[0].songPreviewUrl);
+        
         setStep('compose');
       }
     }

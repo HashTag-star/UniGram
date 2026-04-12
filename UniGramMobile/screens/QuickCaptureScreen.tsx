@@ -17,7 +17,7 @@ const { width, height } = Dimensions.get('window');
 interface QuickCaptureScreenProps {
   isVisible: boolean;
   onClose?: () => void;
-  onCapture: (media: { uri: string; type: 'image' | 'video'; mode: Mode }) => void;
+  onCapture: (items: Array<{ uri: string; type: 'image' | 'video'; mode: Mode }>) => void;
   onLiveStart?: () => void;
 }
 
@@ -46,6 +46,8 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
   // Animation for shutter button
   const shutterScale = useRef(new Animated.Value(1)).current;
   const timerInterval = useRef<any>(null);
+  const longPressTimer = useRef<any>(null);
+  const pressStartTime = useRef<number>(0);
 
   useEffect(() => {
     if (isVisible) {
@@ -82,7 +84,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
         exif: false,
       });
       if (photo) {
-        onCapture({ uri: photo.uri, type: 'image', mode });
+        onCapture([{ uri: photo.uri, type: 'image', mode }]);
       }
     } catch (e) {
       showPopup({
@@ -105,7 +107,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
         maxDuration: 60,
       });
       if (video) {
-        onCapture({ uri: video.uri, type: 'video', mode });
+        onCapture([{ uri: video.uri, type: 'video', mode }]);
       }
     } catch (e) {
       console.error('Recording fail', e);
@@ -130,19 +132,20 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
     setRecording(false);
     setIsLocked(false);
   };
-
   const pickGallery = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: mode === 'POST' ? 'images' : 'videos',
-      allowsEditing: true,
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
       quality: 0.85,
     });
-    if (!res.canceled && res.assets?.[0]) {
-      onCapture({ 
-        uri: res.assets[0].uri, 
-        type: res.assets[0].type === 'video' ? 'video' : 'image',
+    if (!res.canceled && res.assets?.length > 0) {
+      const items = res.assets.map(asset => ({
+        uri: asset.uri,
+        type: (asset.type === 'video' || asset.duration) ? 'video' : 'image' as any,
         mode
-      });
+      }));
+      onCapture(items);
     }
   };
 
@@ -238,9 +241,14 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                 onStartShouldSetResponder={() => true}
                 onResponderGrant={(evt) => {
                   startTouchY.current = evt.nativeEvent.pageY;
-                  if (mode === 'POST') {
-                    snap();
-                  } else if (mode === 'LIVE') {
+                  pressStartTime.current = Date.now();
+                  
+                  if (mode === 'REEL') {
+                    if (recording) stopRecord(); else startRecord();
+                    return;
+                  }
+
+                  if (mode === 'LIVE') {
                     haptics.medium();
                     showPopup({
                       title: 'Start Live Stream?',
@@ -257,16 +265,15 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                         }
                       ]
                     });
-                  } else {
-                    if (recording && isLocked) {
-                      stopRecord();
-                      return;
-                    }
-                    // Slight delay for long press feel
-                    setTimeout(() => {
-                      if (startTouchY.current !== null) startRecord();
-                    }, 200);
+                    return;
                   }
+
+                  // STORY or POST: Potential long press for video
+                  longPressTimer.current = setTimeout(() => {
+                    if (startTouchY.current !== null) {
+                      startRecord();
+                    }
+                  }, 450); // standard long press threshold
                 }}
                 onResponderMove={(evt) => {
                   if (recording && startTouchY.current && !isLocked) {
@@ -280,10 +287,21 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                   }
                 }}
                 onResponderRelease={() => {
-                  startTouchY.current = null;
-                  if (recording && !isLocked) {
-                    stopRecord();
+                  const duration = Date.now() - pressStartTime.current;
+                  clearTimeout(longPressTimer.current);
+
+                  if (mode === 'REEL') {
+                    // Already handled in Grant for toggle behavior
+                  } else if (mode === 'POST' || mode === 'STORY') {
+                    if (recording) {
+                      stopRecord();
+                    } else if (duration < 450) {
+                      // It was a tap
+                      snap();
+                    }
                   }
+
+                  startTouchY.current = null;
                   if (!isLocked) lockAnim.setValue(0);
                 }}
               >

@@ -829,24 +829,7 @@ const MediaCarousel: React.FC<{
       runOnJS(onDoubleTap)();
     });
 
-  const panGesture = Gesture.Pan()
-    .activeOffsetX([-10, 10]) // Movement threshold for direction locking
-    .onStart(() => {
-      isSwiping.value = true;
-    })
-    .onUpdate((e) => {
-      translateX.value = e.translationX;
-    })
-    .onEnd(() => {
-      isSwiping.value = false;
-      translateX.value = withSpring(0);
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value * 0.2 }],
-  }));
-
-  const composedGesture = Gesture.Exclusive(doubleTapGesture, tapGesture, panGesture);
+  const composedGesture = Gesture.Exclusive(doubleTapGesture, tapGesture);
 
   return (
     <View style={{ height: containerHeight }}>
@@ -873,7 +856,7 @@ const MediaCarousel: React.FC<{
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
           <GestureDetector gesture={composedGesture}>
-            <Reanimated.View style={[{ width, height: containerHeight, overflow: 'hidden' }, animatedStyle]}>
+            <View style={{ width, height: containerHeight, overflow: 'hidden' }}>
               {type === 'video' ? (
                 <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={aspectRatio} />
               ) : (
@@ -894,7 +877,7 @@ const MediaCarousel: React.FC<{
                   />
                 </View>
               )}
-            </Reanimated.View>
+            </View>
           </GestureDetector>
         )}
       />
@@ -1799,7 +1782,18 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     };
   }, [handlePostDeleted]);
 
-  const onRefresh = () => { setRefreshing(true); load(true); };
+  const handleOpenComments = useCallback((id: string, authorId: string) => {
+    setShowCommentsId(id);
+    setShowCommentsType('post');
+    setShowCommentsAuthorId(authorId);
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    load(true);
+  }, [load]);
+
+  const onRefresh = handleRefresh;
 
   // Inject reel strip (after 3rd post) and suggestion cards (after 8th post)
   const feedItems = React.useMemo(() => {
@@ -1890,9 +1884,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         keyExtractor={p => p.id}
         onScroll={handleScroll}
         scrollEventThrottle={16}
-        windowSize={3}
-        maxToRenderPerBatch={2}
-        initialNumToRender={2}
+        windowSize={5}
+        maxToRenderPerBatch={5}
+        updateCellsBatchingPeriod={30}
+        initialNumToRender={4}
         removeClippedSubviews={Platform.OS === 'android'}
         ListHeaderComponent={
           <>
@@ -1914,8 +1909,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               <CampusPulse 
                 userId={currentUserId} 
                 onPostPress={(post) => {
-                  // Direct navigation to post or open in modal... 
-                  // For now, let's keep it simple.
+                  // Direct navigation to post
                 }} 
               />
             )}
@@ -1928,7 +1922,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
             <Text style={{ color: colors.textMuted, marginTop: 12, fontSize: 15 }}>Follow people to see their posts!</Text>
           </View>
         )}
-        renderItem={({ item }) => {
+        renderItem={useCallback(({ item }: any) => {
           if (item._type === 'reels_strip') {
             return <ReelStripRow reels={item.reels} onSeeAll={onReelPress} colors={colors} />;
           }
@@ -1952,16 +1946,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               isMuted={isMuted}
               setIsMuted={setIsMuted}
               onCommentCountChange={handleCommentCountChange}
-              onOpenComments={(id, authorId) => {
-                setShowCommentsId(id);
-                setShowCommentsType('post');
-                setShowCommentsAuthorId(authorId);
-              }}
+              onOpenComments={handleOpenComments}
               onDeleted={handlePostDeleted}
               onUserPress={onUserPress}
             />
           );
-        }}
+        }, [likedIds, savedIds, isVisible, activePostId, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}
