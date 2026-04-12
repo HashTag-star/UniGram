@@ -9,7 +9,8 @@ import {
   Clock,
   BrainCircuit,
   Search,
-  Filter
+  Filter,
+  AlertTriangle
 } from "lucide-react";
 
 interface VerificationRequest {
@@ -22,13 +23,14 @@ interface VerificationRequest {
   reason: string;
   document_urls: string[];
   status: 'pending' | 'approved' | 'rejected';
-  created_at: string;
+  submitted_at: string;
   sheerid_verified: boolean;
 }
 
 export default function VerificationsPage() {
   const [requests, setRequests] = useState<VerificationRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState("all");
 
@@ -38,16 +40,18 @@ export default function VerificationsPage() {
 
   const fetchRequests = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const { data, error } = await supabase
         .from('verification_requests')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('submitted_at', { ascending: false });
 
       if (error) throw error;
       setRequests(data || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching verifications:", error);
+      setErrorMessage(error.message || "An unknown error occurred");
     } finally {
       setLoading(false);
     }
@@ -81,8 +85,10 @@ export default function VerificationsPage() {
   };
 
   const filteredRequests = requests.filter(r => {
-    const matchesSearch = r.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          r.university.toLowerCase().includes(searchQuery.toLowerCase());
+    const fullName = r.full_name || "";
+    const university = r.university || "";
+    const matchesSearch = fullName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          university.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = filter === "all" || r.status === filter;
     return matchesSearch && matchesFilter;
   });
@@ -138,6 +144,14 @@ export default function VerificationsPage() {
           </select>
         </div>
       </div>
+
+      {/* Error Alert */}
+      {errorMessage && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl flex items-center gap-3">
+          <AlertTriangle size={20} />
+          <p className="text-sm font-medium">Database Error: {errorMessage}</p>
+        </div>
+      )}
 
       {/* Table/List */}
       <div className="glass rounded-3xl overflow-hidden">
@@ -198,7 +212,7 @@ export default function VerificationsPage() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-2">
-                      {req.document_urls.map((url, idx) => (
+                      {req.document_urls?.map((url, idx) => (
                         <a 
                           key={idx} 
                           href={url} 

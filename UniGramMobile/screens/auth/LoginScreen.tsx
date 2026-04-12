@@ -258,7 +258,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
       setGoogleLoading(false);
     }
   };
-
+  const handleForgotPassword = () => {
     if (!email.trim()) {
       showPopup({
         title: 'Enter your email',
@@ -297,6 +297,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
         },
       ]
     });
+  };
 
   return (
     <View style={styles.container}>

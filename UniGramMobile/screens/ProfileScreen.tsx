@@ -136,6 +136,14 @@ export const ProfileScreen: React.FC<Props> = ({
     }
   }, [isOwn]);
 
+  // Refresh account list every time the switcher opens so deleted accounts
+  // don't linger after removeAccount has already cleared them from storage.
+  useEffect(() => {
+    if (showAccountSwitcher) {
+      AccountService.getAccounts().then(setActiveAccounts);
+    }
+  }, [showAccountSwitcher]);
+
   useEffect(() => {
     const sub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
       setReels(prev => prev.filter(r => r.id !== targetId));
