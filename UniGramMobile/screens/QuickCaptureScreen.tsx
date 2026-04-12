@@ -46,8 +46,10 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
   // Animation for shutter button
   const shutterScale = useRef(new Animated.Value(1)).current;
   const timerInterval = useRef<any>(null);
-  const longPressTimer = useRef<any>(null);
   const pressStartTime = useRef<number>(0);
+  // Long-press progress ring (POST/STORY mode)
+  const longPressProgress = useRef(new Animated.Value(0)).current;
+  const longPressAnim = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (isVisible) {
@@ -242,11 +244,6 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                 onResponderGrant={(evt) => {
                   startTouchY.current = evt.nativeEvent.pageY;
                   pressStartTime.current = Date.now();
-                  
-                  if (mode === 'REEL') {
-                    if (recording) stopRecord(); else startRecord();
-                    return;
-                  }
 
                   if (mode === 'LIVE') {
                     haptics.medium();
@@ -256,8 +253,8 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                       icon: 'videocam-outline',
                       buttons: [
                         { text: 'Cancel', style: 'cancel', onPress: () => {} },
-                        { 
-                          text: 'Start Live', 
+                        {
+                          text: 'Start Live',
                           onPress: () => {
                             haptics.success();
                             onLiveStart?.();
@@ -268,12 +265,24 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                     return;
                   }
 
-                  // STORY or POST: Potential long press for video
-                  longPressTimer.current = setTimeout(() => {
-                    if (startTouchY.current !== null) {
+                  if (mode === 'REEL') {
+                    // Toggle on release — just set state here
+                    return;
+                  }
+
+                  // POST / STORY: animate ring then start video after threshold
+                  longPressProgress.setValue(0);
+                  longPressAnim.current = Animated.timing(longPressProgress, {
+                    toValue: 1,
+                    duration: 450,
+                    useNativeDriver: false,
+                  });
+                  longPressAnim.current.start(({ finished }) => {
+                    if (finished && startTouchY.current !== null) {
+                      haptics.medium();
                       startRecord();
                     }
-                  }, 450); // standard long press threshold
+                  });
                 }}
                 onResponderMove={(evt) => {
                   if (recording && startTouchY.current && !isLocked) {
@@ -288,25 +297,44 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                 }}
                 onResponderRelease={() => {
                   const duration = Date.now() - pressStartTime.current;
-                  clearTimeout(longPressTimer.current);
+
+                  // Cancel long-press ring animation
+                  longPressAnim.current?.stop();
+                  Animated.timing(longPressProgress, { toValue: 0, duration: 150, useNativeDriver: false }).start();
 
                   if (mode === 'REEL') {
-                    // Already handled in Grant for toggle behavior
+                    // Tap to toggle recording
+                    if (recording) stopRecord(); else startRecord();
                   } else if (mode === 'POST' || mode === 'STORY') {
                     if (recording) {
                       stopRecord();
                     } else if (duration < 450) {
-                      // It was a tap
+                      // Quick tap → photo
                       snap();
                     }
+                    // If duration >= 450 the animation already triggered startRecord
                   }
 
                   startTouchY.current = null;
                   if (!isLocked) lockAnim.setValue(0);
                 }}
               >
+                {/* Long-press progress ring — visible in POST/STORY before video starts */}
+                {(mode === 'POST' || mode === 'STORY') && !recording && (
+                  <Animated.View style={[
+                    styles.shutterOuter,
+                    {
+                      position: 'absolute',
+                      borderColor: longPressProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['rgba(255,255,255,0)', '#ff3b30'],
+                      }),
+                      transform: [{ scale: longPressProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
+                    },
+                  ]} />
+                )}
                 <Animated.View style={[
-                  styles.shutterOuter, 
+                  styles.shutterOuter,
                   recording && styles.shutterOuterRecording,
                   { transform: [{ scale: shutterScale }] }
                 ]}>

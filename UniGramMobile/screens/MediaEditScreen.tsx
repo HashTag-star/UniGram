@@ -118,6 +118,12 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
+          decelerationRate={0.992}
+          bounces={false}
+          disableIntervalMomentum
+          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
           onMomentumScrollEnd={(e) => {
             const idx = Math.round(e.nativeEvent.contentOffset.x / width);
             setCurrentIndex(idx);
@@ -177,6 +183,15 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
         </View>
       </LinearGradient>
 
+      {/* Multi-item dots */}
+      {itemsState.length > 1 && (
+        <View style={styles.editDots}>
+          {itemsState.map((_, i) => (
+            <View key={i} style={[styles.editDot, i === currentIndex && styles.editDotActive]} />
+          ))}
+        </View>
+      )}
+
       {/* Bottom Actions */}
       <LinearGradient
         colors={['transparent', 'rgba(0,0,0,0.8)']}
@@ -186,8 +201,8 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
           <Ionicons name="download-outline" size={24} color="#fff" />
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.nextBtn} 
+        <TouchableOpacity
+          style={styles.nextBtn}
           onPress={() => onNext(itemsState.map(it => ({
             uri: it.uri,
             type: it.type,
@@ -196,7 +211,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
             music: it.music
           })))}
         >
-          <Text style={styles.nextBtnText}>{mode === 'STORY' ? 'Your Story' : 'Submit'}</Text>
+          <Text style={styles.nextBtnText}>{mode === 'STORY' ? 'Your Story' : 'Next'}</Text>
           <Ionicons name="chevron-forward" size={20} color="#000" />
         </TouchableOpacity>
       </LinearGradient>
@@ -377,6 +392,13 @@ const styles = StyleSheet.create({
   },
   nextBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
   
+  editDots: {
+    position: 'absolute', bottom: 110, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', gap: 6, zIndex: 150,
+  },
+  editDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
+  editDotActive: { backgroundColor: '#fff', width: 18, borderRadius: 3 },
+
   filterSelector: {
     position: 'absolute', bottom: 100, left: 0, right: 0,
     height: 140, zIndex: 200, paddingBottom: 10,

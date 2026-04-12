@@ -82,7 +82,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const [song, setSong] = useState('');
   const [showMusicPicker, setShowMusicPicker] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState('');
-  const [posting, setPosting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [selectedMediaIdx, setSelectedMediaIdx] = useState(0);
   const [activeMention, setActiveMention] = useState('');
 
@@ -131,72 +131,6 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   }, [tagInput, activeMention, followingList]);
 
   // Location is detected only when user taps the location field
-
-
-  const reset = () => {
-    setStep('type');
-    setPostType(initialType ?? 'post');
-    setMediaAssets([]);
-    setCaption('');
-    setLocation('');
-    setTagInput('');
-    setTaggedUsers([]);
-    setTagSuggestions([]);
-    setHashtags('');
-    setSong('');
-    setSongPreviewUrl('');
-    setPosting(false);
-    setSelectedMediaIdx(0);
-  };
-
-  const handleClose = () => { reset(); onClose(); };
-
-  const pickMedia = async (type: PostType) => {
-    setPostType(type);
-    if (type === 'thread') { setStep('compose'); return; }
-    const ok = await requestPickerPermission(showPopup);
-    if (!ok) return;
-
-    const isStory = type === 'story';
-    const isReel = type === 'reel';
-    const allowsVideo = isReel;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
-      allowsMultipleSelection: !isStory && !isReel,
-      selectionLimit: isStory || isReel ? 1 : 10,
-      allowsEditing: isStory || isReel,
-      aspect: isStory ? [9, 16] : isReel ? [9, 16] : undefined,
-      quality: 0.85,
-      videoMaxDuration: isReel ? 60 : undefined,
-    });
-
-    if (!result.canceled && result.assets?.length > 0) {
-      setMediaAssets(result.assets);
-      setSelectedMediaIdx(0);
-      setStep('compose');
-    }
-  };
-
-  const addMoreMedia = async () => {
-    const ok = await requestPickerPermission(showPopup);
-    if (!ok) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsMultipleSelection: true,
-      selectionLimit: 10 - mediaAssets.length,
-      quality: 0.85,
-    });
-    if (!result.canceled && result.assets?.length > 0) {
-      setMediaAssets(prev => [...prev, ...result.assets].slice(0, 10));
-    }
-  };
-
-  const removeMedia = (idx: number) => {
-    setMediaAssets(prev => prev.filter((_, i) => i !== idx));
-    if (selectedMediaIdx >= idx && selectedMediaIdx > 0) setSelectedMediaIdx(selectedMediaIdx - 1);
-  };
-
   const detectLocation = async () => {
     setLocationLoading(true);
     try {
@@ -251,7 +185,82 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   const removeTag = (username: string) => setTaggedUsers(prev => prev.filter(u => u !== username));
 
-  const handlePost = () => {
+
+  const reset = () => {
+    setStep('type');
+    setPostType(initialType ?? 'post');
+    setMediaAssets([]);
+    setCaption('');
+    setLocation('');
+    setTagInput('');
+    setTaggedUsers([]);
+    setTagSuggestions([]);
+    setHashtags('');
+    setSong('');
+    setSongPreviewUrl('');
+    setUploading(false);
+    setSelectedMediaIdx(0);
+  };
+
+  const handleClose = () => { reset(); onClose(); };
+
+  const pickMedia = async (type: PostType) => {
+    setPostType(type);
+    if (type === 'thread') { setStep('compose'); return; }
+    const ok = await requestPickerPermission(showPopup);
+    if (!ok) return;
+
+    const isStory = type === 'story';
+    const isReel = type === 'reel';
+    const allowsVideo = isReel;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
+      allowsMultipleSelection: !isStory && !isReel,
+      selectionLimit: isStory || isReel ? 1 : 10,
+      allowsEditing: isStory || isReel,
+      aspect: isStory ? [9, 16] : isReel ? [9, 16] : undefined,
+      quality: 0.85,
+      videoMaxDuration: isReel ? 60 : undefined,
+    });
+
+    if (!result.canceled && result.assets?.length > 0) {
+      setMediaAssets(result.assets);
+      setSelectedMediaIdx(0);
+      setStep('compose');
+    }
+  };
+
+  const addMoreMedia = async () => {
+    const ok = await requestPickerPermission(showPopup);
+    if (!ok) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsMultipleSelection: true,
+      selectionLimit: 10 - mediaAssets.length,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets?.length > 0) {
+      setMediaAssets(prev => [...prev, ...result.assets].slice(0, 10));
+    }
+  };
+
+  const removeMedia = (idx: number) => {
+    setMediaAssets(prev => prev.filter((_, i) => i !== idx));
+    if (selectedMediaIdx >= idx && selectedMediaIdx > 0) setSelectedMediaIdx(selectedMediaIdx - 1);
+  };
+
+  const uploadCancelled = useRef(false);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('cancel_upload', () => {
+      uploadCancelled.current = true;
+    });
+    return () => sub.remove();
+  }, []);
+
+  const handlePost = async () => {
+    if (uploading) return;
     if (postType === 'thread' && !caption.trim()) {
       showPopup({
         title: 'Empty post',
@@ -271,61 +280,94 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       return;
     }
 
+    setUploading(true);
+    uploadCancelled.current = false;
+
     const fullCaption = [caption.trim(), hashtags.trim()].filter(Boolean).join('\n\n');
     const primaryAsset = mediaAssets[0];
     const isVideoFromAsset = primaryAsset?.type === 'video' || ['mp4', 'mov', 'avi', 'webm'].includes(primaryAsset?.uri.split('.').pop()?.toLowerCase() ?? '');
     const type = postType === 'thread' ? 'thread' : isVideoFromAsset ? 'video' : 'image';
 
     // Fire and forget upload process
-    const uploadTask = async () => {
-      DeviceEventEmitter.emit('upload_status', { status: 'loading', type: postType });
-      try {
-        if (postType === 'story') {
-          await createStory(userId, mediaAssets[0].uri, fullCaption || undefined);
-        } else if (postType === 'reel') {
-          let thumbUri: string | undefined;
-          try {
-            if (VideoThumbnails && typeof VideoThumbnails.getThumbnailAsync === 'function') {
-              const { uri } = await VideoThumbnails.getThumbnailAsync(mediaAssets[0].uri, { time: 1000 });
-              thumbUri = uri;
-            }
-          } catch (e) {
-            console.warn('Native module for thumbnails is missing or failed:', e);
-            // Fallback: we will proceed without a thumbnail, backend/ui should handle this.
-          }
-          await createReel(userId, mediaAssets[0].uri, fullCaption, song || undefined, thumbUri);
-          const rawRatio = primaryAsset ? primaryAsset.width / primaryAsset.height : 1.0;
-          const snapRatio = (ratio: number) => {
-            const targets = [0.5625, 0.8, 1.0, 1.91]; // 9:16, 4:5, 1:1, 1.91:1
-            return targets.reduce((prev, curr) => 
-              Math.abs(curr - ratio) < Math.abs(prev - ratio) ? curr : prev
-            );
-          };
+    const emitStatus = (status: 'loading' | 'success' | 'error', extra = {}) => {
+      DeviceEventEmitter.emit('upload_status', { 
+        status, 
+        type: postType, 
+        id: 'post_upload', // constant ID for tracking
+        ...extra 
+      });
+    };
 
-          await createPost(userId, fullCaption, type, mediaAssets.map(a => a.uri), {
-            location: location || undefined,
-            song: song || undefined,
-            taggedUsers: taggedUsers.length > 0 ? taggedUsers : undefined,
-            mimeType: primaryAsset?.mimeType,
-            aspectRatio: snapRatio(rawRatio),
-          });
+    const uploadTask = async () => {
+      emitStatus('loading', { progress: 0.1 });
+      
+      try {
+        const uris: string[] = [];
+        
+        for (let i = 0; i < mediaAssets.length; i++) {
+          if (uploadCancelled.current) throw new Error('CANCELLED');
+          
+          const asset = mediaAssets[i];
+          const fileName = `${Date.now()}_${i}.${asset.type === 'video' ? 'mp4' : 'jpg'}`;
+          const filePath = `${userId}/${fileName}`;
+          
+          // Increment progress per file
+          emitStatus('loading', { progress: 0.1 + (i / mediaAssets.length) * 0.7 });
+
+          const blob = await fetch(asset.uri).then(r => r.blob());
+          const { error: uploadError } = await supabase.storage
+            .from('media')
+            .upload(filePath, blob);
+            
+          if (uploadError) throw uploadError;
+          
+          const { data: { publicUrl } } = supabase.storage
+            .from('media')
+            .getPublicUrl(filePath);
+            
+          uris.push(publicUrl);
         }
-        DeviceEventEmitter.emit('upload_status', { status: 'success', type: postType });
+
+        if (uploadCancelled.current) throw new Error('CANCELLED');
+        emitStatus('loading', { progress: 0.85 });
+
+        // Final database entry
+        const postData: any = {
+          user_id: userId,
+          type: postType,
+          caption: caption.trim(),
+          media_urls: uris,
+          media_url: uris[0],
+          song: song || null,
+          location: location || null,
+        };
+
+        const { error: dbError } = await supabase
+          .from('posts')
+          .insert([postData]);
+
+        if (dbError) throw dbError;
+        
+        if (uploadCancelled.current) return;
+        
+        emitStatus('success', { progress: 1 });
+        onPosted?.();
       } catch (e: any) {
-        DeviceEventEmitter.emit('upload_status', { status: 'error', type: postType });
-        showPopup({
-          title: 'Upload Failed',
-          message: 'Your post could not be uploaded.',
-          icon: 'cloud-offline-outline',
-          buttons: [{ text: 'OK', onPress: () => {} }]
-        });
+        if (e.message === 'CANCELLED') {
+          console.log('User cancelled upload');
+          return;
+        }
+        console.error('Post error:', e);
+        emitStatus('error', { message: e.message });
+      } finally {
+        setUploading(false);
       }
     };
 
     const optPost = {
       id: 'temp-' + Date.now(),
       user_id: userId,
-      caption: fullCaption,
+      caption: caption.trim(),
       type: type,
       media_url: primaryAsset?.uri, // Local URI
       created_at: new Date().toISOString(),
@@ -334,12 +376,11 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       profiles: { username: 'Posting...', avatar_url: null }
     };
 
-    // Optimistic payload (to render in feed immediately)
+    // Optimistic payload
     DeviceEventEmitter.emit('new_post', optPost);
     onPosted?.(optPost);
 
     uploadTask();
-    reset();
     onClose();
   };
 
@@ -379,7 +420,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             <TouchableOpacity
               style={styles.shareBtnWrap}
               onPress={handlePost}
-              disabled={posting}
+              disabled={uploading}
             >
               <LinearGradient
                 colors={['#4f46e5', '#7e22ce']}
@@ -387,7 +428,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                 end={{ x: 1, y: 0 }}
                 style={styles.shareBtn}
               >
-                {posting
+                {uploading
                   ? <ActivityIndicator color="#fff" size="small" />
                   : <Text style={styles.shareBtnText}>Share</Text>
                 }

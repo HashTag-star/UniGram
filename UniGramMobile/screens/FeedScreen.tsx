@@ -119,7 +119,7 @@ function clearFeedCache() {
 }
 
 // ─── Story Bar ────────────────────────────────────────────────────────────────
-const StoryBar: React.FC<{
+const StoryBarInternal: React.FC<{
   storyGroups: any[];
   liveSessions: any[];
   currentProfile: any;
@@ -129,7 +129,7 @@ const StoryBar: React.FC<{
   onYourStoryPress: () => void;
   hasOwnStories: boolean;
   ownGroupIdx: number;
-}> = React.memo(({ storyGroups, liveSessions, currentProfile, viewedIds, onStoryPress, onLivePress, onYourStoryPress, hasOwnStories, ownGroupIdx }) => {
+}> = ({ storyGroups, liveSessions, currentProfile, viewedIds, onStoryPress, onLivePress, onYourStoryPress, hasOwnStories, ownGroupIdx }) => {
   const { colors } = useTheme();
   const ownGroup = ownGroupIdx !== -1 ? storyGroups[ownGroupIdx] : null;
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
@@ -214,77 +214,9 @@ const StoryBar: React.FC<{
       })}
     </ScrollView>
   );
-});
+}
 
-// ─── Background Upload Indicator ──────────────────────────────────────────────
-const BackgroundUploadIndicator: React.FC = () => {
-  const [status, setStatus] = useState<'loading' | 'success' | 'error' | null>(null);
-  const [type, setType] = useState<string>('');
-  const haptics = useHaptics();
-  const slideAnim = useRef(new Animated.Value(-100)).current;
-  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('upload_status', (data) => {
-      setStatus(data.status);
-      setType(data.type.charAt(0).toUpperCase() + data.type.slice(1));
-
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 8 }).start();
-
-      if (dismissTimer.current) clearTimeout(dismissTimer.current);
-      if (data.status === 'success') {
-        haptics.success();
-        dismissTimer.current = setTimeout(dismiss, 3000);
-      } else if (data.status === 'error') {
-        haptics.error();
-        dismissTimer.current = setTimeout(dismiss, 4000);
-      }
-    });
-    return () => {
-      sub.remove();
-      if (dismissTimer.current) clearTimeout(dismissTimer.current);
-    };
-  }, [slideAnim]);
-
-  const dismiss = () => {
-    Animated.timing(slideAnim, {
-      toValue: -100,
-      duration: 300,
-      useNativeDriver: true
-    }).start(() => setStatus(null));
-  };
-
-  if (!status) return null;
-
-  const config = {
-    loading: { icon: 'cloud-upload', color: '#4f46e5', text: `Adding ${type}...` },
-    success: { icon: 'checkmark-circle', color: '#10b981', text: `${type} posted!` },
-    error: { icon: 'alert-circle', color: '#ef4444', text: `${type} upload failed` }
-  }[status];
-
-  return (
-    <Animated.View style={[bi.container, { transform: [{ translateY: slideAnim }] }]}>
-      <View style={[bi.banner, { borderLeftColor: config.color }]}>
-        <Ionicons name={status === 'loading' ? 'sync' : config.icon as any} size={20} color={config.color} />
-        <Text style={bi.text}>{config.text}</Text>
-        {status === 'loading' && <ActivityIndicator size="small" color={config.color} style={{ marginLeft: 'auto' }} />}
-      </View>
-    </Animated.View>
-  );
-};
-
-const bi = StyleSheet.create({
-  container: {
-    position: 'absolute', top: 100, left: 16, right: 16, zIndex: 1000,
-  },
-  banner: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#1a1a1a', padding: 14, borderRadius: 12,
-    borderLeftWidth: 4, elevation: 4,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
-  },
-  text: { color: '#fff', fontSize: 14, fontWeight: '600' },
-});
+const StoryBar = React.memo(StoryBarInternal);
 
 // ─── Viewers Sheet ────────────────────────────────────────────────────────────
 const ViewersSheet: React.FC<{
@@ -838,17 +770,22 @@ const MediaCarousel: React.FC<{
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        decelerationRate="fast"
-        snapToInterval={width}
-        snapToAlignment="center"
+        decelerationRate={0.992}
         scrollEventThrottle={16}
         nestedScrollEnabled={true}
         windowSize={3}
-        initialNumToRender={1}
-        removeClippedSubviews={true}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        removeClippedSubviews={Platform.OS === 'android'}
+        bounces={false}
+        disableIntervalMomentum
+        getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
         onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
         onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
-        onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
+        onMomentumScrollEnd={e => {
+          DeviceEventEmitter.emit('setPagerScroll', true);
+          setCurrentIdx(Math.round(e.nativeEvent.contentOffset.x / width));
+        }}
         onScroll={e => {
           const x = e.nativeEvent.contentOffset.x;
           setCurrentIdx(Math.round(x / width));
@@ -1567,6 +1504,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   }).current;
 
   const lastScrollY = useRef(0);
+  const scrollY = useRef(new Animated.Value(0)).current;
   const headerVisible = useRef(new Animated.Value(1)).current;
   const HEADER_HEIGHT = insets.top + 48;
 
@@ -1582,6 +1520,11 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   };
 
   const headerTranslateY = headerVisible.interpolate({ inputRange: [0, 1], outputRange: [-HEADER_HEIGHT, 0] });
+  const borderOpacity = scrollY.interpolate({
+    inputRange: [0, 15],
+    outputRange: [0, 1],
+    extrapolate: 'clamp'
+  });
 
   const load = useCallback(async (isManualRefresh = false) => {
     try {
@@ -1855,7 +1798,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} />
 
-      <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg, borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
+      <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <TouchableOpacity onPress={onCameraPress} style={{ padding: 4 }}>
             <Ionicons name="camera-outline" size={26} color={colors.text} />
@@ -1875,14 +1818,29 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Dynamic Border */}
+        <Animated.View 
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: StyleSheet.hairlineWidth,
+            backgroundColor: colors.border,
+            opacity: borderOpacity
+          }} 
+        />
       </Animated.View>
 
-      <BackgroundUploadIndicator />
 
-      <FlatList
+      <Animated.FlatList
         data={loading ? [] : feedItems}
         keyExtractor={p => p.id}
-        onScroll={handleScroll}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true, listener: handleScroll }
+        )}
         scrollEventThrottle={16}
         windowSize={5}
         maxToRenderPerBatch={5}

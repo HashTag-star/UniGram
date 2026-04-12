@@ -41,6 +41,7 @@ import { PopupProvider } from './context/PopupContext';
 import { createStory } from './services/stories';
 import { AccountService } from './services/accounts';
 import { runOnJS } from 'react-native-worklets';
+import { useHaptics as useAppHaptics } from './hooks/useHaptics';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
@@ -211,6 +212,135 @@ const loadStyles = StyleSheet.create({
   tagline: { fontSize: 15, color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5, fontWeight: '500' },
 
   indicatorWrap: { position: 'absolute', bottom: 64 },
+});
+
+const PremiumUploadToast = () => {
+  const [data, setData] = useState<any>(null); // { status, type, progress, id }
+  const [expanded, setExpanded] = useState(false);
+  const slideAnim = useRef(new Animated.Value(-120)).current;
+  const haptics = useAppHaptics();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const dismissTimer = useRef<any>(null);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('upload_status', (payload) => {
+      setData(payload);
+      
+      if (payload.status === 'loading') {
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 8 }).start();
+        if (dismissTimer.current) clearTimeout(dismissTimer.current);
+      } else if (payload.status === 'success') {
+        haptics.success();
+        setExpanded(false);
+        dismissTimer.current = setTimeout(dismiss, 4000);
+      } else if (payload.status === 'error') {
+        haptics.error();
+        setExpanded(false);
+        dismissTimer.current = setTimeout(dismiss, 5000);
+      }
+    });
+
+    return () => {
+      sub.remove();
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    };
+  }, []);
+
+  const dismiss = () => {
+    Animated.timing(slideAnim, { toValue: -120, duration: 400, useNativeDriver: true }).start(() => {
+      setData(null);
+      setExpanded(false);
+    });
+  };
+
+  const handleCancel = () => {
+    haptics.medium();
+    DeviceEventEmitter.emit('cancel_upload');
+    dismiss();
+  };
+
+  if (!data) return null;
+
+  const isPosting = data.status === 'loading';
+  const progressPercent = Math.round((data.progress || 0) * 100);
+
+  return (
+    <Animated.View style={[toastStyles.container, { top: insets.top + 10, transform: [{ translateY: slideAnim }] }]}>
+      <TouchableOpacity 
+        activeOpacity={0.9} 
+        onPress={() => isPosting && setExpanded(!expanded)}
+        style={[toastStyles.toast, { backgroundColor: colors.bg + 'F2', borderColor: colors.border }]}
+      >
+        <View style={toastStyles.header}>
+          <View style={[toastStyles.iconWrap, { backgroundColor: isPosting ? '#6366f122' : data.status === 'success' ? '#10b98122' : '#ef444422' }]}>
+            {isPosting ? (
+              <ActivityIndicator size="small" color="#6366f1" />
+            ) : (
+              <Ionicons 
+                name={data.status === 'success' ? 'checkmark-circle' : 'alert-circle'} 
+                size={22} 
+                color={data.status === 'success' ? '#10b981' : '#ef4444'} 
+              />
+            )}
+          </View>
+          
+          <View style={{ flex: 1 }}>
+            <Text style={[toastStyles.title, { color: colors.text }]}>
+              {isPosting ? `Sharing ${data.type}...` : data.status === 'success' ? 'Shared successfully!' : 'Upload failed'}
+            </Text>
+            {isPosting && !expanded && (
+               <Text style={[toastStyles.sub, { color: colors.textMuted }]}>{progressPercent}% complete</Text>
+            )}
+            {!isPosting && (
+               <Text style={[toastStyles.sub, { color: colors.textMuted }]}>
+                 {data.status === 'success' ? 'Your post is now live' : data.message || 'Check your connection'}
+               </Text>
+            )}
+          </View>
+
+          {isPosting && (
+            <Ionicons 
+              name={expanded ? 'chevron-up' : 'chevron-down'} 
+              size={20} 
+              color={colors.textMuted} 
+            />
+          )}
+        </View>
+
+        {isPosting && expanded && (
+          <View style={toastStyles.expandedContent}>
+            <View style={[toastStyles.progressTrack, { backgroundColor: colors.border }]}>
+               <Animated.View style={[toastStyles.progressFill, { width: `${progressPercent}%`, backgroundColor: '#6366f1' }]} />
+            </View>
+            <View style={toastStyles.actions}>
+              <TouchableOpacity onPress={handleCancel} style={toastStyles.cancelBtn}>
+                 <Text style={toastStyles.cancelText}>Cancel Upload</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const toastStyles = StyleSheet.create({
+  container: { position: 'absolute', left: 16, right: 16, zIndex: 10000 },
+  toast: {
+    padding: 12, borderRadius: 16, borderWidth: 1,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 12,
+  },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 14, fontWeight: '800' },
+  sub: { fontSize: 12, marginTop: 1 },
+  expandedContent: { marginTop: 16, gap: 12 },
+  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: '100%' },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end' },
+  cancelBtn: { paddingVertical: 8, paddingHorizontal: 12 },
+  cancelText: { color: '#ef4444', fontSize: 13, fontWeight: '700' },
 });
 
 // ─── App shell ────────────────────────────────────────────────────────────────
@@ -799,6 +929,7 @@ export default function App() {
           <BottomSheetModalProvider>
             <SafeAreaProvider>
               <AppShell />
+              <PremiumUploadToast />
             </SafeAreaProvider>
           </BottomSheetModalProvider>
         </PopupProvider>

@@ -244,7 +244,7 @@ export const ProfileScreen: React.FC<Props> = ({
         <View style={styles.coverSection}>
           <CachedImage uri={profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000'} style={styles.cover} />
           <View style={styles.coverOverlay} />
-          <View style={styles.headerTop}>
+          <View style={[styles.headerTop, { top: insets.top + 10 }]}>
             {onBack && (
               <TouchableOpacity onPress={onBack} style={styles.navBtn}>
                 <Ionicons name="chevron-back" size={24} color="#fff" />
@@ -617,7 +617,7 @@ const styles = StyleSheet.create({
   coverSection: { height: 160, position: 'relative' },
   cover: { width: '100%', height: '100%' },
   coverOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' },
-  headerTop: { position: 'absolute', top: 50, left: 16, right: 16, flexDirection: 'row', alignItems: 'center' },
+  headerTop: { position: 'absolute', top: 10, left: 16, right: 16, flexDirection: 'row', alignItems: 'center' },
   navBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   
   infoSection: { marginTop: -40, paddingHorizontal: 16 },
