@@ -62,19 +62,23 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
   });
 
-  // 3. Client-side filtering (Final safety layer)
-  const filtered = results.filter((post: any) => {
-    // Skip if author is blocked
-    if (blockedIds.includes(post.user_id)) return false;
+  // 3. Client-side filtering + soft-hide annotation (Final safety layer)
+  const HARD_HIDE_THRESHOLD = 10;  // full removal
+  const SOFT_HIDE_THRESHOLD = 5;   // blurred with warning, user can reveal
 
-    // Skip if content is moderated (threshold met: >= 5 reports)
-    if ((reportCounts[post.id] || 0) >= 5) return false;
-
-    return true;
-  }).map((post: any) => ({
-    ...post,
-    profiles: typeof post.profiles === 'string' ? JSON.parse(post.profiles) : post.profiles,
-  }));
+  const filtered = results
+    .filter((post: any) => {
+      if (blockedIds.includes(post.user_id)) return false;
+      if ((reportCounts[post.id] || 0) >= HARD_HIDE_THRESHOLD) return false;
+      return true;
+    })
+    .map((post: any) => ({
+      ...post,
+      profiles: typeof post.profiles === 'string' ? JSON.parse(post.profiles) : post.profiles,
+      // Flag posts between soft and hard threshold — UI shows blurred overlay
+      is_flagged: (reportCounts[post.id] || 0) >= SOFT_HIDE_THRESHOLD,
+      report_count: reportCounts[post.id] || 0,
+    }));
 
   return filtered;
 }

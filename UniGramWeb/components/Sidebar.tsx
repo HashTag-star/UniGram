@@ -2,15 +2,16 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { 
-  ShieldCheck, 
-  Users, 
-  AlertTriangle, 
-  TrendingUp, 
+import {
+  ShieldCheck,
+  Users,
+  AlertTriangle,
+  TrendingUp,
   Settings,
   BrainCircuit,
   LayoutDashboard,
-  Search
+  Search,
+  Filter
 } from "lucide-react";
 
 export function Sidebar() {
@@ -42,6 +43,7 @@ export function Sidebar() {
         <div className="pt-4 mt-4 border-t border-white/5">
           <span className="px-3 text-[10px] font-bold text-white/30 uppercase tracking-[2px]">Core AI</span>
           <NavItem href="/ai-regulator" icon={<BrainCircuit size={18} />} label="AI Regulator" color="text-purple-400" active={isLinkActive("/ai-regulator")} />
+          <NavItem href="/keyword-manager" icon={<Filter size={18} />} label="Keyword Filters" color="text-yellow-400" active={isLinkActive("/keyword-manager")} />
         </div>
       </nav>
 

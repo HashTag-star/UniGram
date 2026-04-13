@@ -11,6 +11,7 @@ import { FeedPost } from './FeedScreen';
 import { searchUsers, followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';
 import { getTrendingHashtags, getPersonalizedExplorePosts, getFollowSuggestions } from '../services/algorithm';
+import { trackInterestSignal } from '../services/aiEngine';
 import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
@@ -335,7 +336,14 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, i
   const renderPostGridItem = useCallback(({ item: post }: { item: any }) => (
     <TouchableOpacity
       style={[styles.gridItem, { width: COL, height: COL }]}
-      onPress={() => setDetailPost(post)}
+      onPress={() => {
+        setDetailPost(post);
+        // Fire-and-forget: extract hashtags from caption and record interest signals
+        if (currentUserId && post.caption) {
+          const tags = (post.caption.match(/#\w+/g) ?? []) as string[];
+          if (tags.length) trackInterestSignal(currentUserId, tags).catch(() => {});
+        }
+      }}
       activeOpacity={0.85}
       accessibilityLabel={`View post`}
     >
@@ -354,7 +362,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, i
         </View>
       )}
     </TouchableOpacity>
-  ), []);
+  ), [currentUserId]);
 
   // ── Hashtag results screen ────────────────────────────────────────────────
   if (activeHashtag) {

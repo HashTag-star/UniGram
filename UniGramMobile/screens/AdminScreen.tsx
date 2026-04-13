@@ -303,6 +303,16 @@ const UsersTab: React.FC = () => {
         .eq('id', userId);
       if (error) throw error;
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_verified: true } : u));
+
+      // Notify the user their account is now verified
+      const { data: { user: adminUser } } = await supabase.auth.getUser();
+      const adminId = adminUser?.id ?? adminId;
+      sendAdminNotification(
+        adminId,
+        'Congratulations! Your account has been verified by the UniGram team.',
+        'verification_approved',
+        userId,
+      ).catch(() => {});
     } catch (e: any) {
       showPopup({
         title: 'Error',
@@ -334,6 +344,14 @@ const UsersTab: React.FC = () => {
                 .eq('id', userId);
               if (error) throw error;
               setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_banned: ban } : u));
+
+              // Notify the user about the ban/unban
+              const { data: { user: adminUser } } = await supabase.auth.getUser();
+              const adminId = adminUser?.id ?? userId;
+              const banMsg = ban
+                ? 'Your account has been permanently banned from UniGram for violating campus community guidelines.'
+                : 'Your account ban has been lifted. You can now access UniGram again.';
+              sendAdminNotification(adminId, banMsg, 'admin_ban' as any, userId).catch(() => {});
             } catch (e: any) {
               showPopup({
                 title: 'Error',

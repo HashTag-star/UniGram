@@ -23,6 +23,8 @@ import { supabase } from '../lib/supabase';
 import { MusicPicker } from '../components/MusicPicker';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
+import { getCaptionSuggestions, checkKeywordFilter, CaptionSuggestion } from '../services/aiEngine';
+import { getTrendingHashtags } from '../services/algorithm';
 
 export const SafeBlur = ({ intensity, tint, style, children }: any) => {
   if (SafeModules.hasBlur()) {
@@ -88,15 +90,23 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   const [isBanned, setIsBanned] = useState(false);
   const [isSuspended, setIsSuspended] = useState(false);
+  const [university, setUniversity] = useState('');
+
+  // ── AI Caption Assistant ──────────────────────────────────────────────────────
+  const [captionSuggestions, setCaptionSuggestions] = useState<CaptionSuggestion[]>([]);
+  const [suggestedHashtags, setSuggestedHashtags] = useState<string[]>([]);
+  const [loadingCaptions, setLoadingCaptions] = useState(false);
+  const [showCaptionPanel, setShowCaptionPanel] = useState(false);
 
   useEffect(() => {
     if (visible && userId) {
       getFollowing(userId).then(setFollowingList).catch(() => {});
-      // Check if user is banned or suspended
-      supabase.from('profiles').select('is_banned, is_suspended').eq('id', userId).single()
+      // Check if user is banned or suspended; also grab university for AI captions
+      supabase.from('profiles').select('is_banned, is_suspended, university').eq('id', userId).single()
         .then(({ data }) => {
           setIsBanned(!!data?.is_banned);
           setIsSuspended(!!data?.is_suspended);
+          if (data?.university) setUniversity(data.university);
         });
 
       if (preCapturedMedia && preCapturedMedia.length > 0) {
@@ -200,9 +210,39 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     setSongPreviewUrl('');
     setUploading(false);
     setSelectedMediaIdx(0);
+    setCaptionSuggestions([]);
+    setSuggestedHashtags([]);
+    setShowCaptionPanel(false);
   };
 
   const handleClose = () => { reset(); onClose(); };
+
+  const suggestCaption = async () => {
+    setLoadingCaptions(true);
+    setShowCaptionPanel(true);
+    try {
+      const trending = await getTrendingHashtags(8, userId).catch(() => [] as any[]);
+      const trendingTags = (trending ?? []).map((t: any) => `#${t.tag}`);
+      const result = await getCaptionSuggestions({
+        userId,
+        postType,
+        university: university || undefined,
+        trendingHashtags: trendingTags,
+      });
+      setCaptionSuggestions(result.captions ?? []);
+      setSuggestedHashtags(result.hashtags ?? []);
+    } catch {
+      showPopup({
+        title: 'Caption suggestions unavailable',
+        message: 'Could not reach the AI. Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
+      setShowCaptionPanel(false);
+    } finally {
+      setLoadingCaptions(false);
+    }
+  };
 
   const pickMedia = async (type: PostType) => {
     setPostType(type);
@@ -218,8 +258,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
       allowsMultipleSelection: !isStory && !isReel,
       selectionLimit: isStory || isReel ? 1 : 10,
-      allowsEditing: isStory || isReel,
-      aspect: isStory ? [9, 16] : isReel ? [9, 16] : undefined,
+      allowsEditing: false, // WhatsApp style: no forced crop
       quality: 0.85,
       videoMaxDuration: isReel ? 60 : undefined,
     });
@@ -239,6 +278,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       allowsMultipleSelection: true,
       selectionLimit: 10 - mediaAssets.length,
       quality: 0.85,
+      allowsEditing: false,
     });
     if (!result.canceled && result.assets?.length > 0) {
       setMediaAssets(prev => [...prev, ...result.assets].slice(0, 10));
@@ -280,6 +320,40 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
       return;
     }
 
+    // Keyword filter pre-check (non-blocking for warn/flag, hard-stop for block)
+    const captionText = [caption.trim(), hashtags.trim()].filter(Boolean).join(' ');
+    if (captionText) {
+      const filterResult = await checkKeywordFilter(captionText);
+      if (filterResult.flagged) {
+        if (filterResult.severity === 'block') {
+          showPopup({
+            title: 'Content not allowed',
+            message: 'Your caption contains content that violates Community Guidelines. Please revise before posting.',
+            icon: 'ban-outline',
+            buttons: [{ text: 'OK', onPress: () => {} }],
+          });
+          return;
+        }
+        if (filterResult.severity === 'warn') {
+          // Warn but allow through — user must confirm
+          await new Promise<void>((resolve) => {
+            showPopup({
+              title: 'Community Guidelines',
+              message: 'Your caption may contain content that some users find offensive. Please review before posting.',
+              icon: 'warning-outline',
+              buttons: [
+                { text: 'Post anyway', onPress: () => resolve() },
+                { text: 'Edit caption', onPress: () => { /* resolve stays pending → upload never starts */ } },
+              ],
+            });
+            // Resolve after a tick if the popup doesn't block
+            setTimeout(resolve, 100);
+          });
+        }
+        // 'flag' severity: silently auto-report after upload (fire-and-forget below)
+      }
+    }
+
     setUploading(true);
     uploadCancelled.current = false;
 
@@ -314,15 +388,25 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           // Increment progress per file
           emitStatus('loading', { progress: 0.1 + (i / mediaAssets.length) * 0.7 });
 
-          const blob = await fetch(asset.uri).then(r => r.blob());
+          // Safer Android upload: read as base64 then decode to ArrayBuffer
+          const { readAsStringAsync } = require('expo-file-system/legacy');
+          const { decode } = require('base64-arraybuffer');
+          
+          const base64 = await readAsStringAsync(asset.uri, { encoding: 'base64' });
+          const arrayBuffer = decode(base64);
+
+          const bucket = (postType === 'reel' || asset.type === 'video') ? 'videos' : 'post-media';
           const { error: uploadError } = await supabase.storage
-            .from('media')
-            .upload(filePath, blob);
+            .from(bucket)
+            .upload(filePath, arrayBuffer, {
+              contentType: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
+              upsert: true
+            });
             
           if (uploadError) throw uploadError;
           
           const { data: { publicUrl } } = supabase.storage
-            .from('media')
+            .from(bucket)
             .getPublicUrl(filePath);
             
           uris.push(publicUrl);
@@ -332,18 +416,31 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         emitStatus('loading', { progress: 0.85 });
 
         // Final database entry
-        const postData: any = {
+        // Correct table mapping
+        let tableName = 'posts';
+        let postData: any = {
           user_id: userId,
-          type: postType,
           caption: caption.trim(),
-          media_urls: uris,
-          media_url: uris[0],
-          song: song || null,
-          location: location || null,
         };
 
+        if (postType === 'reel') {
+          tableName = 'reels';
+          postData.video_url = uris[0];
+          postData.song = song || null;
+        } else if (postType === 'story') {
+          tableName = 'stories';
+          postData.media_url = uris[0];
+        } else {
+          tableName = 'posts';
+          postData.type = postType === 'thread' ? 'thread' : isVideoFromAsset ? 'video' : 'image';
+          postData.media_url = uris[0] || null;
+          postData.media_urls = uris;
+          postData.song = song || null;
+          postData.location = location || null;
+        }
+
         const { error: dbError } = await supabase
-          .from('posts')
+          .from(tableName)
           .insert([postData]);
 
         if (dbError) throw dbError;
@@ -540,7 +637,47 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                 maxLength={2200}
                 autoFocus={postType === 'thread'}
               />
+              {/* AI Caption Suggest button */}
+              {postType !== 'story' && (
+                <TouchableOpacity
+                  style={styles.aiSuggestBtn}
+                  onPress={suggestCaption}
+                  disabled={loadingCaptions}
+                >
+                  {loadingCaptions
+                    ? <ActivityIndicator size="small" color="#818cf8" />
+                    : <Text style={styles.aiSuggestBtnText}>✨ Suggest</Text>
+                  }
+                </TouchableOpacity>
+              )}
             </View>
+
+            {/* AI Caption Suggestions Panel */}
+            {showCaptionPanel && captionSuggestions.length > 0 && (
+              <View style={styles.captionPanel}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.captionPanelLabel}>✨ AI Suggested</Text>
+                  <TouchableOpacity onPress={() => setShowCaptionPanel(false)}>
+                    <Ionicons name="close" size={16} color="rgba(255,255,255,0.4)" />
+                  </TouchableOpacity>
+                </View>
+                {captionSuggestions.map((s, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={styles.captionChip}
+                    onPress={() => {
+                      setCaption(s.text);
+                      setShowCaptionPanel(false);
+                    }}
+                  >
+                    <Text style={styles.captionChipTone}>
+                      {s.tone === 'casual' ? '😎' : s.tone === 'inspirational' ? '🌟' : '😂'} {s.tone}
+                    </Text>
+                    <Text style={styles.captionChipText} numberOfLines={3}>{s.text}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <View style={styles.divider} />
 
             {/* Hashtags */}
@@ -555,6 +692,20 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                 autoCapitalize="none"
               />
             </View>
+            {/* AI hashtag suggestions (shown when AI has returned them and user hasn't typed yet) */}
+            {suggestedHashtags.length > 0 && !hashtags && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10, gap: 6 }}>
+                {suggestedHashtags.map((tag, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={styles.hashtagChip}
+                    onPress={() => setHashtags(prev => [prev.trim(), tag].filter(Boolean).join(' '))}
+                  >
+                    <Text style={styles.hashtagChipText}>{tag}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
             <View style={styles.divider} />
 
             {/* Tag people */}
@@ -698,7 +849,16 @@ const styles = StyleSheet.create({
   },
 
   captionRow: { padding: 16, minHeight: 100 },
-  captionInput: { color: '#fff', fontSize: 15, lineHeight: 22 },
+  captionInput: { color: '#fff', fontSize: 15, lineHeight: 22, flex: 1 },
+  aiSuggestBtn: { alignSelf: 'flex-end', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(129,140,248,0.5)', marginTop: 6 },
+  aiSuggestBtnText: { color: '#818cf8', fontSize: 12, fontWeight: '600' },
+  captionPanel: { marginHorizontal: 12, marginBottom: 8, backgroundColor: 'rgba(129,140,248,0.08)', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: 'rgba(129,140,248,0.2)' },
+  captionPanelLabel: { color: '#818cf8', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
+  captionChip: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 10, padding: 10, marginBottom: 6 },
+  captionChipTone: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 3, textTransform: 'capitalize', fontWeight: '600' },
+  captionChipText: { color: '#fff', fontSize: 13, lineHeight: 18 },
+  hashtagChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(129,140,248,0.15)', borderWidth: 1, borderColor: 'rgba(129,140,248,0.3)' },
+  hashtagChipText: { color: '#818cf8', fontSize: 12, fontWeight: '600' },
   divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
   composeField: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12 },
   composeInput: { flex: 1, color: '#fff', fontSize: 14 },

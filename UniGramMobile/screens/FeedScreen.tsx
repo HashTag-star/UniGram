@@ -33,6 +33,7 @@ import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPo
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions } from '../services/algorithm';
+import { sendFollowSuggestionNotif } from '../services/notifications';
 import { getReels } from '../services/reels';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
@@ -885,6 +886,8 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [showOptions, setShowOptions] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  // If a post has >= 5 pending reports it's soft-hidden; user can reveal it
+  const [showFlagged, setShowFlagged] = useState(false);
   // Initialize directly from parent-passed props — no per-post server round-trip
   const [liked, setLiked] = useState(isLiked);
   const [likes, setLikes] = useState(post.likes_count ?? 0);
@@ -1115,6 +1118,29 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   };
 
   const profile = post.profiles;
+
+  // Soft-hide: post has been reported but not yet removed
+  if (post.is_flagged && !showFlagged) {
+    return (
+      <View style={[styles.postCard, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
+        <View style={{ padding: 20, alignItems: 'center', gap: 10 }}>
+          <Ionicons name="flag" size={28} color="#f59e0b" />
+          <Text style={{ color: colors.text, fontWeight: '700', fontSize: 15, textAlign: 'center' }}>
+            This content has been flagged
+          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
+            This post received multiple reports and is under review.
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: 4, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: colors.border }}
+            onPress={() => setShowFlagged(true)}
+          >
+            <Text style={{ color: colors.textSub, fontSize: 13, fontWeight: '600' }}>Show anyway</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.postCard, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
@@ -1438,6 +1464,8 @@ const feedInjStyles = StyleSheet.create({
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
 const FEED_PAGE = 12; // posts per page
 const FEED_TTL = 2 * 60 * 1000; // 2 minutes before a background refresh
+const SUGGESTION_NOTIF_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours between follow suggestion notifications
+let lastSuggestionNotifAt = 0; // module-level — resets on app restart, persists across screen mounts
 
 interface FeedScreenProps {
   refreshKey?: number;
@@ -1703,6 +1731,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       if (appStateRef.current.match(/inactive|background/) && next === 'active') {
         const age = Date.now() - lastLoadedRef.current;
         if (age > FEED_TTL) load();
+
+        // Periodically send a "people you may know" notification (at most once per 24 h)
+        const uid = currentUserIdRef.current;
+        if (uid && Date.now() - lastSuggestionNotifAt > SUGGESTION_NOTIF_INTERVAL) {
+          getFollowSuggestions(uid, 5)
+            .then((suggestions) => {
+              if (suggestions.length > 0) {
+                lastSuggestionNotifAt = Date.now();
+                return sendFollowSuggestionNotif(uid, suggestions.map((s: any) => ({ id: s.id, username: s.username })));
+              }
+            })
+            .catch(() => {}); // fire-and-forget, never surface errors to the user
+        }
       }
       appStateRef.current = next;
     });

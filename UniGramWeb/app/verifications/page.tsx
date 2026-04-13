@@ -1,16 +1,17 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { 
-  ShieldCheck, 
-  ExternalLink, 
-  CheckCircle2, 
-  XCircle, 
+import {
+  ShieldCheck,
+  ExternalLink,
+  CheckCircle2,
+  XCircle,
   Clock,
   BrainCircuit,
   Search,
   Filter,
-  AlertTriangle
+  AlertTriangle,
+  Zap
 } from "lucide-react";
 
 interface VerificationRequest {
@@ -33,6 +34,8 @@ export default function VerificationsPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const [aiScanning, setAiScanning] = useState(false);
+  const [aiFindings, setAiFindings] = useState<{id: string; action: string; severity: string; reason: string}[]>([]);
 
   useEffect(() => {
     fetchRequests();
@@ -84,6 +87,30 @@ export default function VerificationsPage() {
     }
   };
 
+  const runAiScan = async () => {
+    const geminiKey = localStorage.getItem("unigram_gemini_key") || "";
+    if (!geminiKey) {
+      setErrorMessage("No Gemini API key found. Configure it on the AI Regulator page first.");
+      return;
+    }
+    setAiScanning(true);
+    setAiFindings([]);
+    setErrorMessage(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-regulation-scan', {
+        body: { apiKey: geminiKey },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      const verificationFindings = (data.findings || []).filter((f: any) => f.target_type === 'verification');
+      setAiFindings(verificationFindings);
+    } catch (err: any) {
+      setErrorMessage(`AI Scan failed: ${err.message}`);
+    } finally {
+      setAiScanning(false);
+    }
+  };
+
   const filteredRequests = requests.filter(r => {
     const fullName = r.full_name || "";
     const university = r.university || "";
@@ -111,10 +138,17 @@ export default function VerificationsPage() {
           >
             Refresh List
           </button>
-          <div className="bg-indigo-600 px-4 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-2 cursor-pointer hover:bg-indigo-700 transition-colors">
-            <BrainCircuit size={16} />
-            Bulk AI Scan
-          </div>
+          <button
+            onClick={runAiScan}
+            disabled={aiScanning}
+            className="bg-indigo-600 px-4 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-2 hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {aiScanning
+              ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              : <BrainCircuit size={16} />
+            }
+            {aiScanning ? "Scanning..." : "Bulk AI Scan"}
+          </button>
         </div>
       </div>
 
@@ -149,7 +183,32 @@ export default function VerificationsPage() {
       {errorMessage && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl flex items-center gap-3">
           <AlertTriangle size={20} />
-          <p className="text-sm font-medium">Database Error: {errorMessage}</p>
+          <p className="text-sm font-medium">{errorMessage}</p>
+        </div>
+      )}
+
+      {/* AI Scan Findings */}
+      {aiFindings.length > 0 && (
+        <div className="glass rounded-2xl p-6 border border-indigo-500/20 space-y-3">
+          <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+            <Zap size={14} /> AI Scan Results — {aiFindings.length} verification(s) flagged
+          </p>
+          {aiFindings.map((f, i) => {
+            const severity = f.severity;
+            const color = severity === 'critical' || severity === 'high' ? 'text-red-400 bg-red-500/10 border-red-500/20'
+              : severity === 'medium' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
+              : 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+            return (
+              <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border text-sm ${color}`}>
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold uppercase text-xs tracking-wide">{severity}</span>
+                  {' — '}<span className="opacity-80">{f.reason}</span>
+                  <span className="text-xs opacity-50 block mt-0.5">Suggested action: {f.action} · ID: {f.target_id?.slice(0, 8)}…</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

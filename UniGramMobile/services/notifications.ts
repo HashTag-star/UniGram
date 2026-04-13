@@ -1,6 +1,71 @@
 import { supabase } from '../lib/supabase';
 import { sendPushToUser } from './pushNotifications';
 
+/**
+ * Notifies every admin user about an event (e.g. new report, new verification
+ * request). Creates in-app notification rows and sends push notifications.
+ */
+export async function notifyAdmins(opts: {
+  type: 'admin_report' | 'admin_verification';
+  text: string;
+  actorId: string;
+  postId?: string;
+}) {
+  const { data: admins } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('is_admin', true)
+    .eq('is_banned', false);
+
+  if (!admins?.length) return;
+
+  const rows = admins
+    .filter((a: any) => a.id !== opts.actorId) // don't notify yourself
+    .map((a: any) => ({
+      user_id: a.id,
+      actor_id: opts.actorId,
+      type: opts.type,
+      text: opts.text,
+      post_id: opts.postId ?? null,
+      is_read: false,
+    }));
+
+  if (!rows.length) return;
+
+  await supabase.from('notifications').insert(rows).catch(() => {});
+
+  const pushTitle = opts.type === 'admin_report' ? '🚩 New Report' : '🔖 Verification Request';
+  rows.forEach((r: any) => {
+    sendPushToUser(r.user_id, pushTitle, opts.text, { type: opts.type }).catch(() => {});
+  });
+}
+
+/**
+ * Sends a periodic "people you may know" in-app notification + push.
+ * Call this when the app comes to the foreground after a long gap.
+ */
+export async function sendFollowSuggestionNotif(userId: string, suggestions: { id: string; username: string }[]) {
+  if (!suggestions.length) return;
+
+  const top = suggestions.slice(0, 3);
+  const names = top.map(u => `@${u.username}`).join(', ');
+  const text = top.length === 1
+    ? `${names} is someone you might want to follow`
+    : `${names} and others are people you may know`;
+
+  await supabase.from('notifications').insert({
+    user_id: userId,
+    actor_id: top[0].id,   // first suggestion drives the avatar
+    type: 'follow_suggestion',
+    text,
+    is_read: false,
+    // Store extra suggestion IDs as metadata so the UI can render them
+    metadata: { suggestion_ids: top.map(u => u.id) },
+  }).catch(() => {});
+
+  sendPushToUser(userId, '👥 People you may know', text, { type: 'follow_suggestion' }).catch(() => {});
+}
+
 export async function getNotifications(userId: string) {
   const { data, error } = await supabase
     .from('notifications')
@@ -51,7 +116,7 @@ const PUSH_TITLES: Record<string, string> = {
 export async function sendAdminNotification(
   adminId: string,
   message: string,
-  type: 'announcement' | 'verification_approved' | 'verification_rejected' | 'account_suspended' | 'account_unsuspended',
+  type: 'announcement' | 'verification_approved' | 'verification_rejected' | 'account_suspended' | 'account_unsuspended' | 'admin_ban',
   targetUserId?: string,  // undefined = broadcast to all
 ) {
   if (targetUserId) {

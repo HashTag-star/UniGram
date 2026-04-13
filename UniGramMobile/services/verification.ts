@@ -21,19 +21,28 @@ export async function submitVerificationRequest(
 
   const { data, error } = await supabase
     .from('verification_requests')
-    .insert({ 
-      user_id: userId, 
-      type, 
-      full_name: fullName, 
-      email, 
+    .insert({
+      user_id: userId,
+      type,
+      full_name: fullName,
+      email,
       university,
-      reason, 
+      reason,
       document_urls: documentUrls,
       sheerid_verified: sheeridVerified
     })
     .select()
     .single();
   if (error) throw error;
+
+  // Notify all admins about the new verification request (fire-and-forget)
+  const { notifyAdmins } = require('./notifications');
+  notifyAdmins({
+    type: 'admin_verification',
+    text: `submitted a ${type} verification request`,
+    actorId: userId,
+  }).catch(() => {});
+
   return data;
 }
 

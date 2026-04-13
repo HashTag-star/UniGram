@@ -81,6 +81,15 @@ export async function createReport(
   });
 
   if (error) throw error;
+
+  // Notify all admins about the new report (fire-and-forget)
+  const { notifyAdmins } = require('./notifications');
+  notifyAdmins({
+    type: 'admin_report',
+    text: `reported ${targetType} content: "${reason}"`,
+    actorId: user.id,
+    postId: targetType === 'post' ? targetId : undefined,
+  }).catch(() => {});
 }
 
 /**

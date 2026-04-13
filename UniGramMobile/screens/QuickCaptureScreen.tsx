@@ -140,6 +140,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
       allowsMultipleSelection: true,
       selectionLimit: 10,
       quality: 0.85,
+      allowsEditing: false,
     });
     if (!res.canceled && res.assets?.length > 0) {
       const items = res.assets.map(asset => ({

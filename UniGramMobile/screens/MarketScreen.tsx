@@ -636,7 +636,7 @@ const SellModal: React.FC<SellModalProps> = ({
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
+      allowsEditing: false, // WhatsApp style
       quality: 0.85,
     });
     if (!result.canceled && result.assets?.length > 0) {
