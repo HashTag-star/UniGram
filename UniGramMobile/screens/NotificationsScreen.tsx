@@ -96,25 +96,30 @@ const NotifItem: React.FC<{
 
   return (
     <TouchableOpacity
-      style={[styles.item, !item.is_read && styles.itemUnread]}
+      style={[styles.item, !item.is_read && { backgroundColor: `${colors.accent}08` }]}
       onPress={() => onPress(item)}
       activeOpacity={0.7}
     >
+      {/* Unread accent bar on the left edge */}
+      {!item.is_read && (
+        <View style={[styles.unreadBar, { backgroundColor: colors.accent }]} />
+      )}
+
       {/* Avatar + icon badge */}
       <View style={styles.avatarWrap}>
         {actor?.avatar_url ? (
           <CachedImage uri={actor.avatar_url} style={styles.avatar} />
         ) : (
-          <View style={[styles.avatar, styles.avatarPlaceholder]}>
+          <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: colors.bg2 }]}>
             <Ionicons name="person" size={18} color={colors.textMuted} />
           </View>
         )}
-        <View style={[styles.iconBadge, { backgroundColor: icon.bg }]}>
+        <View style={[styles.iconBadge, { backgroundColor: icon.bg, borderColor: colors.bg }]}>
           <Ionicons name={icon.name as any} size={10} color={icon.color} />
         </View>
       </View>
 
-      {/* Text */}
+      {/* Text — takes all remaining space */}
       <View style={styles.textWrap}>
         <Text style={[styles.notifText, { color: colors.textSub }]} numberOfLines={isExpanded ? undefined : 2}>
           {actor?.username && (
@@ -125,18 +130,20 @@ const NotifItem: React.FC<{
         <Text style={[styles.notifTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
       </View>
 
-      {/* Post thumbnail (hide if expanding text to give more room) */}
-      {!isExpanded && item.posts?.media_url ? (
+      {/* Post thumbnail — only when not expanded */}
+      {!isExpanded && item.posts?.media_url && (
         <CachedImage uri={item.posts.media_url} style={styles.thumb} />
-      ) : (
-        <View style={{ width: 0 }} />
       )}
-
-      {/* Unread dot */}
-      {!item.is_read && <View style={styles.unreadDot} />}
     </TouchableOpacity>
   );
 });
+
+// ─── Module-level cache (survives tab switches and re-mounts) ─────────────────
+
+let _cachedNotifs: Notif[] = [];
+let _cacheUserId = '';
+let _cacheAt = 0;
+const NOTIFS_TTL = 30_000; // 30 s — background refresh after this
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -155,33 +162,72 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const [notifs, setNotifs] = useState<Notif[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed state from cache immediately so the screen feels instant on revisit
+  const hasFreshCache = _cacheUserId === userId && _cachedNotifs.length > 0;
+  const [notifs, setNotifs] = useState<Notif[]>(hasFreshCache ? _cachedNotifs : []);
+  const [loading, setLoading] = useState(!hasFreshCache);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const channelRef = useRef<any>(null);
 
-  const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    const cacheValid =
+      !forceRefresh &&
+      _cacheUserId === userId &&
+      _cachedNotifs.length > 0 &&
+      Date.now() - _cacheAt < NOTIFS_TTL;
+
+    // If we have a valid fresh cache, show it immediately and bail
+    if (cacheValid) {
+      setNotifs(_cachedNotifs);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    // Only show full skeleton when there's no cached data at all
+    if (!_cachedNotifs.length || _cacheUserId !== userId) setLoading(true);
+
     try {
       const data = await getNotifications(userId);
       const formatted = data.map((n: any) => ({
         ...n,
         profiles: Array.isArray(n.profiles) ? n.profiles[0] : n.profiles,
         posts: Array.isArray(n.posts) ? n.posts[0] : n.posts,
-      }));
-      setNotifs(formatted as Notif[]);
-    } catch (e) {
-      // silent fail
+      })) as Notif[];
+
+      // Update module-level cache
+      _cachedNotifs = formatted;
+      _cacheUserId = userId;
+      _cacheAt = Date.now();
+
+      setNotifs(formatted);
+    } catch {
+      // silent fail — keep whatever is already shown
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [userId]);
 
-  // Mark all read when screen opens
+  // Mark all read when screen opens; background-refresh if cache is stale
   useEffect(() => {
-    load();
+    const cacheStale =
+      _cacheUserId !== userId ||
+      !_cachedNotifs.length ||
+      Date.now() - _cacheAt >= NOTIFS_TTL;
+
+    if (cacheStale) {
+      load();
+    } else {
+      // Cache is fresh — data already in state, just schedule a quiet refresh
+      const timer = setTimeout(() => load(), NOTIFS_TTL - (Date.now() - _cacheAt));
+      markAllNotificationsRead(userId)
+        .then(() => onBadgeClear?.())
+        .catch(() => {});
+      return () => clearTimeout(timer);
+    }
+
     markAllNotificationsRead(userId)
       .then(() => onBadgeClear?.())
       .catch(() => {});
@@ -209,7 +255,15 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 profiles: profile,
                 posts: null,
               };
-              setNotifs(prev => [newNotif, ...prev]);
+              setNotifs(prev => {
+                const updated = [newNotif, ...prev];
+                // Keep cache in sync with live updates
+                if (_cacheUserId === userId) {
+                  _cachedNotifs = updated;
+                  _cacheAt = Date.now();
+                }
+                return updated;
+              });
             });
         }
       )
@@ -326,7 +380,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); load(true); }}
+              onRefresh={() => { setRefreshing(true); load(true /* forceRefresh */); }}
               tintColor="#6366f1"
             />
           }
@@ -402,20 +456,34 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingLeft: 20,   // wider left pad so content clears the 3px unread bar
+    paddingRight: 16,
+    paddingVertical: 13,
     gap: 12,
   },
-  itemUnread: {
-    backgroundColor: 'rgba(99,102,241,0.05)',
+
+  // Left-edge accent strip shown on unread items
+  unreadBar: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
+    borderRadius: 0,
   },
 
-  avatarWrap: { position: 'relative', width: 46, height: 46 },
+  avatarWrap: {
+    position: 'relative',
+    width: 46,
+    height: 46,
+    flexShrink: 0,
+    alignSelf: 'flex-start',  // anchor to top of row so avatar top = first text line
+    marginTop: 1,
+  },
   avatar: {
     width: 46,
     height: 46,
     borderRadius: 23,
-    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   avatarPlaceholder: {
     alignItems: 'center',
@@ -431,30 +499,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#000',
   },
 
-  textWrap: { flex: 1 },
-  notifText: { fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 19 },
-  actorName: { fontWeight: '700', color: '#fff' },
-  notifTime: { fontSize: 12, color: 'rgba(255,255,255,0.3)', marginTop: 3 },
+  textWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  notifText: { fontSize: 14, lineHeight: 20 },
+  actorName: { fontWeight: '700' },
+  notifTime: { fontSize: 12 },
 
   thumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-
-  unreadDot: {
-    position: 'absolute',
-    left: 4,
-    top: '50%',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#818cf8',
-    marginTop: -3,
+    width: 46,
+    height: 46,
+    borderRadius: 8,
+    flexShrink: 0,
+    alignSelf: 'center',
   },
 
   empty: {

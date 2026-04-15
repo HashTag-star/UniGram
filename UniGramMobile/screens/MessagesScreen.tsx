@@ -387,6 +387,17 @@ const VoiceRecorder: React.FC<{
     
     try {
       await rec.stopAndUnloadAsync();
+
+      // Restore audio session to non-recording mode so background music
+      // can resume. Recording sets allowsRecordingIOS = true which switches
+      // the iOS AVAudioSession to .playAndRecord and interrupts other apps.
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: false,
+        staysActiveInBackground: false,
+      }).catch(() => {});
+
       const uri = rec.getURI();
       const finalDuration = duration;
       setDuration(0);

@@ -46,7 +46,7 @@ import { useTheme } from '../context/ThemeContext';
 import { LiveScreen } from './LiveScreen';
 import { PopupButton } from '../components/PremiumPopup';
 
-const { width } = Dimensions.get('window');
+const { width, height: screenHeight } = Dimensions.get('window');
 
 function timeAgo(ts: string) {
   const diff = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -82,6 +82,7 @@ interface Post {
   created_at: string;
   profiles?: PostProfile | null;
   tagged_users?: string[];
+  is_flagged?: boolean | null;
 }
 
 interface FeedPostProps {
@@ -605,6 +606,8 @@ const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ r
   const player = useVideoPlayer(reel.video_url, p => {
     p.loop = true;
     p.muted = true;
+    // Always muted preview — never steal audio focus from background music
+    p.audioMixingMode = 'mixWithOthers';
     if (isActive) p.play();
   });
 
@@ -646,14 +649,18 @@ const VideoPost: React.FC<{
 }> = React.memo(({ uri, isMuted, isActive, aspectRatio }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
-    p.muted = isMuted ?? false;
+    p.muted = isMuted ?? true; // default muted so we never steal focus on mount
+    // Start mixing — won't interrupt background music until user explicitly unmutes
+    p.audioMixingMode = 'mixWithOthers';
     if (isActive) p.play();
   });
 
   useEffect(() => {
-    if (player) {
-      player.muted = isMuted ?? false;
-    }
+    if (!player) return;
+    player.muted = isMuted ?? true;
+    // When user unmutes: duck (lower) background music instead of killing it.
+    // When muted again: go back to silent mixing so background music resumes at full volume.
+    player.audioMixingMode = isMuted !== false ? 'mixWithOthers' : 'duckOthers';
   }, [player, isMuted]);
 
   useEffect(() => {
@@ -662,7 +669,7 @@ const VideoPost: React.FC<{
     else player.pause();
   }, [player, isActive]);
 
-  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : 360;
+  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : width;
 
   return (
     <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
@@ -735,14 +742,16 @@ const MediaCarousel: React.FC<{
   mediaUrls: string[];
   type: string;
   onDoubleTap: () => void;
-  onSingleTap: () => void;
+  onSingleTap: (index: number) => void;
   isMuted?: boolean;
   isActive?: boolean;
   aspectRatio?: number;
 }> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive, aspectRatio }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
-  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : 360;
-  
+  const currentIdxRef = useRef(0);
+  // Adaptive height: respect aspect ratio, cap portrait at 4:5 (Instagram standard)
+  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : width;
+
   // Gesture State
   const isSwiping = useSharedValue(false);
   const translateX = useSharedValue(0);
@@ -751,7 +760,7 @@ const MediaCarousel: React.FC<{
     .numberOfTaps(1)
     .onEnd(() => {
       if (!isSwiping.value) {
-        runOnJS(onSingleTap)();
+        runOnJS(onSingleTap)(currentIdxRef.current);
       }
     });
 
@@ -784,11 +793,15 @@ const MediaCarousel: React.FC<{
         onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
         onMomentumScrollEnd={e => {
           DeviceEventEmitter.emit('setPagerScroll', true);
-          setCurrentIdx(Math.round(e.nativeEvent.contentOffset.x / width));
+          const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+          setCurrentIdx(idx);
+          currentIdxRef.current = idx;
         }}
         onScroll={e => {
           const x = e.nativeEvent.contentOffset.x;
-          setCurrentIdx(Math.round(x / width));
+          const idx = Math.round(x / width);
+          setCurrentIdx(idx);
+          currentIdxRef.current = idx;
         }}
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
@@ -840,24 +853,227 @@ const FullVideoModal: React.FC<{
   uri: string;
   onClose: () => void;
 }> = ({ visible, uri, onClose }) => {
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [isMutedLocal, setIsMutedLocal] = useState(false);
+
   const player = useVideoPlayer(uri, p => {
     p.loop = true;
+    p.audioMixingMode = 'duckOthers';
+    p.muted = false;
     p.play();
   });
 
+  const togglePlayPause = () => {
+    if (player.playing) {
+      player.pause();
+      setIsPlaying(false);
+    } else {
+      player.play();
+      setIsPlaying(true);
+    }
+  };
+
+  const toggleMute = () => {
+    const next = !isMutedLocal;
+    player.muted = next;
+    setIsMutedLocal(next);
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" statusBarTranslucent>
+    <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <VideoView 
-          player={player} 
-          style={StyleSheet.absoluteFill} 
-          contentFit="cover"
-          nativeControls
-        />
-        <TouchableOpacity style={{ position: 'absolute', top: 50, left: 20 }} onPress={onClose}>
-          <Ionicons name="chevron-back" size={30} color="#fff" />
-        </TouchableOpacity>
+        <StatusBar hidden />
+        <TouchableWithoutFeedback onPress={togglePlayPause}>
+          <View style={{ flex: 1 }}>
+            <VideoView
+              player={player}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              nativeControls={false}
+            />
+            {/* Play/pause overlay */}
+            {!isPlaying && (
+              <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+                <View style={{ backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 40, padding: 16 }}>
+                  <Ionicons name="play" size={40} color="#fff" />
+                </View>
+              </View>
+            )}
+          </View>
+        </TouchableWithoutFeedback>
+
+        {/* Top bar */}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' }}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={toggleMute}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name={isMutedLocal ? 'volume-mute' : 'volume-high'} size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
+    </Modal>
+  );
+};
+
+// ─── Full Image Viewer ────────────────────────────────────────────────────────
+const ImageViewerModal: React.FC<{
+  visible: boolean;
+  uris: string[];
+  initialIndex: number;
+  onClose: () => void;
+}> = ({ visible, uris, initialIndex, onClose }) => {
+  const [currentIdx, setCurrentIdx] = useState(initialIndex);
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      setCurrentIdx(initialIndex);
+      setIsZoomed(false);
+    }
+  }, [visible, initialIndex]);
+
+  const resetZoom = () => {
+    scale.value = withSpring(1);
+    translateX.value = withSpring(0);
+    translateY.value = withSpring(0);
+    savedScale.value = 1;
+    savedTranslateX.value = 0;
+    savedTranslateY.value = 0;
+    setIsZoomed(false);
+  };
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.min(Math.max(savedScale.value * e.scale, 1), 4);
+    })
+    .onEnd(() => {
+      if (scale.value < 1.05) {
+        scale.value = withSpring(1);
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedScale.value = 1;
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+        runOnJS(setIsZoomed)(false);
+      } else {
+        savedScale.value = scale.value;
+        runOnJS(setIsZoomed)(true);
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    .enabled(isZoomed)
+    .onUpdate((e) => {
+      translateX.value = savedTranslateX.value + e.translationX;
+      translateY.value = savedTranslateY.value + e.translationY;
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: scale.value },
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+    ],
+  }));
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <StatusBar hidden />
+        <FlatList
+          data={uris}
+          horizontal
+          pagingEnabled
+          scrollEnabled={!isZoomed}
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={initialIndex}
+          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+          keyExtractor={(_, i) => String(i)}
+          onScrollBeginDrag={() => resetZoom()}
+          onMomentumScrollEnd={e => {
+            setCurrentIdx(Math.round(e.nativeEvent.contentOffset.x / width));
+          }}
+          renderItem={({ item }) => (
+            <GestureDetector gesture={composedGesture}>
+              <View style={{ width, height: screenHeight, justifyContent: 'center', alignItems: 'center' }}>
+                <Reanimated.View style={[{ width, height: screenHeight }, animatedStyle]}>
+                  <Image
+                    source={{ uri: item }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain"
+                  />
+                </Reanimated.View>
+              </View>
+            </GestureDetector>
+          )}
+        />
+
+        {/* Header bar */}
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0,
+          paddingTop: 50, paddingBottom: 14, paddingHorizontal: 16,
+          flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+          backgroundColor: 'rgba(0,0,0,0.35)',
+        }}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="close" size={22} color="#fff" />
+          </TouchableOpacity>
+
+          {uris.length > 1 && (
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+              {currentIdx + 1} / {uris.length}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            onPress={() => Share.share({ url: uris[currentIdx], message: 'Check out this photo on UniGram' })}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="share-outline" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Dot indicator for multi-image */}
+        {uris.length > 1 && (
+          <View style={{ position: 'absolute', bottom: 40, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+            {uris.map((_, i) => (
+              <View key={i} style={{
+                width: i === currentIdx ? 20 : 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: i === currentIdx ? '#fff' : 'rgba(255,255,255,0.45)',
+              }} />
+            ))}
+          </View>
+        )}
+      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
@@ -894,9 +1110,14 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [saved, setSaved] = useState(isSaved);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [imageViewerUris, setImageViewerUris] = useState<string[]>([]);
+  const [imageViewerIndex, setImageViewerIndex] = useState(0);
   const [songLoading, setSongLoading] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
-  const songPlayer = useAudioPlayer(songPreviewUrl ?? '');
+  // Pass null when there is no song — avoids activating the iOS audio session
+  // with an empty-string source, which would interrupt background music.
+  const songPlayer = useAudioPlayer(songPreviewUrl);
   const heartOverlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 
@@ -1147,6 +1368,14 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       {fullVideoUri && (
         <FullVideoModal visible uri={fullVideoUri} onClose={() => setFullVideoUri(null)} />
       )}
+      {showImageViewer && (
+        <ImageViewerModal
+          visible={showImageViewer}
+          uris={imageViewerUris}
+          initialIndex={imageViewerIndex}
+          onClose={() => setShowImageViewer(false)}
+        />
+      )}
 
       <View style={[styles.postHeader, { backgroundColor: colors.background }]}>
         <View style={styles.postUserRow}>
@@ -1233,11 +1462,16 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               if (!liked) doLike(true);
               showHeartOverlay();
             }}
-            onSingleTap={() => {
+            onSingleTap={(index) => {
+              const mediaUris = post.media_urls && post.media_urls.length > 0
+                ? post.media_urls
+                : [post.media_url!];
               if (post.type === 'video') {
-                setFullVideoUri(post.media_url!);
+                setFullVideoUri(mediaUris[index] ?? mediaUris[0]);
               } else {
-                setIsMuted?.(!isMuted);
+                setImageViewerUris(mediaUris);
+                setImageViewerIndex(index);
+                setShowImageViewer(true);
               }
             }}
             isMuted={isMuted}

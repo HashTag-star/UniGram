@@ -4,6 +4,7 @@ import React, {
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
   StyleSheet, ActivityIndicator, Alert, ActionSheetIOS, Platform,
+  FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,14 +16,15 @@ import {
   BottomSheetFooter,
   type BottomSheetFooterProps,
 } from '@gorhom/bottom-sheet';
-import { CommentsSkeleton } from './Skeleton';
+import { CommentsSkeleton, CommentsLoadMoreSkeleton } from './Skeleton';
 import {
   getPostComments, addPostComment, deletePostComment,
-  likeComment, unlikeComment,
+  likeComment, unlikeComment, COMMENTS_PAGE_SIZE,
 } from '../services/posts';
 import {
   getReelComments, addReelComment,
   deleteReelComment, likeReelComment, unlikeReelComment,
+  REEL_COMMENTS_PAGE_SIZE,
 } from '../services/reels';
 import { useTheme } from '../context/ThemeContext';
 import { VerifiedBadge } from './VerifiedBadge';
@@ -30,6 +32,9 @@ import { createReport } from '../services/reports';
 import { CachedImage } from './CachedImage';
 import { useHaptics } from '../hooks/useHaptics';
 import { usePopup } from '../context/PopupContext';
+import { getCommentHighlights } from '../services/aiEngine';
+import { searchMentions, getFollowing } from '../services/profiles';
+import { VerificationType } from '../data/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +67,8 @@ interface Props {
   onCountChange?: (delta: number) => void;
   /** Called once after comments load with the true count — lets parent sync its badge */
   onCountSync?: (count: number) => void;
+  /** IDs of users the current user follows — used for mention priority sorting */
+  followingIds?: Set<string>;
 }
 
 interface CommentRowProps {
@@ -201,6 +208,99 @@ const CommentRow = React.memo(function CommentRow({
   );
 });
 
+// ─── Mention suggestion pill ─────────────────────────────────────────────────
+
+interface MentionUser {
+  id: string;
+  username: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  is_verified?: boolean;
+  verification_type?: string | null;
+  isFollowing: boolean;
+}
+
+const MentionSuggestions = React.memo(function MentionSuggestions({
+  suggestions, colors, onSelect,
+}: { suggestions: MentionUser[]; colors: any; onSelect: (u: MentionUser) => void }) {
+  if (suggestions.length === 0) return null;
+  return (
+    <View style={[mentionStyles.panel, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+      <FlatList
+        data={suggestions}
+        keyExtractor={u => u.id}
+        keyboardShouldPersistTaps="always"
+        horizontal={false}
+        scrollEnabled={suggestions.length > 4}
+        style={{ maxHeight: 220 }}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={[mentionStyles.row, { borderBottomColor: colors.border }]}
+            onPress={() => onSelect(item)}
+            activeOpacity={0.7}
+          >
+            {item.avatar_url ? (
+              <CachedImage uri={item.avatar_url} style={mentionStyles.avatar} />
+            ) : (
+              <View style={[mentionStyles.avatar, { backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name="person" size={14} color={colors.textMuted} />
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={[mentionStyles.username, { color: colors.text }]}>@{item.username}</Text>
+                {item.is_verified && <VerifiedBadge type={item.verification_type as VerificationType | undefined} size="sm" />}
+                {item.isFollowing && (
+                  <View style={[mentionStyles.followingChip, { backgroundColor: colors.accent + '22' }]}>
+                    <Text style={[mentionStyles.followingText, { color: colors.accent }]}>Following</Text>
+                  </View>
+                )}
+              </View>
+              {item.full_name ? (
+                <Text style={[mentionStyles.fullName, { color: colors.textMuted }]} numberOfLines={1}>
+                  {item.full_name}
+                </Text>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+    </View>
+  );
+});
+
+const mentionStyles = StyleSheet.create({
+  panel: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: 12,
+    marginBottom: 6,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  avatar: { width: 32, height: 32, borderRadius: 16 },
+  username: { fontSize: 14, fontWeight: '700' },
+  fullName: { fontSize: 12, marginTop: 1 },
+  followingChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  followingText: { fontSize: 10, fontWeight: '700' },
+});
+
 // ─── FooterInput ─────────────────────────────────────────────────────────────
 // Owns its own text state so renderFooter never re-creates on keystrokes.
 // This prevents BottomSheetTextInput from unmounting (which closes the keyboard).
@@ -212,13 +312,18 @@ interface FooterInputProps {
   onSend: (text: string) => Promise<void>;
   onCancelReply: () => void;
   setTextRef: (getText: () => string) => void;
+  followingIds: Set<string>;
 }
 
 const FooterInput = React.memo(function FooterInput({
-  replyingTo, colors, bottomInset, onSend, onCancelReply, setTextRef,
+  replyingTo, colors, bottomInset, onSend, onCancelReply, setTextRef, followingIds,
 }: FooterInputProps) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<MentionUser[]>([]);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Expose current text to parent (for send callback)
   useEffect(() => {
@@ -232,12 +337,69 @@ const FooterInput = React.memo(function FooterInput({
     } else {
       setText('');
     }
+    setSuggestions([]);
+    setMentionQuery(null);
   }, [replyingTo?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Parse text on every change to detect an active @ fragment
+  const handleChangeText = useCallback((val: string) => {
+    setText(val);
+
+    // Find the last @ before the cursor that is not already completed
+    // Completed = has a space after the @word
+    const atIdx = val.lastIndexOf('@');
+    if (atIdx === -1) {
+      setMentionQuery(null);
+      setSuggestions([]);
+      return;
+    }
+    const fragment = val.slice(atIdx + 1); // text after the @
+    // If there's a space inside the fragment the mention is done
+    if (fragment.includes(' ')) {
+      setMentionQuery(null);
+      setSuggestions([]);
+      return;
+    }
+    setMentionStart(atIdx);
+    setMentionQuery(fragment); // '' means just typed @, 'jo' means @jo etc
+  }, []);
+
+  // Debounced search whenever mentionQuery changes
+  useEffect(() => {
+    if (mentionQuery === null) {
+      setSuggestions([]);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const results = await searchMentions(mentionQuery, followingIds);
+        setSuggestions(results);
+      } catch {
+        setSuggestions([]);
+      }
+    }, mentionQuery.length === 0 ? 0 : 300); // instant on bare @, debounced while typing
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [mentionQuery, followingIds]);
+
+  // Inject selected user — replaces @<fragment> with @username and a space
+  const handleSelect = useCallback((user: MentionUser) => {
+    const before = text.slice(0, mentionStart);
+    const after = text.slice(mentionStart + 1 + (mentionQuery?.length ?? 0));
+    const next = `${before}@${user.username} ${after}`;
+    setText(next);
+    setSuggestions([]);
+    setMentionQuery(null);
+  }, [text, mentionStart, mentionQuery]);
 
   const handleSend = async () => {
     const t = text.trim();
     if (!t || sending) return;
     setText('');
+    setSuggestions([]);
+    setMentionQuery(null);
     setSending(true);
     try {
       await onSend(t);
@@ -261,6 +423,10 @@ const FooterInput = React.memo(function FooterInput({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Mention suggestion panel — floats above the input row */}
+      <MentionSuggestions suggestions={suggestions} colors={colors} onSelect={handleSelect} />
+
       <View style={[styles.inputRow, { paddingBottom: Math.max(bottomInset, 8) }]}>
         <BottomSheetTextInput
           style={[
@@ -268,7 +434,7 @@ const FooterInput = React.memo(function FooterInput({
             { backgroundColor: colors.bg2, color: colors.text, borderColor: colors.border },
           ]}
           value={text}
-          onChangeText={setText}
+          onChangeText={handleChangeText}
           placeholder={replyingTo ? `Reply to @${replyingTo.profiles?.username}…` : 'Add a comment…'}
           placeholderTextColor={colors.textMuted}
           multiline
@@ -295,6 +461,7 @@ const FooterInput = React.memo(function FooterInput({
 
 export const CommentSheet: React.FC<Props> = ({
   visible, targetId, targetType, currentUserId, authorId, onClose, onCountChange, onCountSync,
+  followingIds: followingIdsProp,
 }) => {
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const flatListRef = useRef<any>(null);
@@ -305,12 +472,27 @@ export const CommentSheet: React.FC<Props> = ({
 
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+  // Cached following IDs for mention autocomplete — prop takes priority (already loaded by parent)
+  const [followingIds, setFollowingIds] = useState<Set<string>>(followingIdsProp ?? new Set());
+
+  // AI Highlights
+  const [aiHighlights, setAiHighlights] = useState<string[]>([]);
+  const [aiHighlightsLoading, setAiHighlightsLoading] = useState(false);
 
   // Ref to read current text from FooterInput without it being a render dep
   const getTextRef = useRef<() => string>(() => '');
   const setTextRef = useCallback((fn: () => string) => { getTextRef.current = fn; }, []);
+
+  // Sync followingIds if prop updates (e.g. user follows someone while sheet is open)
+  useEffect(() => {
+    if (followingIdsProp) setFollowingIds(followingIdsProp);
+  }, [followingIdsProp]);
 
   // Always-current refs for parent callbacks — never trigger useEffect re-runs
   const onCountSyncRef = useRef(onCountSync);
@@ -322,21 +504,31 @@ export const CommentSheet: React.FC<Props> = ({
 
   // Used for error-recovery reloads from handleLongPress
   const loadRequestId = useRef(0);
-  const loadComments = useCallback(async () => {
+  const loadComments = useCallback(async (pageNum = 0, append = false) => {
     if (!targetId) return;
     const reqId = ++loadRequestId.current;
-    setLoading(true);
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
-      const data = targetType === 'post'
-        ? await getPostComments(targetId, currentUserId)
-        : await getReelComments(targetId, currentUserId);
+      const result = targetType === 'post'
+        ? await getPostComments(targetId, currentUserId, pageNum)
+        : await getReelComments(targetId, currentUserId, pageNum);
       if (reqId !== loadRequestId.current) return;
-      setComments(data);
-      onCountSyncRef.current?.(data.length);
+      const { items, hasMore: more, total } = result;
+      setComments(prev => append ? [...prev, ...items] : items);
+      setHasMore(more);
+      setPage(pageNum);
+      if (!append) {
+        setTotalCount(total);
+        onCountSyncRef.current?.(total);
+      }
     } catch (e) {
       console.error(e);
     } finally {
-      if (reqId === loadRequestId.current) setLoading(false);
+      if (reqId === loadRequestId.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [targetId, targetType, currentUserId]);
 
@@ -346,22 +538,47 @@ export const CommentSheet: React.FC<Props> = ({
     if (!visible) {
       bottomSheetModalRef.current?.dismiss();
       setReplyingTo(null);
+      setAiHighlights([]);
+      setAiHighlightsLoading(false);
+      setPage(0);
+      setHasMore(false);
+      setTotalCount(0);
       return;
     }
     if (!targetId) return;
 
     const reqId = ++loadRequestId.current;
     setComments([]);
+    setPage(0);
+    setHasMore(false);
     setLoading(true);
     bottomSheetModalRef.current?.present();
 
     (targetType === 'post'
-      ? getPostComments(targetId, currentUserId)
-      : getReelComments(targetId, currentUserId)
-    ).then(data => {
+      ? getPostComments(targetId, currentUserId, 0)
+      : getReelComments(targetId, currentUserId, 0)
+    ).then(({ items, hasMore: more, total }) => {
       if (reqId !== loadRequestId.current) return;
-      setComments(data);
-      onCountSyncRef.current?.(data.length);
+      setComments(items);
+      setHasMore(more);
+      setTotalCount(total);
+      onCountSyncRef.current?.(total);
+
+      // Fetch AI highlights for this comment thread (fire-and-forget, needs ≥3 comments)
+      if (items.length >= 3) {
+        setAiHighlightsLoading(true);
+        setAiHighlights([]);
+        const input = items
+          .filter((c: any) => !c.parent_id) // top-level only for cleaner summary
+          .slice(0, 40)
+          .map((c: any) => ({ username: c.profiles?.username ?? 'user', text: c.text }));
+        getCommentHighlights(input)
+          .then(h => { setAiHighlights(h); })
+          .catch(() => {})
+          .finally(() => setAiHighlightsLoading(false));
+      } else {
+        setAiHighlights([]);
+      }
     }).catch(console.error).finally(() => {
       if (reqId === loadRequestId.current) setLoading(false);
     });
@@ -369,6 +586,12 @@ export const CommentSheet: React.FC<Props> = ({
     // Cleanup cancels any in-flight result (handles React StrictMode double-invoke)
     return () => { ++loadRequestId.current; };
   }, [visible, targetId, targetType, currentUserId]); // ← all stable primitives, no function deps
+
+  // Load next page when user scrolls to the bottom
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    loadComments(page + 1, true);
+  }, [loadingMore, hasMore, page, loadComments]);
 
   const toggleExpand = useCallback((parentId: string) => {
     hapticSelection();
@@ -416,6 +639,7 @@ export const CommentSheet: React.FC<Props> = ({
 
     const doDelete = () => {
       setComments(prev => prev.filter(c => c.id !== comment.id));
+      setTotalCount(prev => Math.max(0, prev - 1));
       onCountChangeRef.current?.(-1);
       const del = targetType === 'post'
         ? deletePostComment(comment.id, currentUserId)
@@ -495,6 +719,7 @@ export const CommentSheet: React.FC<Props> = ({
     };
 
     setComments(prev => [...prev, tempComment]);
+    setTotalCount(prev => prev + 1);
     onCountChangeRef.current?.(1);
     if (parentId) {
       setExpandedParents(prev => new Set([...prev, parentId]));
@@ -510,6 +735,7 @@ export const CommentSheet: React.FC<Props> = ({
       hapticSuccess();
     } catch {
       setComments(prev => prev.filter(c => c.id !== tempId));
+      setTotalCount(prev => Math.max(0, prev - 1));
       onCountChangeRef.current?.(-1);
     }
   }, [replyingTo, currentUserId, targetId, targetType, hapticSuccess]); // onCountChange accessed via ref
@@ -570,11 +796,12 @@ export const CommentSheet: React.FC<Props> = ({
           onSend={handleSend}
           onCancelReply={handleCancelReply}
           setTextRef={setTextRef}
+          followingIds={followingIds}
         />
       </BottomSheetFooter>
     ),
     // text/sending live inside FooterInput — NOT listed here
-    [replyingTo, colors, insets.bottom, handleSend, handleCancelReply, setTextRef]
+    [replyingTo, colors, insets.bottom, handleSend, handleCancelReply, setTextRef, followingIds]
   );
 
   return (
@@ -594,8 +821,8 @@ export const CommentSheet: React.FC<Props> = ({
       <View style={{ flex: 1 }}>
         <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
           <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
-          {!loading && comments.length > 0 && (
-            <Text style={[styles.countLabel, { color: colors.textMuted }]}>{comments.length}</Text>
+          {!loading && totalCount > 0 && (
+            <Text style={[styles.countLabel, { color: colors.textMuted }]}>{totalCount}</Text>
           )}
         </View>
 
@@ -613,16 +840,34 @@ export const CommentSheet: React.FC<Props> = ({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="none"
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={loadingMore ? <CommentsLoadMoreSkeleton /> : null}
           ListHeaderComponent={
-            <View style={[styles.aiHighlight, { backgroundColor: colors.bg2, borderColor: colors.accent + '25' }]}>
-              <View style={styles.aiHeader}>
-                <Ionicons name="sparkles" size={15} color={colors.accent} />
-                <Text style={[styles.aiTitle, { color: colors.accent }]}>AI Highlights</Text>
+            // Only show the panel if loading OR we have actual highlights
+            (aiHighlightsLoading || aiHighlights.length > 0) ? (
+              <View style={[styles.aiHighlight, { backgroundColor: colors.bg2, borderColor: colors.accent + '30' }]}>
+                <View style={styles.aiHeader}>
+                  <Ionicons name="sparkles" size={14} color={colors.accent} />
+                  <Text style={[styles.aiTitle, { color: colors.accent }]}>AI Highlights</Text>
+                  {aiHighlightsLoading && (
+                    <ActivityIndicator size="small" color={colors.accent} style={{ marginLeft: 4 }} />
+                  )}
+                </View>
+                {aiHighlightsLoading ? (
+                  <Text style={[styles.aiText, { color: colors.textMuted }]}>
+                    Analysing conversation…
+                  </Text>
+                ) : (
+                  aiHighlights.map((h, i) => (
+                    <View key={i} style={styles.aiHighlightRow}>
+                      <View style={[styles.aiDot, { backgroundColor: colors.accent }]} />
+                      <Text style={[styles.aiText, { color: colors.textSub, fontStyle: 'normal' }]}>{h}</Text>
+                    </View>
+                  ))
+                )}
               </View>
-              <Text style={[styles.aiText, { color: colors.textMuted }]}>
-                Analyzing conversations… Key points will appear here as we integrate our Unigram AI engine.
-              </Text>
-            </View>
+            ) : null
           }
           ListEmptyComponent={
             loading ? <CommentsSkeleton /> : (
@@ -668,14 +913,17 @@ const styles = StyleSheet.create({
   repliesLine: { width: 24, height: 1, marginRight: 8 },
   repliesToggleText: { fontSize: 12, fontWeight: '600' },
 
-  aiHighlight: { marginBottom: 16, padding: 12, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed' },
-  aiHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  aiTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
-  aiText: { fontSize: 12, fontStyle: 'italic', lineHeight: 16 },
+  aiHighlight: { marginBottom: 16, padding: 12, borderRadius: 14, borderWidth: 1 },
+  aiHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  aiTitle: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+  aiHighlightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  aiDot: { width: 5, height: 5, borderRadius: 3, marginTop: 6, flexShrink: 0 },
+  aiText: { fontSize: 13, lineHeight: 18, flex: 1 },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 60 },
   emptyTitle: { marginTop: 12, fontSize: 16, fontWeight: '600' },
   emptyHint: { marginTop: 6, fontSize: 13 },
+
 
   // Footer / input
   footerContainer: { borderTopWidth: 0.5 },

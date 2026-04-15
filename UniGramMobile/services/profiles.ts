@@ -89,6 +89,53 @@ export async function searchUsers(query: string) {
   return data;
 }
 
+/**
+ * Mention autocomplete search.
+ * - Empty query → returns up to 8 users the current user follows (instant, no network rank needed)
+ * - Non-empty query → prefix-searches all users, followed users floated to the top
+ * @param query        Text after the @ (may be empty)
+ * @param followingIds Set of user IDs the current user follows (used for priority sorting)
+ * @param limit        Max results to return (default 8)
+ */
+export async function searchMentions(
+  query: string,
+  followingIds: Set<string>,
+  limit = 8,
+): Promise<{ id: string; username: string; full_name: string | null; avatar_url: string | null; is_verified?: boolean; verification_type?: string | null; isFollowing: boolean }[]> {
+  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 30);
+
+  let qb = supabase
+    .from('profiles')
+    .select('id, username, full_name, avatar_url, is_verified, verification_type');
+
+  if (safe.length > 0) {
+    // Prefix match on username is fastest (indexed); also match full_name
+    qb = qb.or(`username.ilike.${safe}%,full_name.ilike.%${safe}%`);
+  } else {
+    // No query yet — only return people the user follows (avoids a huge table scan)
+    if (followingIds.size === 0) return [];
+    qb = qb.in('id', [...followingIds]);
+  }
+
+  const { data, error } = await qb.limit(limit * 2); // fetch extra so we can re-sort
+  if (error) throw error;
+
+  const results = (data ?? []) as any[];
+
+  // Float followed users to the top, then sort alphabetically within each tier
+  results.sort((a, b) => {
+    const aF = followingIds.has(a.id) ? 0 : 1;
+    const bF = followingIds.has(b.id) ? 0 : 1;
+    if (aF !== bF) return aF - bF;
+    return a.username.localeCompare(b.username);
+  });
+
+  return results.slice(0, limit).map(r => ({
+    ...r,
+    isFollowing: followingIds.has(r.id),
+  }));
+}
+
 export async function getFollowers(userId: string) {
   const { data, error } = await supabase
     .from('follows')

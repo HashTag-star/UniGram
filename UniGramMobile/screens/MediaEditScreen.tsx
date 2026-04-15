@@ -289,6 +289,7 @@ const VideoPreview = ({ uri }: { uri: string }) => {
 const ModernVideoPlayer = ({ uri }: { uri: string }) => {
   const player = useVideoPlayer(uri, (p: any) => {
     p.loop = true;
+    p.audioMixingMode = 'mixWithOthers'; // don't interrupt background music during editing
     p.play();
   });
   return (

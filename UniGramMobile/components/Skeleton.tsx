@@ -128,6 +128,25 @@ export const CommentsSkeleton: React.FC = () => (
   </View>
 );
 
+/** Compact 2-row skeleton shown at the bottom of the comments list while the next page loads */
+export const CommentsLoadMoreSkeleton: React.FC = () => (
+  <View style={{ paddingHorizontal: 14, paddingTop: 4, paddingBottom: 20, gap: 16 }}>
+    {[1, 2].map(i => (
+      <View key={i} style={{ flexDirection: 'row', gap: 10 }}>
+        <Skeleton width={32} height={32} borderRadius={16} />
+        <View style={{ flex: 1, gap: 6 }}>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <Skeleton width={55} height={10} />
+            <Skeleton width={28} height={8} />
+          </View>
+          <Skeleton width={'85%' as any} height={12} />
+          <Skeleton width={'45%' as any} height={12} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
+
 export const ProfileHeaderSkeleton: React.FC = () => {
   const { isDark } = useTheme();
   return (

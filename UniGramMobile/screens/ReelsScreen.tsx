@@ -50,11 +50,17 @@ const ReelVideo: React.FC<{
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
     p.muted = muted;
+    // Start in 'mixWithOthers' so we never kill the user's background music on launch.
+    // The useEffect below upgrades to 'duckOthers' only when actually unmuted.
+    p.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
     if (isActive && !isPaused) p.play();
   });
 
   useEffect(() => {
     player.muted = muted;
+    // When muted: mix silently and let background music play at full volume.
+    // When unmuted: duck background music politely instead of stealing focus.
+    player.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
   }, [muted, player]);
 
   useEffect(() => {

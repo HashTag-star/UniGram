@@ -43,6 +43,7 @@ import { createStory } from './services/stories';
 import { AccountService } from './services/accounts';
 import { runOnJS } from 'react-native-worklets';
 import { useHaptics as useAppHaptics } from './hooks/useHaptics';
+import { setAudioModeAsync } from 'expo-audio';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
 type AuthScreen = 'login' | 'signup';
@@ -404,6 +405,20 @@ function AppShell() {
   const [isEdgeSwiping, setIsEdgeSwiping] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [minSplashDone, setMinSplashDone] = useState(false);
+
+  // Configure audio session once on startup so UniGram never interrupts
+  // background music when its own sounds are muted or idle.
+  useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      // iOS: mix with other audio so background music keeps playing at full volume.
+      // Individual video players switch to 'duckOthers' only when the user unmutes.
+      interruptionMode: 'mixWithOthers',
+      // Android: same intent — don't steal focus from background music.
+      interruptionModeAndroid: 'duckOthers',
+      shouldPlayInBackground: false,
+    }).catch(() => {});
+  }, []);
 
   // Sync badge count with app icon (native)
   useEffect(() => {

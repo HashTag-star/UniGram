@@ -88,6 +88,28 @@ export async function trackInterestSignal(userId: string, tags: string[]): Promi
     .catch(() => {});
 }
 
+// ─── Comment Highlights ────────────────────────────────────────────────────────
+
+/**
+ * Ask Gemini to summarise the comments on a post into 2-3 short highlight sentences.
+ * Requires at least 3 comments; returns [] otherwise (caller should hide the panel).
+ */
+export async function getCommentHighlights(
+  comments: { username: string; text: string }[]
+): Promise<string[]> {
+  if (comments.length < 3) return [];
+  try {
+    const { data } = await supabase.functions.invoke('comment-summary', {
+      body: { comments },
+    });
+    return (data?.highlights as string[]) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── Learned Interests ────────────────────────────────────────────────────────
+
 /**
  * Returns the user's top learned interest tags (by signal count), sorted desc.
  */

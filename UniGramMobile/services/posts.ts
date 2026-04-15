@@ -216,27 +216,73 @@ export async function getSavedPosts(userId: string) {
 }
 
 // Comments
-export async function getPostComments(postId: string, currentUserId?: string) {
-  const { data, error } = await supabase
+export const COMMENTS_PAGE_SIZE = 20;
+
+export async function getPostComments(
+  postId: string,
+  currentUserId?: string,
+  page = 0,
+): Promise<{ items: any[]; hasMore: boolean; total: number }> {
+  const from = page * COMMENTS_PAGE_SIZE;
+  // range() is inclusive on both ends — fetches PAGE_SIZE+1 rows to detect hasMore
+  const to = from + COMMENTS_PAGE_SIZE;
+
+  // 1. Page of root-level comments + total count in one query
+  const { data: roots, count, error } = await supabase
     .from('post_comments')
-    .select(`*, profiles!post_comments_user_id_fkey(*)`)
+    .select(`*, profiles!post_comments_user_id_fkey(*)`, { count: 'exact' })
     .eq('post_id', postId)
-    .order('created_at', { ascending: true });
+    .is('parent_id', null)
+    .order('created_at', { ascending: true })
+    .range(from, to);
   if (error) throw error;
-  const comments = data ?? [];
 
-  if (!currentUserId || comments.length === 0) return comments;
+  const hasMore = (roots ?? []).length > COMMENTS_PAGE_SIZE;
+  const rootPage = (roots ?? []).slice(0, COMMENTS_PAGE_SIZE);
+  const total = count ?? 0;
+  if (rootPage.length === 0) return { items: [], hasMore: false, total };
 
-  // Batch-fetch which comments the current user has liked
-  const ids = comments.map((c: any) => c.id);
-  const { data: liked } = await supabase
-    .from('comment_likes')
-    .select('comment_id')
-    .eq('user_id', currentUserId)
-    .in('comment_id', ids);
+  const rootIds = rootPage.map((c: any) => c.id);
 
-  const likedSet = new Set((liked ?? []).map((r: any) => r.comment_id));
-  return comments.map((c: any) => ({ ...c, isLiked: likedSet.has(c.id) }));
+  // 2. Parallel: replies + root-comment likes at the same time
+  const [repliesResult, rootLikedResult] = await Promise.all([
+    supabase
+      .from('post_comments')
+      .select(`*, profiles!post_comments_user_id_fkey(*)`)
+      .eq('post_id', postId)
+      .in('parent_id', rootIds)
+      .order('created_at', { ascending: true }),
+    currentUserId
+      ? supabase
+          .from('comment_likes')
+          .select('comment_id')
+          .eq('user_id', currentUserId)
+          .in('comment_id', rootIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
+  ]);
+
+  const replies = repliesResult.data ?? [];
+  const likedSet = new Set((rootLikedResult.data ?? []).map((r: any) => r.comment_id));
+
+  // 3. Fetch reply likes only if there are replies (small targeted query)
+  if (currentUserId && replies.length > 0) {
+    const replyIds = replies.map((c: any) => c.id);
+    const { data: replyLiked } = await supabase
+      .from('comment_likes')
+      .select('comment_id')
+      .eq('user_id', currentUserId)
+      .in('comment_id', replyIds);
+    (replyLiked ?? []).forEach((r: any) => likedSet.add(r.comment_id));
+  }
+
+  const all = [...rootPage, ...replies];
+  return {
+    items: currentUserId
+      ? all.map((c: any) => ({ ...c, isLiked: likedSet.has(c.id) }))
+      : all,
+    hasMore,
+    total,
+  };
 }
 
 export async function addPostComment(postId: string, userId: string, text: string, parentId?: string) {

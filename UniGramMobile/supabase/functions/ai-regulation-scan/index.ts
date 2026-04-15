@@ -89,15 +89,42 @@ Verifications data: ${JSON.stringify((verifications || []).slice(0, 15))}`
       }
     )
 
+    if (!resp.ok) {
+      const errText = await resp.text()
+      console.error('[ai-regulation-scan] Gemini HTTP error:', resp.status, errText)
+      throw new Error(`Gemini HTTP ${resp.status}: ${errText.slice(0, 200)}`)
+    }
+
     const geminiResult = await resp.json()
+    console.log('[ai-regulation-scan] Gemini response status:', resp.status,
+      'candidates:', geminiResult.candidates?.length ?? 0,
+      'blockReason:', geminiResult.promptFeedback?.blockReason ?? 'none')
 
     if (geminiResult.error) {
       throw new Error(`Gemini API error: ${geminiResult.error.message}`)
     }
 
-    const raw = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
+    // Handle blocked or empty responses gracefully
+    const raw = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text
+    if (!raw) {
+      console.warn('[ai-regulation-scan] Gemini returned no text — blockReason:',
+        geminiResult.promptFeedback?.blockReason)
+      return new Response(JSON.stringify({
+        summary: 'AI scan unavailable — Gemini returned no output. Check your API key and try again.',
+        findings: [], anomalies: [],
+        stats: { total_reports: reportCount, high_severity_reports: 0, total_verifications: verificationCount, suspicious_verifications: 0 },
+      }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
+
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
-    const parsed = JSON.parse(cleaned)
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(cleaned)
+    } catch (parseErr: any) {
+      console.error('[ai-regulation-scan] JSON.parse failed. Raw text (first 500 chars):', cleaned.slice(0, 500))
+      throw new Error(`Failed to parse Gemini response as JSON: ${parseErr.message}`)
+    }
 
     // Log AI actions to audit table (best-effort, non-blocking)
     if (parsed.findings?.length) {
