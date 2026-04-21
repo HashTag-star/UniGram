@@ -821,7 +821,7 @@ function AppShell() {
                 <FeedScreen
                   refreshKey={feedRefreshKey}
                   isVisible={activeTab === 'feed' && isMainVisible}
-                  onCreateStory={() => setShowCreate(true)}
+                  onCreateStory={undefined}
                   onCameraPress={() => pagerRef.current?.setPage(0)}
                   onNotifPress={openNotifications}
                   onMessagePress={() => setActiveTab('messages')}

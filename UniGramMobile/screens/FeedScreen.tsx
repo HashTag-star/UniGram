@@ -19,7 +19,7 @@ import Reanimated, {
   runOnJS 
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useAudioPlayer } from 'expo-audio';
@@ -426,43 +426,53 @@ const StoryViewer: React.FC<{
 
   const showStoryOptions = () => {
     setPaused(true);
-    showPopup({
-      title: 'Story Options',
-      buttons: [
-        {
-          text: 'Delete story',
-          style: 'destructive',
-          onPress: () => {
-            showPopup({
-              title: 'Delete story?',
-              message: 'This will permanently remove this story.',
-              buttons: [
-                { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
-                { 
-                  text: 'Delete', 
-                  style: 'destructive', 
-                  onPress: async () => {
-                    try {
-                      await deleteStory(story.id, currentUserId);
-                      onDeleted?.(story.id);
-                    } catch {
-                      showPopup({
-                        title: 'Error',
-                        message: 'Could not delete story.',
-                        icon: 'alert-circle-outline',
-                        buttons: [{ text: 'OK', onPress: () => {} }]
-                      });
-                      setPaused(false);
+    if (isOwner) {
+      showPopup({
+        title: 'Story Options',
+        buttons: [
+          {
+            text: 'Delete story',
+            style: 'destructive',
+            onPress: () => {
+              showPopup({
+                title: 'Delete story?',
+                message: 'This will permanently remove this story.',
+                buttons: [
+                  { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+                  {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await deleteStory(story.id, currentUserId);
+                        onDeleted?.(story.id);
+                      } catch {
+                        showPopup({
+                          title: 'Error',
+                          message: 'Could not delete story.',
+                          icon: 'alert-circle-outline',
+                          buttons: [{ text: 'OK', onPress: () => {} }]
+                        });
+                        setPaused(false);
+                      }
                     }
-                  }
-                },
-              ]
-            });
+                  },
+                ]
+              });
+            },
           },
-        },
-        { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
-      ]
-    });
+          { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+        ]
+      });
+    } else {
+      showPopup({
+        title: 'Story Options',
+        buttons: [
+          { text: 'Report', onPress: () => { setPaused(false); } },
+          { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
+        ]
+      });
+    }
   };
 
   if (!visible || !group || !story) return null;
@@ -496,28 +506,21 @@ const StoryViewer: React.FC<{
         </View>
 
         <View style={[sv.header, { top: insets.top + 20 }]}>
+          <TouchableOpacity onPress={onClose} style={sv.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
           <View style={sv.headerLeft}>
             {group.profile.avatar_url
               ? <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
               : <View style={[sv.avatar, { backgroundColor: '#333' }]} />}
             <View style={{ marginLeft: 8 }}>
-              <Text style={sv.username}>{group.profile.username}</Text>
+              <Text style={sv.username}>{isOwner ? 'My status' : group.profile.username}</Text>
               <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
             </View>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            {isOwner && (
-              <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn}>
-                <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={() => setPaused(p => !p)} style={sv.iconBtn}>
-              <Ionicons name={paused ? 'play' : 'pause'} size={20} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={onClose} style={sv.iconBtn}>
-              <Ionicons name="close" size={22} color="#fff" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+          </TouchableOpacity>
         </View>
 
         {story.caption ? (
@@ -551,43 +554,56 @@ const StoryViewer: React.FC<{
 
         <View style={[sv.replyRow, { paddingBottom: insets.bottom + 12 }]}>
           {isOwner ? (
-            <TouchableOpacity style={sv.viewersBtn} onPress={() => setShowViewers(true)}>
-              <View style={sv.viewerAvatars}>
-                 <Ionicons name="eye-outline" size={16} color="#fff" />
-              </View>
-              <Text style={sv.viewersCount}>{stats.views} viewers</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={[sv.replyInput, isTyping && sv.replyInputActive]}>
-              <TextInput
-                style={sv.replyTextInput}
-                placeholder={`Reply to ${group.profile.username}…`}
-                placeholderTextColor="rgba(255,255,255,0.5)"
-                value={reply}
-                onChangeText={setReply}
-                onFocus={() => { setIsTyping(true); setPaused(true); }}
-                onBlur={() => { if (!reply) { setIsTyping(false); setPaused(false); } }}
-                onSubmitEditing={submitReply}
-                returnKeyType="send"
-              />
-            </View>
-          )}
-          
-          {!isTyping && (
             <>
-              <TouchableOpacity style={sv.replyHeart} onPress={() => toggleLike()}>
-                <Ionicons name={stats.isLiked ? "heart" : "heart-outline"} size={26} color={stats.isLiked ? "#ff3b30" : "#fff"} />
+              <TouchableOpacity style={sv.viewersPill} onPress={() => setShowViewers(true)}>
+                <Ionicons name="eye-outline" size={18} color="#fff" />
+                <Text style={sv.viewersCount}>{stats.views}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={sv.replyShare}>
-                <Ionicons name="paper-plane-outline" size={22} color="#fff" />
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity style={sv.shareIconBtn}>
+                <FontAwesome name="facebook" size={22} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={sv.shareIconBtn}>
+                <FontAwesome name="instagram" size={22} color="#fff" />
               </TouchableOpacity>
             </>
-          )}
-
-          {isTyping && reply.trim().length > 0 && (
-            <TouchableOpacity style={sv.sendBtn} onPress={submitReply}>
-              <Text style={sv.sendBtnText}>Send</Text>
-            </TouchableOpacity>
+          ) : (
+            <>
+              {!isTyping ? (
+                <TouchableOpacity
+                  style={sv.replyInputTouchable}
+                  onPress={() => { setIsTyping(true); setPaused(true); }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={sv.replyPlaceholder}>Reply…</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={[sv.replyInput, sv.replyInputActive]}>
+                  <TextInput
+                    style={sv.replyTextInput}
+                    placeholder="Reply…"
+                    placeholderTextColor="rgba(255,255,255,0.5)"
+                    value={reply}
+                    onChangeText={setReply}
+                    onFocus={() => { setIsTyping(true); setPaused(true); }}
+                    onBlur={() => { if (!reply) { setIsTyping(false); setPaused(false); } }}
+                    onSubmitEditing={submitReply}
+                    returnKeyType="send"
+                    autoFocus
+                  />
+                  {reply.trim().length > 0 && (
+                    <TouchableOpacity onPress={submitReply} style={{ paddingLeft: 8 }}>
+                      <Text style={sv.sendBtnText}>Send</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+              {!isTyping && (
+                <TouchableOpacity style={sv.replyHeart} onPress={() => toggleLike()}>
+                  <Ionicons name={stats.isLiked ? 'heart' : 'heart-outline'} size={28} color={stats.isLiked ? '#ff3b30' : '#fff'} />
+                </TouchableOpacity>
+              )}
+            </>
           )}
         </View>
 
@@ -2420,44 +2436,65 @@ const sv = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 1 },
   header: {
     position: 'absolute', left: 0, right: 0, zIndex: 10,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 4, gap: 2,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatar: { width: 36, height: 36, borderRadius: 18, borderOutlineWidth: 2, borderColor: '#fff' } as any,
-  username: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  time: { color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 1 },
-  iconBtn: { padding: 6 },
+  backBtn: { padding: 8 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginLeft: 4 },
+  avatar: { width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)' },
+  username: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  time: { color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 1 },
+  iconBtn: { padding: 8 },
   captionBox: {
-    position: 'absolute', bottom: 120, left: 16, right: 16,
-    backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 10,
+    position: 'absolute', bottom: 130, left: 24, right: 24,
+    alignItems: 'center',
   },
-  captionText: { color: '#fff', fontSize: 14, lineHeight: 20 },
+  captionText: {
+    color: '#fff', fontSize: 16, lineHeight: 23,
+    textAlign: 'center', fontWeight: '500',
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
+  },
   tapRow: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
   replyRow: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingTop: 12, zIndex: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 12, paddingTop: 10, zIndex: 10,
   },
-  viewersCount: { color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 8 },
-  viewersBtn: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  viewerAvatars: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+  // Own status bottom
+  viewersPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(30,30,30,0.85)', borderRadius: 30,
+    paddingHorizontal: 16, paddingVertical: 10,
+  },
+  viewersCount: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  shareIconBtn: {
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: 'rgba(30,30,30,0.85)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  // Others' status bottom
+  replyInputTouchable: {
+    flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 28, paddingHorizontal: 18, paddingVertical: 11,
+  },
+  replyPlaceholder: { color: 'rgba(255,255,255,0.55)', fontSize: 15 },
   replyInput: {
-    flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8,
+    flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 28, paddingHorizontal: 16, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center',
   },
-  replyInputActive: { borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.1)' },
-  replyTextInput: { color: '#fff', fontSize: 14, padding: 0 },
-  replyHeart: { padding: 4 },
-  replyShare: { padding: 4 },
+  replyInputActive: { borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.08)' },
+  replyTextInput: { flex: 1, color: '#fff', fontSize: 15, padding: 0 },
+  replyHeart: { padding: 6 },
   reactionOverlay: {
     position: 'absolute', left: 20, right: 20, zIndex: 1000,
     backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: 30,
     flexDirection: 'row', padding: 10, justifyContent: 'space-between'
   },
   reactionItem: { padding: 4 },
-  sendBtn: { padding: 6 },
-  sendBtnText: { color: '#6366f1', fontWeight: '800' },
+  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
 });
 
 const vv = StyleSheet.create({
