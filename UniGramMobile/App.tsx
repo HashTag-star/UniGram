@@ -1,7 +1,7 @@
 import './global.css';
 import React, { useState, useEffect, useRef, useTransition } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
+  View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal, ScrollView,
 } from 'react-native';
 import * as Linking from 'expo-linking';
@@ -52,11 +52,11 @@ type AuthScreen = 'login' | 'signup';
 type LegalOverlay = 'privacy' | 'terms' | 'guidelines' | null;
 
 const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> = [
-  { id: 'feed',     icon: 'home-outline',        activeIcon: 'home',        label: 'Home'     },
-  { id: 'explore',  icon: 'search-outline',       activeIcon: 'search',      label: 'Explore'  },
-  { id: 'reels',    icon: 'film-outline',          activeIcon: 'film',        label: 'Reels'    },
-  { id: 'market',   icon: 'bag-outline',           activeIcon: 'bag',         label: 'Market'   },
-  { id: 'profile',  icon: 'person-outline',        activeIcon: 'person',      label: 'Profile'  },
+  { id: 'feed',     icon: 'home-outline',          activeIcon: 'home-sharp',      label: 'Home'     },
+  { id: 'explore',  icon: 'search-outline',         activeIcon: 'search',          label: 'Explore'  },
+  { id: 'reels',    icon: 'play-circle-outline',    activeIcon: 'play-circle',     label: 'Reels'    },
+  { id: 'market',   icon: 'bag-outline',            activeIcon: 'bag',             label: 'Market'   },
+  { id: 'profile',  icon: 'person-outline',         activeIcon: 'person',          label: 'Profile'  },
 ];
 
 // ─── Splash screen ────────────────────────────────────────────────────────────
@@ -413,7 +413,7 @@ function AppShell() {
   const [showDiscoverPeople, setShowDiscoverPeople] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
-  const [globalMuted, setGlobalMuted] = useState(true);
+  const [globalMuted, setGlobalMuted] = useState(false);
 
   const handleCapture = (items: any[]) => {
     setActiveMedia(items);
@@ -831,7 +831,7 @@ function AppShell() {
 
         {/* Page 1: Main App Content */}
         <View key="1" style={{ flex: 1 }}>
-          <View style={styles.screensContainer}>
+          <View style={[styles.screensContainer]}>
             {/* Each screen uses absoluteFill inside the container so they overlap
                 each other but NOT the tab bar. display:none hides without unmount. */}
             <View style={[styles.screen, hide('feed')]}>
@@ -909,50 +909,55 @@ function AppShell() {
           {/* Floating "+" create button — hide on Reels */}
           {showTabBar && !isReels && (
             <TouchableOpacity
-              style={[styles.fab, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}
+              style={[styles.fab, { bottom: 14 }]}
               onPress={() => pagerRef.current?.setPage(0)}
               activeOpacity={0.85}
             >
               <Ionicons name="add" size={28} color="#fff" />
             </TouchableOpacity>
           )}
+        </View>
+      </PagerView>
 
-          {/* Bottom tab bar — absolute on Reels so video fills full screen */}
-          {showTabBar && (
-            <SafeAreaView
-              edges={['bottom']}
-              style={[
-                styles.bottomNav,
-                { backgroundColor: colors.bg, borderTopColor: colors.border },
-                isReels && styles.bottomNavReels,
-              ]}
-            >
-              <View style={styles.bottomNavInner}>
-                {TABS.map(tab => {
-                  const isActive = activeTabVisual === tab.id;
-                  return (
-                    <TouchableOpacity
-                      key={tab.id}
-                      onPress={() => handleTabChange(tab.id)}
-                      style={styles.tabBtn}
-                      activeOpacity={0.7}
-                    >
+      {/* Tab bar: always outside PagerView so native video layers never cover it */}
+      {showTabBar && (
+        <SafeAreaView
+          edges={['bottom']}
+          style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}
+        >
+          <View style={styles.bottomNavInner}>
+            {TABS.map(tab => {
+              const isActive = activeTabVisual === tab.id;
+              return (
+                <Pressable
+                  key={tab.id}
+                  onPress={() => handleTabChange(tab.id)}
+                  style={styles.tabBtn}
+                  android_ripple={{ color: colors.accent + '22', borderless: true, radius: 28 }}
+                  hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                >
+                  {({ pressed }) => (
+                    <>
                       {isActive && <View style={styles.tabIndicator} />}
-                      <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '15' }]}>
+                      <View style={[
+                        styles.tabIconWrap,
+                        isActive && { backgroundColor: colors.accent + '15' },
+                        pressed && { opacity: 0.65 },
+                      ]}>
                         <Ionicons
                           name={(isActive ? tab.activeIcon : tab.icon) as any}
                           size={26}
                           color={isActive ? colors.accent : colors.textMuted}
                         />
                       </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </SafeAreaView>
-          )}
-        </View>
-      </PagerView>
+                    </>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </SafeAreaView>
+      )}
 
       {/* Notifications overlay — full-screen */}
       {showNotifications && (
@@ -1098,7 +1103,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5, shadowRadius: 12, elevation: 12,
   },
   bottomNav: { backgroundColor: '#000', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
-  bottomNavReels: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.82)', borderTopColor: 'rgba(255,255,255,0.06)' },
   bottomNavInner: { flexDirection: 'row', paddingVertical: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 2, position: 'relative' },
   tabIndicator: { position: 'absolute', top: 0, left: '25%', right: '25%', height: 2, backgroundColor: '#818cf8', borderRadius: 1 },

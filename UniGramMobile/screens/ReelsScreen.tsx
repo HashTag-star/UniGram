@@ -12,7 +12,7 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
-import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel } from '../services/reels';
+import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
@@ -111,6 +111,8 @@ const ReelItem: React.FC<{
 }> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight, onBack }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
+  const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
+  const viewedRef = useRef(false);
   const [following, setFollowing] = useSocialFollow(reel.profiles?.id ?? '', initFollowing);
   const { success: hapticSuccess, warning: hapticWarning, medium: hapticMedium } = useHaptics();
   const [showComments, setShowComments] = useState(false);
@@ -144,6 +146,17 @@ const ReelItem: React.FC<{
       }
     }
   }, [isActive]);
+
+  // Count a view after 2 s of watching — once per reel per session
+  useEffect(() => {
+    if (!isActive || viewedRef.current) return;
+    const timer = setTimeout(() => {
+      viewedRef.current = true;
+      setViewsCount((c: number) => c + 1);
+      incrementReelView(reel.id).catch(() => {});
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [isActive, reel.id]);
 
   // Smoothly animate the pause overlay in/out — runs on the UI thread
   useEffect(() => {
@@ -465,7 +478,7 @@ const ReelItem: React.FC<{
       </View>
 
       {/* Right actions */}
-      <View style={[styles.rightActions, { bottom: TAB_BAR_HEIGHT + insets.bottom + 80 }]}>
+      <View style={[styles.rightActions, { bottom: 80 }]}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
           <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
@@ -488,7 +501,7 @@ const ReelItem: React.FC<{
       </View>
 
       {/* Bottom info */}
-      <View style={[styles.bottomInfo, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}>
+      <View style={[styles.bottomInfo, { bottom: 14 }]}>
         <View style={styles.userRow}>
           {profile?.avatar_url
             ? <CachedImage uri={profile.avatar_url} style={styles.reelAvatar} />
@@ -515,13 +528,13 @@ const ReelItem: React.FC<{
           </View>
         )}
         <Text style={styles.viewCount}>
-          {fmtCount(reel.views_count ?? 0)} views · {timeAgo(reel.created_at)}
+          {fmtCount(viewsCount)} views · {timeAgo(reel.created_at)}
         </Text>
       </View>
 
       {/* Seek bar — 44 px touch target, sits right at top of tab bar */}
       <View
-        style={[styles.seekBarContainer, { bottom: TAB_BAR_HEIGHT + insets.bottom }]}
+        style={[styles.seekBarContainer, { bottom: 0 }]}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderGrant={handleSeekBarPress}
@@ -594,7 +607,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       />
 
       {/* Right actions */}
-      <Animated.View style={[skeletonStyles.rightActions, { bottom: TAB_BAR_HEIGHT + insets.bottom + 80, opacity }]}>
+      <Animated.View style={[skeletonStyles.rightActions, { bottom: 80, opacity }]}>
         {[{ sz: 30, w: 32 }, { sz: 28, w: 28 }, { sz: 26, w: 26 }, { sz: 24, w: 0 }, { sz: 24, w: 0 }].map((item, i) => (
           <View key={i} style={skeletonStyles.actionItem}>
             <View style={[skeletonStyles.circle, { width: item.sz, height: item.sz, borderRadius: item.sz / 2 }]} />
@@ -604,7 +617,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       </Animated.View>
 
       {/* Bottom info */}
-      <Animated.View style={[skeletonStyles.bottomInfo, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14, opacity }]}>
+      <Animated.View style={[skeletonStyles.bottomInfo, { bottom: 14, opacity }]}>
         <View style={skeletonStyles.userRow}>
           <View style={skeletonStyles.avatar} />
           <View style={skeletonStyles.usernamePill} />
@@ -616,7 +629,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       </Animated.View>
 
       {/* Seek bar */}
-      <Animated.View style={[skeletonStyles.seekBar, { bottom: TAB_BAR_HEIGHT + insets.bottom, opacity }]} />
+      <Animated.View style={[skeletonStyles.seekBar, { bottom: 0, opacity }]} />
 
     </View>
   );

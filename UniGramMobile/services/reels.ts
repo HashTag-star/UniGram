@@ -269,6 +269,18 @@ export async function unlikeReelComment(commentId: string, userId: string) {
   if (error) throw error;
 }
 
+export async function incrementReelView(reelId: string): Promise<void> {
+  const { data } = await supabase
+    .from('reels')
+    .select('views_count')
+    .eq('id', reelId)
+    .maybeSingle();
+  await supabase
+    .from('reels')
+    .update({ views_count: (data?.views_count ?? 0) + 1 })
+    .eq('id', reelId);
+}
+
 export async function deleteReel(reelId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');

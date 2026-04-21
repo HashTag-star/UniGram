@@ -66,6 +66,7 @@ import {
 } from '../services/messages';
 import { updateActiveStatus, blockUser } from '../services/profiles';
 import { getUserStories, getViewedStoryIds, markStoryViewed } from '../services/stories';
+import { ProfileScreen } from './ProfileScreen';
 import { initiateCall, CallRecord, CallType } from '../services/calls';
 import { CallScreen } from './CallScreen';
 import { useTheme } from '../context/ThemeContext';
@@ -2534,6 +2535,7 @@ interface MessagesScreenProps {
 
 export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChange, initialConv, isVisible }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const [screenState, setScreenState] = useState<ScreenState>('list');
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUsername, setCurrentUsername] = useState('Messages');
@@ -2545,6 +2547,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const [storyUserIds, setStoryUserIds] = useState<Set<string>>(new Set());
   const [viewedUserIds, setViewedUserIds] = useState<Set<string>>(new Set());
   const [viewingStoryUser, setViewingStoryUser] = useState<{ userId: string; profile: any } | null>(null);
+  const [viewingProfileUser, setViewingProfileUser] = useState<any | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -2622,7 +2625,10 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
 
   const handleAvatarPress = useCallback((userId: string, hasStory: boolean, profile: any) => {
     const buttons: any[] = [
-      { text: 'View Profile', onPress: () => {} }, // profile nav placeholder
+      {
+        text: 'View Profile',
+        onPress: () => setViewingProfileUser(profile),
+      },
     ];
     if (hasStory) {
       buttons.unshift({
@@ -2631,12 +2637,12 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
       });
     }
     buttons.push({ text: 'Cancel', style: 'cancel', onPress: () => {} });
-    Alert.alert(
-      profile?.full_name || profile?.username || 'User',
-      undefined,
+    showPopup({
+      title: profile?.full_name || profile?.username || 'User',
+      icon: 'person-circle-outline',
       buttons,
-    );
-  }, []);
+    });
+  }, [showPopup]);
 
   const openChatInfo = useCallback(() => setScreenState('info'), []);
   const closeChatInfo = useCallback(() => setScreenState('chat'), []);
@@ -2725,6 +2731,23 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
           currentUserId={currentUserId}
           onClose={() => setViewingStoryUser(null)}
         />
+      )}
+
+      {/* Profile overlay — slides in over the current screen */}
+      {viewingProfileUser && (
+        <Modal visible animationType="slide" onRequestClose={() => setViewingProfileUser(null)}>
+          <ProfileScreen
+            userId={viewingProfileUser.id}
+            isOwn={viewingProfileUser.id === currentUserId}
+            isVisible={true}
+            onBack={() => setViewingProfileUser(null)}
+            onMessagePress={() => setViewingProfileUser(null)}
+            onVerifyPress={() => {}}
+            onShowPrivacy={() => {}}
+            onShowTerms={() => {}}
+            onShowGuidelines={() => {}}
+          />
+        </Modal>
       )}
     </>
   );
