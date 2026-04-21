@@ -4,7 +4,6 @@ import {
   Image, Switch, Alert, Modal, TextInput, ActivityIndicator,
   Linking, KeyboardAvoidingView, Platform, FlatList,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -71,7 +70,7 @@ const Row: React.FC<{
 
 const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ visible, onClose }) => {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
+
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNew, setShowNew] = useState(false);
@@ -128,7 +127,7 @@ const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { reset(); onClose(); }}>
       <KeyboardAvoidingView
-        style={[styles.subModalContainer, { backgroundColor: colors.bg, paddingTop: Platform.OS === 'ios' ? 0 : (insets.top || 16) }]}
+        style={[styles.subModalContainer, { backgroundColor: colors.bg }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
@@ -212,7 +211,7 @@ const PrivacyModal: React.FC<{
 }> = ({ visible, profile, onClose, onProfileUpdated }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
-  const insets = useSafeAreaInsets();
+
   const [isPrivate, setIsPrivate] = useState(false);
   const [showActivityStatus, setShowActivityStatus] = useState(true);
   const [allowDmsFrom, setAllowDmsFrom] = useState<'everyone' | 'followers'>('everyone');
@@ -268,7 +267,7 @@ const PrivacyModal: React.FC<{
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.subModalContainer, { backgroundColor: colors.bg, paddingTop: insets.top || 16 }]}>
+      <View style={[styles.subModalContainer, { backgroundColor: colors.bg }]}>
         <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose}>
             <Text style={[styles.subModalCancel, { color: colors.textSub }]}>Done</Text>
@@ -341,7 +340,7 @@ const PrivacyModal: React.FC<{
 
 const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => void }> = ({ visible, profile, onClose }) => {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
+
   const [blocked, setBlocked] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const { showPopup } = usePopup();
@@ -397,7 +396,7 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.subModalContainer, { backgroundColor: colors.bg, paddingTop: insets.top || 16 }]}>
+      <View style={[styles.subModalContainer, { backgroundColor: colors.bg }]}>
         <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose}>
             <Text style={[styles.subModalCancel, { color: colors.textSub }]}>Done</Text>
@@ -461,7 +460,7 @@ export const SettingsScreen: React.FC<Props> = ({
   visible, profile, onClose, onProfileUpdated, onAdminPress,
   onShowPrivacy, onShowTerms, onShowGuidelines
 }) => {
-  const insets = useSafeAreaInsets();
+
   const { colors, isDark, toggleTheme } = useTheme();
 
   const [showEditProfile, setShowEditProfile] = useState(false);
@@ -565,7 +564,7 @@ export const SettingsScreen: React.FC<Props> = ({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.container, { backgroundColor: colors.bg, paddingTop: Platform.OS === 'ios' ? 0 : (insets.top || 16) }]}>
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose}>

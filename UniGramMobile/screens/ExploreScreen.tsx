@@ -669,7 +669,6 @@ const PostDetailModal: React.FC<{
   onClose: () => void;
 }> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, onClose }) => {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
   const [showComments, setShowComments] = useState(false);
 

@@ -4,7 +4,6 @@ import {
   StyleSheet, Modal, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
@@ -80,7 +79,6 @@ const TIERS: Array<{
 ];
 
 export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
-  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<typeof TIERS[0] | null>(null);
   const [name, setName] = useState('');
@@ -273,7 +271,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <View style={styles.container}>
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <View style={[styles.header, { paddingTop: 10 }]}>
           <TouchableOpacity onPress={step === 'form' ? () => setStep('select') : handleClose} style={styles.headerBtn}>
             <Ionicons name={step === 'form' ? 'arrow-back' : 'close'} size={22} color="#fff" />
           </TouchableOpacity>

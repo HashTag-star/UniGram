@@ -962,7 +962,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
       presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View style={[styles.newConvModal, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
+      <View style={[styles.newConvModal, { backgroundColor: colors.bg }]}>
         {/* Header */}
         <View style={[styles.newConvHeader, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>

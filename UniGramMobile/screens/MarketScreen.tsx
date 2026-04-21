@@ -392,7 +392,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
           )}
 
           {/* Overlay buttons row */}
-          <View style={[dtl.overlayRow, { paddingTop: insets.top + 8 }]}>
+          <View style={[dtl.overlayRow, { paddingTop: 8 }]}>
             <TouchableOpacity style={dtl.overlayBtn} onPress={onClose}>
               <Ionicons name="close" size={20} color="#fff" />
             </TouchableOpacity>

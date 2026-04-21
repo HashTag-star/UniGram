@@ -4,7 +4,6 @@ import {
   ScrollView, ActivityIndicator, Modal,
   KeyboardAvoidingView, Platform, FlatList, SafeAreaView,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
@@ -138,7 +137,7 @@ function SearchModal({ visible, title, placeholder, icon, onSearch, onSelect, on
 // ─── EditProfileModal ─────────────────────────────────────────────────────────
 
 export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, onSaved }) => {
-  const insets = useSafeAreaInsets();
+
   const { colors } = useTheme();
   const { showPopup } = usePopup();
 
@@ -210,7 +209,7 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
           {/* Header */}
-          <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top || 16 }]}>
+          <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: 16 }]}>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={[styles.cancel, { color: colors.textMuted }]}>Cancel</Text>
             </TouchableOpacity>
