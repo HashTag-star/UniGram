@@ -158,8 +158,9 @@ const ReelItem: React.FC<{
   // Buffering / network error state
   const [isBuffering, setIsBuffering] = useState(false);
   const [netError, setNetError] = useState(false);
-  const bufferTimeoutRef = useRef<any>(null);
   const shimmerAnim = useRef(new Animated.Value(0)).current;
+  const stuckCountRef = useRef(0);
+  const lastTimeRef = useRef(-1);
 
   // Pulsing shimmer loop for seek bar during buffer
   useEffect(() => {
@@ -176,29 +177,45 @@ const ReelItem: React.FC<{
     }
   }, [isBuffering]);
 
-  const handleBufferingChange = useCallback((buffering: boolean) => {
-    setIsBuffering(buffering);
-    if (buffering) {
-      bufferTimeoutRef.current = setTimeout(() => setNetError(true), 10000);
-    } else {
-      clearTimeout(bufferTimeoutRef.current);
-      setNetError(false);
+  // Poll every 500 ms — if currentTime doesn't advance for 3 s → buffering
+  // If stuck for 15 s → network error. Resets immediately when time advances.
+  useEffect(() => {
+    if (!isActive || isPaused) {
+      stuckCountRef.current = 0;
+      lastTimeRef.current = -1;
+      return;
     }
-  }, []);
+    const interval = setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+      const now = player.currentTime ?? 0;
+      if (now === lastTimeRef.current && now > 0) {
+        stuckCountRef.current += 1;
+        if (stuckCountRef.current >= 6) setIsBuffering(true);   // 3 s
+        if (stuckCountRef.current >= 30) setNetError(true);     // 15 s
+      } else {
+        stuckCountRef.current = 0;
+        setIsBuffering(false);
+        setNetError(false);
+      }
+      lastTimeRef.current = now;
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isActive, isPaused]);
 
   const handleRetry = useCallback(() => {
     setNetError(false);
-    setIsBuffering(true);
+    setIsBuffering(false);
+    stuckCountRef.current = 0;
+    lastTimeRef.current = -1;
     try { playerRef.current?.play(); } catch {}
-    bufferTimeoutRef.current = setTimeout(() => setNetError(true), 10000);
   }, []);
-
-  useEffect(() => () => clearTimeout(bufferTimeoutRef.current), []);
 
   // Reset error state when reel becomes inactive
   useEffect(() => {
     if (!isActive) {
-      clearTimeout(bufferTimeoutRef.current);
+      stuckCountRef.current = 0;
+      lastTimeRef.current = -1;
       setNetError(false);
       setIsBuffering(false);
     }
