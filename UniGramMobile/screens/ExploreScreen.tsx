@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
 import { FeedPost } from './FeedScreen';
+import { CommentSheet } from '../components/CommentSheet';
 import { searchUsers, followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';
 import { getTrendingHashtags, getPersonalizedExplorePosts, getFollowSuggestions } from '../services/algorithm';
@@ -666,8 +667,11 @@ const PostDetailModal: React.FC<{
   setIsMuted: (m: boolean) => void;
   isVisible?: boolean;
   onClose: () => void;
-}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, isVisible, onClose }) => {
+}> = ({ post, currentUserId, isLiked, isSaved, isMuted, setIsMuted, onClose }) => {
   const { colors } = useTheme();
+  const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
+  const [showComments, setShowComments] = useState(false);
+
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -681,15 +685,28 @@ const PostDetailModal: React.FC<{
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
           <FeedPost
-            post={post}
+            post={{ ...post, comments_count: commentCount }}
             currentUserId={currentUserId}
             isLiked={isLiked}
             isSaved={isSaved}
             isMuted={isMuted}
+            isActive={true}
             setIsMuted={setIsMuted}
+            onOpenComments={() => setShowComments(true)}
+            onCommentCountChange={(_, delta) => setCommentCount(c => Math.max(0, c + delta))}
           />
         </ScrollView>
       </View>
+      <CommentSheet
+        visible={showComments}
+        targetId={post.id}
+        targetType="post"
+        currentUserId={currentUserId}
+        authorId={post.user_id}
+        onClose={() => setShowComments(false)}
+        onCountChange={delta => setCommentCount(c => Math.max(0, c + delta))}
+        onCountSync={count => setCommentCount(count)}
+      />
     </Modal>
   );
 };

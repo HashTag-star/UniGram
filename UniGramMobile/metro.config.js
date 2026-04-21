@@ -17,6 +17,16 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       type: "sourceFile",
     };
   }
+  // event-target-shim v6 exports map omits "./index"; redirect to the CJS entry
+  if (moduleName === "event-target-shim/index") {
+    return {
+      filePath: path.resolve(
+        __dirname,
+        "node_modules/react-native-webrtc/node_modules/event-target-shim/index.js"
+      ),
+      type: "sourceFile",
+    };
+  }
   return context.resolveRequest(context, moduleName, platform);
 };
 

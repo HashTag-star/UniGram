@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
-  Alert, ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,6 +23,7 @@ import { usePopup } from '../context/PopupContext';
 
 const { width, height } = Dimensions.get('window');
 const ITEM_HEIGHT = height;
+const TAB_BAR_HEIGHT = 58;
 
 function fmtCount(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -72,14 +73,17 @@ const ReelVideo: React.FC<{
   }, [isActive, isPaused, player]);
 
   useEffect(() => {
-    const sub = player.addListener('timeUpdate', (event) => {
+    onPlayerReady(player);
+  }, [player]);
+
+  useEffect(() => {
+    const sub = player.addListener('timeUpdate', (event: any) => {
       if (player.duration > 0) {
         onProgress(event.currentTime / player.duration);
       }
     });
-    onPlayerReady(player);
     return () => sub.remove();
-  }, [player]);
+  }, [player, onProgress]);
 
   return (
     <VideoView
@@ -103,7 +107,8 @@ const ReelItem: React.FC<{
   muted: boolean;
   onMuteToggle: () => void;
   itemHeight: number;
-}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight }) => {
+  onBack?: () => void;
+}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight, onBack }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [following, setFollowing] = useSocialFollow(reel.profiles?.id ?? '', initFollowing);
@@ -113,21 +118,41 @@ const ReelItem: React.FC<{
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [seekFeedback, setSeekFeedback] = useState<'back' | 'forward' | null>(null);
+  const [isSeeking, setIsSeeking] = useState(false);
   const playerRef = useRef<any>(null);
   const lastTapRef = useRef(0);
+  const isSeekingRef = useRef(false);
+  const pendingPauseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
   const { showPopup } = usePopup();
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
-  const seekBarRef = useRef<View>(null);
+  // Native-driver animated opacities — no re-render needed for feedback/overlay
+  const seekFeedbackBackOpacity = useRef(new Animated.Value(0)).current;
+  const seekFeedbackFwdOpacity = useRef(new Animated.Value(0)).current;
+  const pauseOverlayOpacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
   const profile = reel.profiles;
 
-  // Reset pause state when reel becomes inactive
+  // Reset pause state and cancel any pending tap when reel becomes inactive
   useEffect(() => {
-    if (!isActive) setIsPaused(false);
+    if (!isActive) {
+      setIsPaused(false);
+      if (pendingPauseRef.current) {
+        clearTimeout(pendingPauseRef.current);
+        pendingPauseRef.current = null;
+      }
+    }
   }, [isActive]);
+
+  // Smoothly animate the pause overlay in/out — runs on the UI thread
+  useEffect(() => {
+    Animated.timing(pauseOverlayOpacity, {
+      toValue: isPaused && showControls ? 1 : 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
+  }, [isPaused, showControls]);
 
   const toggleLike = async () => {
     const next = !liked;
@@ -269,41 +294,66 @@ const ReelItem: React.FC<{
     hideControlsTimer.current = setTimeout(() => setShowControls(false), 3000);
   };
 
+  // Fade a seek-feedback icon in immediately, then fade it out — UI thread only
+  const triggerSeekFeedback = (dir: 'back' | 'forward') => {
+    const anim = dir === 'back' ? seekFeedbackBackOpacity : seekFeedbackFwdOpacity;
+    anim.stopAnimation();
+    anim.setValue(1);
+    Animated.timing(anim, { toValue: 0, duration: 400, delay: 250, useNativeDriver: true }).start();
+  };
+
   const handleTap = (e: any) => {
     const now = Date.now();
     const { locationX: x } = e.nativeEvent;
-    if (now - lastTapRef.current < 300) {
+
+    if (now - lastTapRef.current < 200) {
+      // Double tap — cancel the pending single-tap pause before it fires
+      if (pendingPauseRef.current) {
+        clearTimeout(pendingPauseRef.current);
+        pendingPauseRef.current = null;
+      }
       handleDoubleTap(x);
       lastTapRef.current = 0;
       return;
     }
+
     lastTapRef.current = now;
-    setTimeout(() => {
-      if (lastTapRef.current === now) handleSingleTap();
-    }, 300);
+    // Immediate visual feedback: controls appear on the first touch
+    setShowControls(true);
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+
+    // Defer the actual pause/play toggle by 200 ms so double-taps can cancel it
+    pendingPauseRef.current = setTimeout(() => {
+      pendingPauseRef.current = null;
+      handleSingleTap();
+    }, 200);
   };
 
   const handleSingleTap = () => {
     const nextPaused = !isPaused;
     setIsPaused(nextPaused);
-    setShowControls(true);
     if (!nextPaused) scheduleHideControls();
+    // When pausing: keep controls visible indefinitely until next tap
     else if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
   };
 
   const handleDoubleTap = (x: number) => {
     if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     const player = playerRef.current;
-    if (!player) return;
+    if (!player || !player.duration) return;
+
+    const cur = player.currentTime ?? 0;
     if (x < width * 0.35) {
-      player.seekBy(-10);
-      setSeekFeedback('back');
-      setTimeout(() => setSeekFeedback(null), 600);
+      const newTime = Math.max(0, cur - 10);
+      player.currentTime = newTime;
+      setProgress(newTime / player.duration);
+      triggerSeekFeedback('back');
       hapticWarning();
     } else if (x > width * 0.65) {
-      player.seekBy(10);
-      setSeekFeedback('forward');
-      setTimeout(() => setSeekFeedback(null), 600);
+      const newTime = Math.min(player.duration, cur + 10);
+      player.currentTime = newTime;
+      setProgress(newTime / player.duration);
+      triggerSeekFeedback('forward');
       hapticWarning();
     } else {
       if (!liked) toggleLike();
@@ -312,23 +362,28 @@ const ReelItem: React.FC<{
     }
   };
 
-  // Seek bar touch — only active when paused
+  // Seek bar — absolute currentTime assignment for accurate, lag-free seeking
   const handleSeekBarPress = (e: any) => {
     const player = playerRef.current;
-    if (!player || !isPaused) return;
+    if (!player) return;
     const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
-    const targetTime = ratio * (player.duration ?? 0);
-    player.seekBy(targetTime - (player.currentTime ?? 0));
+    player.currentTime = ratio * (player.duration ?? 0);
     setProgress(ratio);
+    setIsSeeking(true);
+    isSeekingRef.current = true;
   };
 
   const handleSeekBarMove = (e: any) => {
     const player = playerRef.current;
-    if (!player || !isPaused) return;
+    if (!player) return;
     const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
-    const targetTime = ratio * (player.duration ?? 0);
-    player.seekBy(targetTime - (player.currentTime ?? 0));
+    player.currentTime = ratio * (player.duration ?? 0);
     setProgress(ratio);
+  };
+
+  const handleSeekBarRelease = () => {
+    isSeekingRef.current = false;
+    setIsSeeking(false);
   };
 
   return (
@@ -340,7 +395,7 @@ const ReelItem: React.FC<{
             isActive={isActive}
             isPaused={isPaused}
             muted={muted}
-            onProgress={setProgress}
+            onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
             onPlayerReady={(p) => { playerRef.current = p; }}
           />
         ) : reel.thumbnail_url ? (
@@ -353,65 +408,87 @@ const ReelItem: React.FC<{
       </Pressable>
 
       <LinearGradient
+        colors={['rgba(0,0,0,0.45)', 'transparent']}
+        locations={[0, 1]}
+        style={styles.topGradient}
+        pointerEvents="none"
+      />
+      <LinearGradient
         colors={['transparent', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.85)']}
         locations={[0, 0.55, 1]}
         style={styles.gradient}
         pointerEvents="none"
       />
 
-      {/* Center overlays */}
+      {/* Top bar — back, search, options */}
+      <View style={[styles.topBar, { top: insets.top + 4 }]}>
+        <TouchableOpacity
+          onPress={onBack}
+          style={[styles.topBarBtn, !onBack && { opacity: 0 }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          disabled={!onBack}
+        >
+          <Ionicons name="arrow-back" size={22} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.topBarRight}>
+          <TouchableOpacity style={styles.topBarBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="search-outline" size={22} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.topBarBtn} onPress={showOptions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Center overlays — all driven by Animated values, no re-renders */}
       <View style={styles.centerOverlay} pointerEvents="none">
         <Animated.View style={{ transform: [{ scale: heartScale }], opacity: heartOpacity }}>
           <Ionicons name="heart" size={100} color="#fff" />
         </Animated.View>
-        {isPaused && showControls && (
-          <View style={styles.pauseOverlay}>
-            <Ionicons name="play" size={60} color="rgba(255,255,255,0.6)" />
-          </View>
-        )}
-        {seekFeedback === 'back' && (
-          <View style={[styles.seekFeedback, { left: width * 0.1 }]}>
-            <Ionicons name="play-back" size={40} color="#fff" />
-            <Text style={styles.seekFeedbackText}>10s</Text>
-          </View>
-        )}
-        {seekFeedback === 'forward' && (
-          <View style={[styles.seekFeedback, { right: width * 0.1 }]}>
-            <Ionicons name="play-forward" size={40} color="#fff" />
-            <Text style={styles.seekFeedbackText}>10s</Text>
-          </View>
-        )}
+
+        {/* Pause/play indicator — fades in/out smoothly */}
+        <Animated.View style={[styles.pauseOverlay, { opacity: pauseOverlayOpacity }]}>
+          <Ionicons name="play" size={60} color="rgba(255,255,255,0.7)" />
+        </Animated.View>
+
+        {/* 10 s rewind feedback */}
+        <Animated.View style={[styles.seekFeedback, { left: width * 0.05, opacity: seekFeedbackBackOpacity }]}>
+          <Ionicons name="play-back" size={40} color="#fff" />
+          <Text style={styles.seekFeedbackText}>10s</Text>
+        </Animated.View>
+
+        {/* 10 s forward feedback */}
+        <Animated.View style={[styles.seekFeedback, { right: width * 0.05, opacity: seekFeedbackFwdOpacity }]}>
+          <Ionicons name="play-forward" size={40} color="#fff" />
+          <Text style={styles.seekFeedbackText}>10s</Text>
+        </Animated.View>
       </View>
 
       {/* Right actions */}
-      <View style={[styles.rightActions, { bottom: 100 + insets.bottom }]}>
+      <View style={[styles.rightActions, { bottom: TAB_BAR_HEIGHT + insets.bottom + 80 }]}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
-          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#ef4444' : '#fff'} />
-          {likes > 0 && <Text style={styles.actionCount}>{fmtCount(likes)}</Text>}
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
+          <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)}>
-          <Ionicons name="chatbubble-outline" size={28} color="#fff" />
-          {commentCount > 0 && <Text style={styles.actionCount}>{fmtCount(commentCount)}</Text>}
+          <Ionicons name="chatbubble-outline" size={32} color="#fff" />
+          <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionItem} onPress={() => setShowShare(true)}>
-          <Ionicons name="paper-plane-outline" size={26} color="#fff" />
-          {(reel.shares_count ?? 0) > 0 && <Text style={styles.actionCount}>{fmtCount(reel.shares_count)}</Text>}
+          <Ionicons name="paper-plane-outline" size={30} color="#fff" />
+          <Text style={styles.actionLabel}>Share</Text>
         </TouchableOpacity>
 
-        {/* Global mute toggle */}
         <TouchableOpacity style={styles.actionItem} onPress={onMuteToggle}>
-          <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionItem} onPress={showOptions}>
-          <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
+          <Ionicons name={muted ? 'volume-mute-outline' : 'volume-high-outline'} size={28} color="#fff" />
+          <Text style={styles.actionLabel}>{muted ? 'Unmute' : 'Sound'}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Bottom info */}
-      <View style={[styles.bottomInfo, { bottom: 30 + insets.bottom }]}>
+      <View style={[styles.bottomInfo, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 }]}>
         <View style={styles.userRow}>
           {profile?.avatar_url
             ? <CachedImage uri={profile.avatar_url} style={styles.reelAvatar} />
@@ -424,7 +501,7 @@ const ReelItem: React.FC<{
               onPress={toggleFollow}
               style={[styles.followBtn, following && styles.followingBtn]}
             >
-              <Text style={[styles.followBtnText, following && { color: 'rgba(255,255,255,0.5)' }]}>
+              <Text style={[styles.followBtnText, following && styles.followingBtnText]}>
                 {following ? 'Following' : 'Follow'}
               </Text>
             </TouchableOpacity>
@@ -442,20 +519,22 @@ const ReelItem: React.FC<{
         </Text>
       </View>
 
-      {/* Seek bar — interactive when paused, always visible */}
+      {/* Seek bar — 44 px touch target, sits right at top of tab bar */}
       <View
-        ref={seekBarRef}
-        style={[styles.seekBarWrap, showControls && styles.seekBarVisible]}
-        onStartShouldSetResponder={() => isPaused}
-        onMoveShouldSetResponder={() => isPaused}
+        style={[styles.seekBarContainer, { bottom: TAB_BAR_HEIGHT + insets.bottom }]}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
         onResponderGrant={handleSeekBarPress}
         onResponderMove={handleSeekBarMove}
+        onResponderRelease={handleSeekBarRelease}
+        onResponderTerminate={handleSeekBarRelease}
       >
-        <View style={[styles.seekBarProgress, { width: `${progress * 100}%` }]} />
-        {/* Scrubber thumb — visible when paused */}
-        {isPaused && showControls && (
-          <View style={[styles.seekThumb, { left: `${progress * 100}%` as any }]} />
-        )}
+        <View style={[styles.seekBarTrack, (showControls || isSeeking) && styles.seekBarTrackActive]}>
+          <View style={[styles.seekBarFill, { width: `${progress * 100}%` }]} />
+          {(showControls || isSeeking) && (
+            <View style={[styles.seekThumb, { left: `${progress * 100}%` as any }]} />
+          )}
+        </View>
       </View>
 
       <CommentSheet
@@ -479,6 +558,66 @@ const ReelItem: React.FC<{
           username: profile?.username,
         }}
       />
+    </View>
+  );
+};
+
+// ─── Loading skeleton ─────────────────────────────────────────────────────────
+
+const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
+  const insets = useSafeAreaInsets();
+  const shimmer = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.55] });
+
+  return (
+    <View style={styles.container}>
+      <StatusBar hidden={false} translucent backgroundColor="transparent" />
+
+      {/* Simulated dark video area */}
+      <View style={skeletonStyles.videoPlaceholder} />
+
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.88)']}
+        locations={[0, 0.5, 1]}
+        style={styles.gradient}
+        pointerEvents="none"
+      />
+
+      {/* Right actions */}
+      <Animated.View style={[skeletonStyles.rightActions, { bottom: TAB_BAR_HEIGHT + insets.bottom + 80, opacity }]}>
+        {[{ sz: 30, w: 32 }, { sz: 28, w: 28 }, { sz: 26, w: 26 }, { sz: 24, w: 0 }, { sz: 24, w: 0 }].map((item, i) => (
+          <View key={i} style={skeletonStyles.actionItem}>
+            <View style={[skeletonStyles.circle, { width: item.sz, height: item.sz, borderRadius: item.sz / 2 }]} />
+            {item.w > 0 && <View style={[skeletonStyles.actionLabel, { width: item.w }]} />}
+          </View>
+        ))}
+      </Animated.View>
+
+      {/* Bottom info */}
+      <Animated.View style={[skeletonStyles.bottomInfo, { bottom: TAB_BAR_HEIGHT + insets.bottom + 14, opacity }]}>
+        <View style={skeletonStyles.userRow}>
+          <View style={skeletonStyles.avatar} />
+          <View style={skeletonStyles.usernamePill} />
+          <View style={skeletonStyles.followPill} />
+        </View>
+        <View style={skeletonStyles.captionLine} />
+        <View style={[skeletonStyles.captionLine, { width: '55%', marginTop: 6 }]} />
+        <View style={[skeletonStyles.captionLine, { width: '30%', marginTop: 8, height: 10 }]} />
+      </Animated.View>
+
+      {/* Seek bar */}
+      <Animated.View style={[skeletonStyles.seekBar, { bottom: TAB_BAR_HEIGHT + insets.bottom, opacity }]} />
+
     </View>
   );
 };
@@ -543,18 +682,7 @@ export const ReelsScreen: React.FC<{
   }), [containerHeight]);
 
   if (loading) {
-    return (
-      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <StatusBar hidden={false} translucent backgroundColor="transparent" />
-        {onBack && (
-          <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-        )}
-        <ActivityIndicator size="large" color="#818cf8" />
-        <Text style={{ color: 'rgba(255,255,255,0.5)', marginTop: 14, fontSize: 14 }}>Loading reels...</Text>
-      </View>
-    );
+    return <ReelSkeleton onBack={onBack} />;
   }
 
   if (reels.length === 0) {
@@ -562,7 +690,10 @@ export const ReelsScreen: React.FC<{
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
         <StatusBar hidden={false} translucent backgroundColor="transparent" />
         {onBack && (
-          <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 52, left: 16, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 }}
+            onPress={onBack}
+          >
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
         )}
@@ -594,6 +725,7 @@ export const ReelsScreen: React.FC<{
               muted={isMuted}
               onMuteToggle={() => setIsMuted(!isMuted)}
               itemHeight={containerHeight}
+              onBack={onBack}
             />
           )}
           pagingEnabled
@@ -607,26 +739,48 @@ export const ReelsScreen: React.FC<{
           onViewableItemsChanged={onViewableItemsChanged}
         />
       </View>
-      {onBack && (
-        <TouchableOpacity style={reelNavStyles.backBtn} onPress={onBack}>
-          <Ionicons name="arrow-back" size={22} color="#fff" />
-        </TouchableOpacity>
-      )}
     </View>
   );
 };
 
-const reelNavStyles = StyleSheet.create({
-  backBtn: {
-    position: 'absolute', top: 52, left: 16, zIndex: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8,
+
+const skeletonStyles = StyleSheet.create({
+  videoPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0d0d0d',
   },
+  rightActions: { position: 'absolute', right: 12, alignItems: 'center', gap: 18 },
+  actionItem: { alignItems: 'center', gap: 4 },
+  circle: { backgroundColor: 'rgba(255,255,255,0.28)' },
+  actionLabel: { height: 10, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.28)' },
+  bottomInfo: { position: 'absolute', left: 14, right: 70 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  avatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    borderWidth: 2, borderColor: 'rgba(255,255,255,0.15)',
+  },
+  usernamePill: { width: 90, height: 13, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.28)' },
+  followPill: { width: 58, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)' },
+  captionLine: { width: '80%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  seekBar: { position: 'absolute', left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
 });
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   reelContainer: { width, position: 'relative', overflow: 'hidden' },
   gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 350, backgroundColor: 'transparent' },
+  topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 120, backgroundColor: 'transparent', zIndex: 5 },
+  topBar: {
+    position: 'absolute', left: 0, right: 0, zIndex: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 8,
+  },
+  topBarBtn: {
+    padding: 8,
+    borderRadius: 20,
+  },
+  topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   centerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
   pauseOverlay: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.1)', padding: 20, borderRadius: 50 },
   seekFeedback: {
@@ -641,19 +795,34 @@ const styles = StyleSheet.create({
     color: '#fff', fontSize: 14, fontWeight: '700', marginTop: 4,
     textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
-  seekBarWrap: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: 3,
-    backgroundColor: 'rgba(255,255,255,0.25)', opacity: 0.5,
+  // 44 px invisible touch area; visual bar lives at the bottom of it
+  seekBarContainer: {
+    position: 'absolute', left: 0, right: 0,
+    height: 44,
+    justifyContent: 'flex-end',
   },
-  seekBarVisible: { opacity: 1, height: 4 },
-  seekBarProgress: { height: '100%', backgroundColor: '#fff' },
+  seekBarTrack: {
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  seekBarTrackActive: {
+    height: 4,
+  },
+  seekBarFill: {
+    height: '100%',
+    backgroundColor: '#ff2b54',
+  },
   seekThumb: {
-    position: 'absolute', top: -5, width: 14, height: 14,
+    position: 'absolute',
+    // center 14 px thumb vertically on the 4 px active track
+    top: -5, width: 14, height: 14,
     borderRadius: 7, backgroundColor: '#fff', marginLeft: -7,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4, shadowRadius: 2, elevation: 3,
   },
-  rightActions: { position: 'absolute', right: 12, bottom: 100, alignItems: 'center', gap: 18 },
-  actionItem: { alignItems: 'center', gap: 3 },
-  actionCount: {
+  rightActions: { position: 'absolute', right: 10, bottom: 100, alignItems: 'center', gap: 22 },
+  actionItem: { alignItems: 'center', gap: 4 },
+  actionLabel: {
     color: '#fff', fontSize: 12, fontWeight: '600',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
@@ -664,9 +833,10 @@ const styles = StyleSheet.create({
     color: '#fff', fontWeight: 'bold', fontSize: 14,
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
-  followBtn: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
-  followingBtn: { borderColor: 'rgba(255,255,255,0.2)' },
-  followBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  followBtn: { backgroundColor: '#fff', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
+  followingBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.45)' },
+  followBtnText: { color: '#000', fontSize: 12, fontWeight: '700' },
+  followingBtnText: { color: 'rgba(255,255,255,0.7)' },
   reelCaption: {
     color: '#fff', fontSize: 13, lineHeight: 18, marginBottom: 8,
     textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,

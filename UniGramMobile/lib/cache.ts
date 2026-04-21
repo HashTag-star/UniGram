@@ -60,4 +60,7 @@ export const TTL = {
   market:    3 * 60 * 1000,   // 3 min
   reels:     5 * 60 * 1000,   // 5 min
   messages:  30 * 1000,        // 30s   — chats need to feel live
+  explore:   5 * 60 * 1000,   // 5 min — explore grid posts
+  discover: 10 * 60 * 1000,   // 10 min — follow suggestions
+  trending:  5 * 60 * 1000,   // 5 min — trending hashtags
 };

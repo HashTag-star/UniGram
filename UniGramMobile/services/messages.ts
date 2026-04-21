@@ -5,30 +5,12 @@ import { uploadFile } from './upload';
 // ─── Conversations ────────────────────────────────────────────────────────────
 
 export async function getConversations(userId: string) {
-  // Use conversations as base and inner join participants to filter by user_id
-  const { data, error } = await supabase
-    .from('conversations')
-    .select(`
-      id, is_group, group_name, last_message, last_message_at,
-      conversation_participants!inner(user_id),
-      participants:conversation_participants(
-        unread_count,
-        user_id,
-        profiles(id, username, full_name, avatar_url, is_verified, verification_type)
-      )
-    `)
-    .eq('conversation_participants.user_id', userId)
-    .order('last_message_at', { ascending: false });
-
+  const { data, error } = await supabase.rpc('get_user_conversations', { p_user_id: userId });
   if (error) throw error;
-  
-  // Transform to match previous format expected by UI
-  return (data ?? []).map(conv => ({
-    unread_count: conv.participants.find((p: any) => p.user_id === userId)?.unread_count ?? 0,
-    conversations: {
-      ...conv,
-      conversation_participants: conv.participants
-    }
+  const rows = (Array.isArray(data) ? data : JSON.parse(data as string)) as any[];
+  return rows.map((conv: any) => ({
+    unread_count: conv.unread_count ?? 0,
+    conversations: conv,
   }));
 }
 
@@ -89,14 +71,24 @@ export async function searchConversations(userId: string, query: string) {
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-export async function getMessages(conversationId: string) {
-  const { data, error } = await supabase
+export async function getMessages(conversationId: string, limit = 60, before?: string) {
+  let query = supabase
     .from('messages')
-    .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
+    .select(`
+      *,
+      profiles(*),
+      message_reactions(id, emoji, user_id, profiles(*)),
+      reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))
+    `)
     .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (before) query = query.lt('created_at', before);
+
+  const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).reverse();
 }
 
 export async function sendMessage(
@@ -122,11 +114,10 @@ export async function sendMessage(
       reply_to_message_id: replyToId ?? null,
       duration: duration ?? null,
     })
-    .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
+    .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
     .single();
   if (error) throw error;
 
-  // The conversation last_message is now updated via DB trigger for consistency.
   return data;
 }
 
@@ -158,7 +149,7 @@ export async function sendVoiceMessage(
 export async function unsendMessage(messageId: string, userId: string) {
   const { error } = await supabase
     .from('messages')
-    .update({ is_deleted: true, text: 'Message unsent', media_url: null, type: 'text' })
+    .update({ is_deleted: true, text: 'Message unsent', media_url: null })
     .eq('id', messageId)
     .eq('sender_id', userId);
   if (error) throw error;
@@ -238,7 +229,7 @@ export function subscribeToMessages(
         if (!messageId) return;
         const { data } = await supabase
           .from('messages')
-          .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*))`)
+          .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
           .eq('id', messageId)
           .single();
         if (!data) return;

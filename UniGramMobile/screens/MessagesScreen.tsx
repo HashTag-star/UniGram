@@ -65,6 +65,8 @@ import {
   sendSharedContent,
 } from '../services/messages';
 import { updateActiveStatus } from '../services/profiles';
+import { initiateCall, CallRecord, CallType } from '../services/calls';
+import { CallScreen } from './CallScreen';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 
@@ -588,10 +590,13 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         </View>
       )}
 
-      {msg.reply_to_message_id && (
-        <View style={[styles.replyQuote, isMe ? { alignSelf: 'flex-end', borderRightWidth: 2 } : { alignSelf: 'flex-start', borderLeftWidth: 2 }]}>
+      {msg.reply && (
+        <View style={[styles.replyQuote, isMe ? { alignSelf: 'flex-end', borderRightWidth: 2, borderRightColor: '#6366f1' } : { alignSelf: 'flex-start', borderLeftWidth: 2, borderLeftColor: '#6366f1' }]}>
+          <Text style={[styles.replyQuoteName, { color: '#6366f1' }]} numberOfLines={1}>
+            {msg.reply.sender_id === currentUserId ? 'You' : (msg.reply.profiles?.full_name || msg.reply.profiles?.username || 'Someone')}
+          </Text>
           <Text style={styles.replyQuoteText} numberOfLines={1}>
-            Replying to {msg.reply_to_message_id.sender_id === currentUserId ? 'yourself' : 'them'}
+            {msg.reply.type === 'image' ? '📷 Photo' : msg.reply.type === 'audio' ? '🎤 Voice message' : msg.reply.type === 'share' ? '🔗 Shared content' : (msg.reply.text || '…')}
           </Text>
         </View>
       )}
@@ -644,6 +649,30 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               </TouchableOpacity>
             ) : msg.type === 'audio' ? (
               <VoiceWaveform uri={msg.media_url} duration={msg.duration || 0} isMe={isMe} />
+            ) : msg.type === 'share' ? (
+              (() => {
+                let shareData: any = {};
+                try { shareData = JSON.parse(msg.text); } catch {}
+                return (
+                  <View style={[styles.shareBubble, { backgroundColor: isMe ? '#4f46e5' : colors.bg2, borderColor: colors.border }]}>
+                    {shareData.previewUrl ? (
+                      <CachedImage uri={shareData.previewUrl} style={styles.sharePreviewImg} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.sharePreviewImg, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Ionicons name="link-outline" size={28} color={isMe ? 'rgba(255,255,255,0.5)' : colors.textMuted} />
+                      </View>
+                    )}
+                    <View style={{ padding: 8 }}>
+                      <Text style={[styles.shareLabel, { color: isMe ? 'rgba(255,255,255,0.6)' : colors.textMuted }]}>
+                        {shareData.type === 'reel' ? '🎬 Reel' : shareData.type === 'profile' ? '👤 Profile' : '📸 Post'}
+                      </Text>
+                      <Text style={[styles.shareCaption, { color: isMe ? '#fff' : colors.text }]} numberOfLines={2}>
+                        {shareData.title || (shareData.type === 'post' ? 'Shared a post' : shareData.type === 'reel' ? 'Shared a reel' : 'Shared a profile')}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })()
             ) : (
               <View style={[styles.bubble, isMe ? styles.bubbleMe : [styles.bubbleThem, { backgroundColor: colors.bg2 }]]}>
                 <Text style={[styles.bubbleText, !isMe && { color: colors.text }]}>{msg.text}</Text>
@@ -774,7 +803,7 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
   }, []);
 
   const createGroup = useCallback(async () => {
-    if (!groupName.trim() || selectedUsers.length < 1) return;
+    if (!groupName.trim() || selectedUsers.length < 2) return;
     setCreatingGroup(true);
     try {
       const memberIds = selectedUsers.map((u) => u.id);
@@ -903,8 +932,8 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
               maxLength={40}
               autoFocus
             />
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 6 }}>
-              {selectedUsers.length} member{selectedUsers.length !== 1 ? 's' : ''} selected
+            <Text style={{ color: selectedUsers.length < 2 ? '#f59e0b' : colors.textMuted, fontSize: 12, marginTop: 6 }}>
+              {selectedUsers.length} member{selectedUsers.length !== 1 ? 's' : ''} selected{selectedUsers.length < 2 ? ' — need at least 2' : ''}
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 16 }} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
               {selectedUsers.map((u) => (
@@ -923,10 +952,10 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
             <TouchableOpacity
               style={[
                 styles.createGroupBtn,
-                (!groupName.trim() || creatingGroup) && { opacity: 0.4 },
+                (!groupName.trim() || selectedUsers.length < 2 || creatingGroup) && { opacity: 0.4 },
               ]}
               onPress={createGroup}
-              disabled={!groupName.trim() || creatingGroup}
+              disabled={!groupName.trim() || selectedUsers.length < 2 || creatingGroup}
             >
               {creatingGroup ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -1040,7 +1069,10 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [activeCall, setActiveCall] = useState<{ call: CallRecord; isIncoming: boolean } | null>(null);
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [reactionTarget, setReactionTarget] = useState<{ msg: any; x: number; y: number } | null>(null);
   const [replyingTo, setReplyingTo] = useState<any | null>(null);
@@ -1102,8 +1134,11 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     if (!convId) return;
     setLoading(true);
 
-    getMessages(convId)
-      .then((msgs) => setMessages(msgs))
+    getMessages(convId, 60)
+      .then((msgs) => {
+        setMessages(msgs);
+        setHasMore(msgs.length === 60);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
 
@@ -1236,6 +1271,22 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     }
   }, [reactionTarget, currentUserId]);
 
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingMore || !hasMore || messages.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldest = messages[0]?.created_at;
+      const older = await getMessages(convId, 40, oldest);
+      if (older.length === 0) { setHasMore(false); return; }
+      setMessages((prev) => [...older, ...prev]);
+      setHasMore(older.length === 40);
+    } catch (e) {
+      console.error('loadOlderMessages failed', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, messages, convId]);
+
   const pickAndSendImage = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
@@ -1276,23 +1327,17 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         (r: any) => r.user_id === currentUserId && r.emoji === emoji,
       );
       setReactionTarget(null);
+      // Snapshot for rollback
+      const snapshot = messages;
       // Optimistic update
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msg.id) return m;
           const reactions = m.message_reactions ?? [];
           if (existing) {
-            return {
-              ...m,
-              message_reactions: reactions.filter(
-                (r: any) => !(r.user_id === currentUserId && r.emoji === emoji),
-              ),
-            };
+            return { ...m, message_reactions: reactions.filter((r: any) => !(r.user_id === currentUserId && r.emoji === emoji)) };
           }
-          return {
-            ...m,
-            message_reactions: [...reactions, { id: `opt-${Date.now()}`, emoji, user_id: currentUserId }],
-          };
+          return { ...m, message_reactions: [...reactions, { id: `opt-${Date.now()}`, emoji, user_id: currentUserId }] };
         }),
       );
       try {
@@ -1301,9 +1346,11 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         } else {
           await addReaction(msg.id, currentUserId, emoji);
         }
-      } catch { /* rollback omitted — minor UI glitch acceptable */ }
+      } catch {
+        setMessages(snapshot);
+      }
     },
-    [reactionTarget, currentUserId],
+    [reactionTarget, currentUserId, messages],
   );
 
   const handleReactionTap = useCallback(
@@ -1361,6 +1408,40 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
 
   const isGroup = otherProfile?.is_group === true;
 
+  const startCall = useCallback(async (type: CallType) => {
+    if (isGroup) {
+      showPopup({ title: 'Not supported', message: 'Group calls are not available yet.', icon: 'people-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      return;
+    }
+    try {
+      // Create WebRTC offer first
+      const { RTCPeerConnection, RTCSessionDescription } = require('react-native-webrtc');
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
+      await pc.setLocalDescription(offer);
+      pc.close();
+
+      const otherUserId = otherProfile?.id;
+      if (!otherUserId) throw new Error('Could not determine recipient');
+
+      const callRecord = await initiateCall(currentUserId, otherUserId, convId, type, offer);
+      setActiveCall({ call: callRecord, isIncoming: false });
+    } catch (e: any) {
+      showPopup({ title: 'Call failed', message: e.message ?? 'Could not start the call.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    }
+  }, [isGroup, currentUserId, convId, otherProfile, showPopup]);
+
+  if (activeCall) {
+    return (
+      <CallScreen
+        call={activeCall.call}
+        currentUserId={currentUserId}
+        isIncoming={activeCall.isIncoming}
+        onCallEnd={() => setActiveCall(null)}
+      />
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.bg }]}
@@ -1399,10 +1480,10 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           </View>
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', gap: 0 }}>
-          <TouchableOpacity style={styles.chatAction}>
+          <TouchableOpacity style={styles.chatAction} onPress={() => startCall('audio')}>
             <Ionicons name="call-outline" size={21} color={colors.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.chatAction}>
+          <TouchableOpacity style={styles.chatAction} onPress={() => startCall('video')}>
             <Ionicons name="videocam-outline" size={21} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
@@ -1423,31 +1504,40 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
           ListHeaderComponent={
-            <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
-              {profile?.avatar_url ? (
-                <CachedImage
-                  uri={profile.avatar_url}
-                  style={{ width: 72, height: 72, borderRadius: 36 }}
-                />
-              ) : (
-                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name={isGroup ? 'people' : 'person'} size={32} color={colors.textMuted} />
-                </View>
+            <View>
+              {hasMore && (
+                <TouchableOpacity
+                  onPress={loadOlderMessages}
+                  disabled={loadingMore}
+                  style={{ alignSelf: 'center', marginBottom: 12, paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.bg2, borderRadius: 16 }}
+                >
+                  {loadingMore
+                    ? <ActivityIndicator size="small" color={colors.accent} />
+                    : <Text style={{ color: colors.textSub, fontSize: 12 }}>Load older messages</Text>
+                  }
+                </TouchableOpacity>
               )}
-              <Text style={[styles.chatIntroName, { color: colors.text }]}>
-                {profile?.full_name ?? profile?.username}
-              </Text>
-              {profile?.is_verified && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                  <VerifiedBadge type={profile.verification_type} size="sm" />
-                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>Verified</Text>
-                </View>
-              )}
-              {profile?.university ? (
-                <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 3 }}>
-                  {profile.university}
+              <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
+                {profile?.avatar_url ? (
+                  <CachedImage uri={profile.avatar_url} style={{ width: 72, height: 72, borderRadius: 36 }} />
+                ) : (
+                  <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name={isGroup ? 'people' : 'person'} size={32} color={colors.textMuted} />
+                  </View>
+                )}
+                <Text style={[styles.chatIntroName, { color: colors.text }]}>
+                  {profile?.full_name ?? profile?.username}
                 </Text>
-              ) : null}
+                {profile?.is_verified && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                    <VerifiedBadge type={profile.verification_type} size="sm" />
+                    <Text style={{ color: colors.textMuted, fontSize: 11 }}>Verified</Text>
+                  </View>
+                )}
+                {profile?.university ? (
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 3 }}>{profile.university}</Text>
+                ) : null}
+              </View>
             </View>
           }
           ListFooterComponent={
@@ -1616,6 +1706,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
   const [convs, setConvs] = useState<any[]>([]);
   const [filteredConvs, setFilteredConvs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -1624,11 +1715,13 @@ const ConversationList: React.FC<ConversationListProps> = ({
 
   const load = useCallback(async () => {
     try {
+      setLoadError(false);
       const data = await getConversations(currentUserId);
       setConvs(data);
       setFilteredConvs(data);
     } catch (e) {
       console.error('getConversations failed:', e);
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1830,6 +1923,15 @@ const ConversationList: React.FC<ConversationListProps> = ({
       {/* Body */}
       {loading ? (
         <ConvSkeleton />
+      ) : loadError ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="cloud-offline-outline" size={52} color={colors.textMuted} />
+          <Text style={[styles.emptyTitle, { color: colors.textSub }]}>Couldn't load messages</Text>
+          <TouchableOpacity style={styles.newMsgBtn} onPress={load}>
+            <Ionicons name="refresh-outline" size={18} color="#fff" />
+            <Text style={styles.newMsgBtnText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
       ) : convs.length === 0 ? (
         <View style={styles.emptyState}>
           <Ionicons name="chatbubbles-outline" size={56} color={colors.textMuted} />
@@ -1888,6 +1990,8 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUsername, setCurrentUsername] = useState('Messages');
   const [activeConv, setActiveConv] = useState<{ convId: string; otherProfile: any } | null>(null);
+  const [incomingCall, setIncomingCall] = useState<CallRecord | null>(null);
+  const incomingCallChannelRef = useRef<any>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -1901,6 +2005,17 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
       if (prof?.username) setCurrentUsername(prof.username);
     });
   }, []);
+
+  // Subscribe to incoming calls globally
+  useEffect(() => {
+    if (!currentUserId) return;
+    const { subscribeToIncomingCalls } = require('../services/calls');
+    incomingCallChannelRef.current = subscribeToIncomingCalls(
+      currentUserId,
+      (call: CallRecord) => setIncomingCall(call),
+    );
+    return () => incomingCallChannelRef.current?.unsubscribe();
+  }, [currentUserId]);
 
   const openChat = useCallback(
     (convId: string, otherProfile: any) => {
@@ -1932,6 +2047,17 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <ConvSkeleton />
       </View>
+    );
+  }
+
+  if (incomingCall) {
+    return (
+      <CallScreen
+        call={incomingCall}
+        currentUserId={currentUserId}
+        isIncoming={true}
+        onCallEnd={() => setIncomingCall(null)}
+      />
     );
   }
 
@@ -2334,10 +2460,38 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 2,
     maxWidth: '80%',
-    borderLeftWidth: 2,
+    backgroundColor: 'rgba(99,102,241,0.08)',
+  },
+  replyQuoteName: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   replyQuoteText: {
     fontSize: 11,
+    opacity: 0.75,
+  },
+  shareBubble: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: 240,
+  },
+  sharePreviewImg: {
+    width: '100%',
+    height: 140,
+  },
+  shareLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  shareCaption: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
   },
   voiceBubble: {
     flexDirection: 'row',

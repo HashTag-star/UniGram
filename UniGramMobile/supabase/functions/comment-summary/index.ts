@@ -3,11 +3,34 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+async function callGroq(apiKey: string, prompt: string, temperature = 0.7, maxTokens = 512): Promise<string> {
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  })
+  if (!resp.ok) throw new Error(`Groq HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`)
+  const result = await resp.json()
+  if (result.error) throw new Error(`Groq error: ${result.error.message}`)
+  const text: string = result.choices?.[0]?.message?.content ?? ''
+  if (!text) throw new Error('Groq returned empty response')
+  return text
+}
+
+function stripJson(raw: string): string {
+  return raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { comments } = await req.json() 
+    const { comments } = await req.json()
 
     if (!Array.isArray(comments) || comments.length < 3) {
       return new Response(JSON.stringify({ highlights: [] }), {
@@ -15,10 +38,9 @@ Deno.serve(async (req) => {
       })
     }
 
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiKey) throw new Error('GEMINI_API_KEY not configured.')
+    const groqKey = Deno.env.get('GROQ_API_KEY')
+    if (!groqKey) throw new Error('GROQ_API_KEY not configured.')
 
-    // Format comments compactly to stay within token budget
     const formatted = comments
       .slice(0, 40)
       .map((c: any) => `@${c.username}: ${c.text}`)
@@ -43,29 +65,13 @@ Respond ONLY with a JSON array of strings, no markdown:
 Comments:
 ${formatted}`
 
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 200 },
-        }),
-      }
-    )
-
-    const result = await resp.json()
-    if (result.error) throw new Error(result.error.message)
-
-    const raw = result.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]'
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
-    const highlights: string[] = JSON.parse(cleaned)
+    const raw = await callGroq(groqKey, prompt, 0.3, 200)
+    const highlights: string[] = JSON.parse(stripJson(raw))
 
     return new Response(JSON.stringify({ highlights: highlights.slice(0, 3) }), {
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
-  } catch (err: any) {
+  } catch {
     return new Response(JSON.stringify({ highlights: [] }), {
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })

@@ -1,8 +1,8 @@
 import './global.css';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useTransition } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  StatusBar, Animated, ActivityIndicator, DeviceEventEmitter,
+  StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal, ScrollView,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,7 +11,8 @@ import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-ic
 import { useFonts } from 'expo-font';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { FeedScreen } from './screens/FeedScreen';
+import { FeedScreen, FeedPost } from './screens/FeedScreen';
+import { CommentSheet } from './components/CommentSheet';
 import { ExploreScreen } from './screens/ExploreScreen';
 import { ReelsScreen } from './screens/ReelsScreen';
 import { MessagesScreen } from './screens/MessagesScreen';
@@ -345,13 +346,67 @@ const toastStyles = StyleSheet.create({
   cancelText: { color: '#ef4444', fontSize: 13, fontWeight: '700' },
 });
 
+// ─── Notification post modal ──────────────────────────────────────────────────
+const NotifPostModal: React.FC<{
+  post: any;
+  currentUserId: string;
+  isMuted: boolean;
+  setIsMuted: (m: boolean) => void;
+  openComments: boolean;
+  onClose: () => void;
+}> = ({ post, currentUserId, isMuted, setIsMuted, openComments, onClose }) => {
+  const { colors } = useTheme();
+  const [showComments, setShowComments] = useState(openComments);
+  const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
+
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <Ionicons name="close" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={{ color: colors.text, fontWeight: '700', fontSize: 15, marginLeft: 10 }}>
+            @{post.profiles?.username ?? 'Post'}
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <FeedPost
+            post={{ ...post, comments_count: commentCount }}
+            currentUserId={currentUserId}
+            isLiked={false}
+            isSaved={false}
+            isMuted={isMuted}
+            isActive={true}
+            setIsMuted={setIsMuted}
+            onOpenComments={() => setShowComments(true)}
+            onCommentCountChange={(_, delta) => setCommentCount(c => Math.max(0, c + delta))}
+          />
+        </ScrollView>
+      </View>
+      <CommentSheet
+        visible={showComments}
+        targetId={post.id}
+        targetType="post"
+        currentUserId={currentUserId}
+        authorId={post.user_id}
+        onClose={() => setShowComments(false)}
+        onCountChange={delta => setCommentCount(c => Math.max(0, c + delta))}
+        onCountSync={count => setCommentCount(count)}
+      />
+    </Modal>
+  );
+};
+
 // ─── App shell ────────────────────────────────────────────────────────────────
 function AppShell() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [session, setSession] = useState<any>(undefined);
   const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
+  const [, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<Tab>('feed');
+  const [activeTabVisual, setActiveTabVisual] = useState<Tab>('feed');
   const [prevTab, setPrevTab] = useState<Tab>('feed');
   const [showVerification, setShowVerification] = useState(false);
   const [showDiscoverPeople, setShowDiscoverPeople] = useState(false);
@@ -394,6 +449,8 @@ function AppShell() {
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notifPost, setNotifPost] = useState<any>(null);
+  const [notifPostComments, setNotifPostComments] = useState(false);
   // Lazy-mount tabs: a screen only mounts on first visit, then stays alive (display:none)
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
@@ -593,33 +650,45 @@ function AppShell() {
     const { type, userId, postId, conversationId, otherProfile } = data;
 
     setShowNotifications(false);
-    
-    // Close other overlays
     setShowVerification(false);
     setShowDiscoverPeople(false);
     setShowCreate(false);
 
-    switch (tabMap[type] || type) {
-      case 'profile':
+    switch (type) {
       case 'follow':
       case 'verification_approved':
-        if (userId) {
-          setViewedUserId(userId);
-          setActiveTab('profile');
-        }
+        if (userId) { setViewedUserId(userId); setActiveTab('profile'); }
         break;
-      case 'post':
+
       case 'like':
       case 'comment':
       case 'mention':
-      case 'reel_like':
-      case 'reel_comment':
-        if (userId) {
-          // Since no single post view yet, navigate to user profile
-          setViewedUserId(userId);
-          setActiveTab('profile');
+        // Open the specific post in a modal
+        if (postId) {
+          supabase
+            .from('posts')
+            .select('*, profiles(id, username, avatar_url, is_verified, verification_type)')
+            .eq('id', postId)
+            .single()
+            .then(({ data: post }) => {
+              if (post) {
+                setNotifPost(post);
+                setNotifPostComments(type === 'comment' || type === 'mention');
+              } else if (userId) {
+                setViewedUserId(userId); setActiveTab('profile');
+              }
+            });
+        } else if (userId) {
+          setViewedUserId(userId); setActiveTab('profile');
         }
         break;
+
+      case 'reel_like':
+      case 'reel_comment':
+        // Navigate to Reels tab; can't deep-link to a specific reel yet
+        setActiveTab('reels');
+        break;
+
       case 'message':
         if (conversationId && otherProfile) {
           navigateToMessages(conversationId, otherProfile);
@@ -627,6 +696,7 @@ function AppShell() {
           setActiveTab('messages');
         }
         break;
+
       case 'announcement':
       case 'notifications':
       default:
@@ -681,13 +751,17 @@ function AppShell() {
   }
 
   const handleTabChange = (tab: Tab) => {
-    if (tab === 'reels') setPrevTab(activeTab);
-    if (tab !== 'profile') setViewedUserId(null);
-    if (tab !== 'messages') setInitialConv(null);
+    // Immediate: icon, indicator, and screen visibility all switch in one render
+    setActiveTabVisual(tab);
     setActiveTab(tab);
     setHideTabBar(false);
-    // Mark tab as mounted so it stays alive after first visit
-    setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
+    // Deferred: pure bookkeeping that has no visible effect on the incoming screen
+    startTransition(() => {
+      if (tab === 'reels') setPrevTab(activeTab);
+      if (tab !== 'profile') setViewedUserId(null);
+      if (tab !== 'messages') setInitialConv(null);
+      setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
+    });
   };
 
   const openNotifications = () => {
@@ -825,12 +899,19 @@ function AppShell() {
             </TouchableOpacity>
           )}
 
-          {/* Bottom tab bar */}
+          {/* Bottom tab bar — absolute on Reels so video fills full screen */}
           {showTabBar && (
-            <SafeAreaView edges={['bottom']} style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+            <SafeAreaView
+              edges={['bottom']}
+              style={[
+                styles.bottomNav,
+                { backgroundColor: colors.bg, borderTopColor: colors.border },
+                isReels && styles.bottomNavReels,
+              ]}
+            >
               <View style={styles.bottomNavInner}>
                 {TABS.map(tab => {
-                  const isActive = activeTab === tab.id;
+                  const isActive = activeTabVisual === tab.id;
                   return (
                     <TouchableOpacity
                       key={tab.id}
@@ -862,8 +943,8 @@ function AppShell() {
             userId={session.user.id}
             onBadgeClear={() => setNotifBadge(0)}
             onBack={() => setShowNotifications(false)}
-            onUserPress={(uid: string) => handleNotificationAction({ type: 'profile', userId: uid })}
-            onPostPress={(pid: string, uid: string) => handleNotificationAction({ type: 'post', postId: pid, userId: uid })}
+            onUserPress={(uid: string) => handleNotificationAction({ type: 'follow', userId: uid })}
+            onPostPress={(pid: string, uid: string, notifType: string) => handleNotificationAction({ type: notifType, postId: pid, userId: uid })}
             onMessagePress={navigateToMessages}
           />
         </View>
@@ -930,8 +1011,8 @@ function AppShell() {
 
       {showDiscoverPeople && (
         <View style={styles.notifOverlay}>
-          <DiscoverPeopleScreen 
-            onClose={() => setShowDiscoverPeople(false)} 
+          <DiscoverPeopleScreen
+            onClose={() => setShowDiscoverPeople(false)}
             onUserPress={(u: any) => {
               setViewedUserId(u.id);
               setActiveTab('profile');
@@ -939,6 +1020,18 @@ function AppShell() {
             }}
           />
         </View>
+      )}
+
+      {/* Post viewer opened from notification taps (like / comment / mention) */}
+      {notifPost && (
+        <NotifPostModal
+          post={notifPost}
+          currentUserId={session?.user?.id ?? ''}
+          isMuted={globalMuted}
+          setIsMuted={setGlobalMuted}
+          openComments={notifPostComments}
+          onClose={() => { setNotifPost(null); setNotifPostComments(false); }}
+        />
       )}
     </View>
   );
@@ -987,6 +1080,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5, shadowRadius: 12, elevation: 12,
   },
   bottomNav: { backgroundColor: '#000', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
+  bottomNavReels: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.82)', borderTopColor: 'rgba(255,255,255,0.06)' },
   bottomNavInner: { flexDirection: 'row', paddingVertical: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 2, position: 'relative' },
   tabIndicator: { position: 'absolute', top: 0, left: '25%', right: '25%', height: 2, backgroundColor: '#818cf8', borderRadius: 1 },

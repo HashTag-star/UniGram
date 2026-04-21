@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { getUserInterests } from './onboarding';
 import { INTERESTS } from '../data/interests';
+import { Cache, TTL } from '../lib/cache';
 
 // ─── Engagement weights ────────────────────────────────────────────────────────
 // Likes (+2), comments (+5), follows (+15), saves (+8) are handled automatically
@@ -161,6 +162,16 @@ export async function recordVideoWatch(
  * first, falls back to a client-side interest+engagement scored query.
  */
 export async function getPersonalizedExplorePosts(userId: string, limit = 24, offset = 0) {
+  const cacheKey = `explore_posts:${userId}:${limit}:${offset}`;
+
+  // Return memory-cached data immediately (0ms) if still fresh
+  const memHit = Cache.getSync<any[]>(cacheKey, TTL.explore);
+  if (memHit) return memHit;
+
+  // Check AsyncStorage (~5ms) for data persisted from the last session
+  const asyncHit = await Cache.get<any[]>(cacheKey, TTL.explore);
+  if (asyncHit) return asyncHit;
+
   // 1. Fetch user interests required for AI Search
   const interests = await getUserInterests(userId).catch(() => [] as string[]);
   const interestKeywords = interests
@@ -179,10 +190,12 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
     });
 
     if (!edgeError && edgeData?.posts?.length > 0) {
-      return edgeData.posts.map((row: any) => ({
+      const result = edgeData.posts.map((row: any) => ({
         ...row,
         profiles: typeof row.profiles === 'string' ? JSON.parse(row.profiles) : row.profiles,
       }));
+      Cache.set(cacheKey, result);
+      return result;
     }
   } catch (err) {
     console.warn('Vector Edge Function failed, falling back to legacy explore:', err);
@@ -195,14 +208,18 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
     p_offset: offset,
   });
   if (!rpcError && rpcData?.length) {
-    return rpcData.map((row: any) => ({
+    const result = rpcData.map((row: any) => ({
       ...row,
       profiles: typeof row.profiles === 'string' ? JSON.parse(row.profiles) : row.profiles,
     }));
+    Cache.set(cacheKey, result);
+    return result;
   }
 
   // Client-side final fallback
-  return _legacyGetExplorePosts(userId, limit, offset, interestKeywords);
+  const legacyResult = await _legacyGetExplorePosts(userId, limit, offset, interestKeywords);
+  if (legacyResult.length) Cache.set(cacheKey, legacyResult);
+  return legacyResult;
 }
 
 // Extracted legacy function to keep getPersonalizedExplorePosts clean
@@ -247,6 +264,14 @@ async function _legacyGetExplorePosts(userId: string, limit: number, offset: num
  * (Mutual Friends & Same University graph mapping).
  */
 export async function getFollowSuggestions(userId: string, limit = 10) {
+  const cacheKey = `follow_suggestions:${userId}:${limit}`;
+
+  const memHit = Cache.getSync<any[]>(cacheKey, TTL.discover);
+  if (memHit) return memHit;
+
+  const asyncHit = await Cache.get<any[]>(cacheKey, TTL.discover);
+  if (asyncHit) return asyncHit;
+
   // 1. Get blocked users to hide them from suggestions
   let blockedIds: string[] = [];
   try {

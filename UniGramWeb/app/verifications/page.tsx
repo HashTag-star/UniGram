@@ -35,7 +35,7 @@ export default function VerificationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [aiScanning, setAiScanning] = useState(false);
-  const [aiFindings, setAiFindings] = useState<{id: string; action: string; severity: string; reason: string}[]>([]);
+  const [aiFindings, setAiFindings] = useState<{id: string; target_id: string; action: string; severity: string; reason: string}[]>([]);
 
   useEffect(() => {
     fetchRequests();

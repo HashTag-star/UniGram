@@ -35,6 +35,12 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [sending, setSending] = useState<string | null>(null);
+  const currentUserId = React.useRef<string>('');
+
+  const getOtherProfile = (c: any) => {
+    const participants = c.conversations?.conversation_participants ?? [];
+    return participants.find((p: any) => p.user_id !== currentUserId.current)?.profiles ?? null;
+  };
 
   useEffect(() => {
     if (visible) {
@@ -47,6 +53,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+      currentUserId.current = user.id;
       const data = await getConversations(user.id);
       setConversations(data);
     } catch (err) {
@@ -57,11 +64,13 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
   };
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return conversations;
-    return conversations.filter((c) => {
-      const name = c.other_profile?.full_name || c.other_profile?.username || '';
-      return name.toLowerCase().includes(query.toLowerCase());
+    const list = conversations.filter((c) => {
+      const prof = getOtherProfile(c);
+      const name = (prof?.full_name ?? '') + (prof?.username ?? '');
+      const groupName = c.conversations?.group_name ?? '';
+      return !query.trim() || name.toLowerCase().includes(query.toLowerCase()) || groupName.toLowerCase().includes(query.toLowerCase());
     });
+    return list;
   }, [conversations, query]);
 
   const handleSend = async (convId: string) => {
@@ -69,6 +78,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+      currentUserId.current = user.id;
 
       await sendSharedContent(
         convId,
@@ -79,8 +89,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
           previewUrl: content.thumbnail,
         }
       );
-      
-      // Option to close or show success
       onClose();
     } catch (err) {
       console.error('Failed to share content', err);
@@ -125,36 +133,46 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
           ) : (
             <FlatList
               data={filtered}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item) => item.conversations?.id ?? String(Math.random())}
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
-              renderItem={({ item }) => (
-                <View style={styles.userRow}>
-                   <View style={styles.avatarWrap}>
-                    {item.other_profile?.avatar_url ? (
-                      <Image source={{ uri: item.other_profile.avatar_url }} style={styles.avatar} />
-                    ) : (
-                      <View style={styles.placeholderAvatar}>
-                        <Ionicons name="person" size={20} color="#555" />
-                      </View>
-                    )}
+              renderItem={({ item }) => {
+                const convId = item.conversations?.id;
+                const isGroup = item.conversations?.is_group;
+                const prof = getOtherProfile(item);
+                const displayName = isGroup
+                  ? (item.conversations?.group_name ?? 'Group')
+                  : (prof?.full_name || prof?.username || 'Unknown');
+                const username = isGroup ? null : prof?.username;
+                const avatarUrl = isGroup ? null : prof?.avatar_url;
+                return (
+                  <View style={styles.userRow}>
+                    <View style={styles.avatarWrap}>
+                      {avatarUrl ? (
+                        <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+                      ) : (
+                        <View style={styles.placeholderAvatar}>
+                          <Ionicons name={isGroup ? 'people' : 'person'} size={20} color="#555" />
+                        </View>
+                      )}
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.name}>{displayName}</Text>
+                      {username ? <Text style={styles.username}>@{username}</Text> : null}
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.sendBtn, sending === convId && { opacity: 0.5 }]}
+                      onPress={() => convId && handleSend(convId)}
+                      disabled={sending !== null}
+                    >
+                      {sending === convId ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.sendText}>Send</Text>
+                      )}
+                    </TouchableOpacity>
                   </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.name}>{item.other_profile?.full_name || item.other_profile?.username}</Text>
-                    <Text style={styles.username}>@{item.other_profile?.username}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.sendBtn, sending === item.id && { opacity: 0.5 }]}
-                    onPress={() => handleSend(item.id)}
-                    disabled={sending !== null}
-                  >
-                    {sending === item.id ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.sendText}>Send</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
+                );
+              }}
             />
           )}
         </View>

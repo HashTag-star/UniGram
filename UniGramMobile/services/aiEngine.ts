@@ -13,7 +13,7 @@ export interface CaptionResult {
 }
 
 /**
- * Get Gemini-powered caption suggestions for a post.
+ * Get AI-powered caption suggestions for a post (via Groq / Llama).
  * Returns 3 captions (casual, inspirational, funny) + suggested hashtags.
  */
 export async function getCaptionSuggestions(opts: {
@@ -21,6 +21,8 @@ export async function getCaptionSuggestions(opts: {
   postType: string;
   university?: string;
   trendingHashtags?: string[];
+  mediaBase64?: string;
+  mediaType?: 'image' | 'video';
 }): Promise<CaptionResult> {
   const { data, error } = await supabase.functions.invoke('caption-assistant', {
     body: opts,
@@ -46,7 +48,7 @@ export async function checkKeywordFilter(text: string): Promise<KeywordFilterRes
     const { data } = await supabase.functions.invoke('keyword-filter-check', {
       body: { text },
     });
-    return data as KeywordFilterResult;
+    return (data as KeywordFilterResult) ?? { flagged: false, matches: [], severity: null };
   } catch {
     return { flagged: false, matches: [], severity: null };
   }
@@ -91,7 +93,7 @@ export async function trackInterestSignal(userId: string, tags: string[]): Promi
 // ─── Comment Highlights ────────────────────────────────────────────────────────
 
 /**
- * Ask Gemini to summarise the comments on a post into 2-3 short highlight sentences.
+ * Ask the AI (Groq / Llama) to summarise comments into 2-3 short highlight sentences.
  * Requires at least 3 comments; returns [] otherwise (caller should hide the panel).
  */
 export async function getCommentHighlights(

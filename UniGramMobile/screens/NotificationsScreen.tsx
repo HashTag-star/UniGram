@@ -152,7 +152,7 @@ export interface NotificationsScreenProps {
   onBadgeClear?: () => void;
   onBack?: () => void;
   onUserPress?: (uid: string) => void;
-  onPostPress?: (pid: string, uid: string) => void;
+  onPostPress?: (pid: string, uid: string, notifType: string) => void;
   onMessagePress?: (convId: string, otherProfile: any) => void;
 }
 
@@ -297,7 +297,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'reel_like':
       case 'reel_comment':
         if (item.post_id && item.actor_id) {
-          onPostPress?.(item.post_id, item.actor_id);
+          onPostPress?.(item.post_id, item.actor_id, item.type);
         }
         break;
       case 'message':

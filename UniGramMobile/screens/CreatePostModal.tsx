@@ -223,11 +223,40 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     try {
       const trending = await getTrendingHashtags(8, userId).catch(() => [] as any[]);
       const trendingTags = (trending ?? []).map((t: any) => `#${t.tag}`);
+
+      let mediaBase64: string | undefined;
+      let mediaType: 'image' | 'video' | undefined;
+
+      if (postType !== 'thread' && mediaAssets.length > 0) {
+        const { readAsStringAsync } = require('expo-file-system/legacy');
+        const asset = mediaAssets[0];
+        const assetIsVideo = asset.type === 'video' ||
+          ['mp4', 'mov', 'avi', 'webm'].includes(asset.uri.split('.').pop()?.toLowerCase() ?? '');
+
+        if (assetIsVideo) {
+          try {
+            const VideoThumbnails = SafeModules.thumbnails;
+            if (VideoThumbnails) {
+              const thumb = await VideoThumbnails.getThumbnailAsync(asset.uri, { quality: 0.4, time: 1000 });
+              mediaBase64 = await readAsStringAsync(thumb.uri, { encoding: 'base64' });
+              mediaType = 'video';
+            }
+          } catch { /* skip vision if thumbnail fails */ }
+        } else {
+          try {
+            mediaBase64 = await readAsStringAsync(asset.uri, { encoding: 'base64' });
+            mediaType = 'image';
+          } catch { /* skip vision if read fails */ }
+        }
+      }
+
       const result = await getCaptionSuggestions({
         userId,
         postType,
         university: university || undefined,
         trendingHashtags: trendingTags,
+        mediaBase64,
+        mediaType,
       });
       setCaptionSuggestions(result.captions ?? []);
       setSuggestedHashtags(result.hashtags ?? []);
