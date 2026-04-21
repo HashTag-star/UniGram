@@ -15,10 +15,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, title, body, data } = await req.json();
+    const { userId, title, body, data, imageUrl, senderAvatarUrl } = await req.json();
 
     if (!userId || !title || !body) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), { 
+      return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
@@ -62,24 +62,35 @@ Deno.serve(async (req) => {
 
     for (const t of tokens) {
       try {
-        const response = await admin.messaging().send({
+        const message: any = {
           token: t.token,
-          notification: { title, body },
+          notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
           android: {
             notification: {
-              sound: 'notification_alert', 
+              sound: 'notification_alert',
               channelId: 'default',
+              ...(imageUrl ? { imageUrl } : {}),
+              ...(senderAvatarUrl ? { icon: senderAvatarUrl } : {}),
             },
           },
           apns: {
             payload: {
               aps: {
                 sound: 'notification_alert.wav',
+                // mutable-content lets a Notification Service Extension
+                // download and attach the image before display
+                ...(imageUrl ? { 'mutable-content': 1 } : {}),
               },
             },
+            ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
           },
-          data: data || {},
-        });
+          data: {
+            ...(data || {}),
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(senderAvatarUrl ? { senderAvatarUrl } : {}),
+          },
+        };
+        const response = await admin.messaging().send(message);
         results.push({ token: t.token, success: true, messageId: response });
         sentCount++;
       } catch (err: any) {

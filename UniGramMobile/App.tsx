@@ -41,6 +41,7 @@ import { PopupProvider } from './context/PopupContext';
 // import { LiveScreen } from './screens/LiveScreen';
 // import { MediaEditScreen } from './screens/MediaEditScreen';
 import { createStory } from './services/stories';
+import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
 import { runOnJS } from 'react-native-worklets';
 import { useHaptics as useAppHaptics } from './hooks/useHaptics';
@@ -449,6 +450,7 @@ function AppShell() {
   const [profileRefreshKey, setProfileRefreshKey] = useState(0);
   const [initialConv, setInitialConv] = useState<{ convId: string; otherProfile: any } | null>(null);
   const [notifBadge, setNotifBadge] = useState(0);
+  const [messageBadge, setMessageBadge] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifPost, setNotifPost] = useState<any>(null);
   const [notifPostComments, setNotifPostComments] = useState(false);
@@ -604,47 +606,61 @@ function AppShell() {
     const uid = session.user.id;
 
     const initNotifications = async () => {
-      // Initial unread count
       try {
         const count = await getUnreadNotificationCount(uid);
         setNotifBadge(count);
-      } catch (e) {
-        // silent fail
-      }
+      } catch (e) { /* silent */ }
 
-      // Register for push notifications (no-op in Expo Go)
       try {
         await registerForPushNotifications(uid);
-      } catch (e) {
-        // silent fail
-      }
+      } catch (e) { /* silent */ }
     };
 
     initNotifications();
 
-    // Realtime: increment badge when new notification arrives and screen is not active
+    // Realtime: increment notif badge when not on notifications screen
     const channel = supabase
       .channel(`app-notifs-${uid}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
         (payload: any) => {
-          if (!showNotifsRef.current) {
-            setNotifBadge(b => b + 1);
-          }
-          // If this user was just verified, force-reload the profile screen
-          if (payload.new?.type === 'verification_approved') {
-            setProfileRefreshKey(k => k + 1);
-          }
+          if (!showNotifsRef.current) setNotifBadge(b => b + 1);
+          if (payload.new?.type === 'verification_approved') setProfileRefreshKey(k => k + 1);
         }
       )
       .subscribe();
     notifChannelRef.current = channel;
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [session?.user?.id]);
+
+  // Unread message badge — recalculate when tab changes away from messages
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const uid = session.user.id;
+
+    const refresh = async () => {
+      try {
+        const convs = await getConversations(uid);
+        const total = convs.reduce((sum: number, c: any) => sum + (c.unread_count ?? 0), 0);
+        setMessageBadge(total);
+      } catch { /* silent */ }
+    };
+
+    refresh();
+
+    const msgChannel = supabase
+      .channel(`app-msg-badge-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        () => { if (activeTab !== 'messages') refresh(); }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(msgChannel); };
+  }, [session?.user?.id, activeTab]);
 
   const handleNotificationAction = (data: any) => {
     if (!data) return;
@@ -761,6 +777,7 @@ function AppShell() {
       if (tab === 'reels') setPrevTab(activeTab);
       if (tab !== 'profile') setViewedUserId(null);
       if (tab !== 'messages') setInitialConv(null);
+      if (tab === 'messages') setMessageBadge(0);
       setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
     });
   };
@@ -825,7 +842,8 @@ function AppShell() {
                   onCreateStory={undefined}
                   onCameraPress={() => pagerRef.current?.setPage(0)}
                   onNotifPress={openNotifications}
-                  onMessagePress={() => setActiveTab('messages')}
+                  onMessagePress={() => { setMessageBadge(0); setActiveTab('messages'); }}
+                  messageBadge={messageBadge}
                   notifBadge={notifBadge}
                   onReelPress={() => setActiveTab('reels')}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}

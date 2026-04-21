@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { uploadFile } from './upload';
+import { sendPushToUser } from './pushNotifications';
 
 // ─── Conversations ────────────────────────────────────────────────────────────
 
@@ -117,6 +118,33 @@ export async function sendMessage(
     .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
     .single();
   if (error) throw error;
+
+  // Push notification to other participants
+  try {
+    const sender = data.profiles;
+    const pushBody =
+      type === 'image' ? 'Sent a photo 📷' :
+      type === 'audio' ? 'Sent a voice message 🎤' :
+      type === 'gif'   ? 'Sent a GIF 🎞️' :
+      text.length > 80 ? text.slice(0, 77) + '…' : text;
+
+    const { data: participants } = await supabase
+      .from('conversation_participants')
+      .select('user_id')
+      .eq('conversation_id', conversationId)
+      .neq('user_id', senderId);
+
+    participants?.forEach((p: any) => {
+      sendPushToUser(
+        p.user_id,
+        sender?.username || 'Someone',
+        pushBody,
+        { type: 'message', conversationId },
+        type === 'image' ? (mediaUrl ?? undefined) : undefined,
+        sender?.avatar_url ?? undefined,
+      ).catch(() => {});
+    });
+  } catch { /* non-fatal */ }
 
   return data;
 }

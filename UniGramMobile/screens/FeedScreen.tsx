@@ -32,6 +32,8 @@ import { usePopup } from '../context/PopupContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
+import { createDirectConversation, sendMessage as sendDM } from '../services/messages';
+import { sendPushToUser } from '../services/pushNotifications';
 import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions } from '../services/algorithm';
 import { sendFollowSuggestionNotif } from '../services/notifications';
 import { getReels } from '../services/reels';
@@ -363,22 +365,32 @@ const StoryViewer: React.FC<{
 
   const submitReply = async () => {
     if (!reply.trim() || !story) return;
+    const text = reply.trim();
+    setReply('');
+    setIsTyping(false);
+    setPaused(false);
     try {
-      // In a real app, this would create a record in the 'messages' table
-      // For now, we simulate a success notification
-      showPopup({
-        title: 'Sent!',
-        message: `Reply sent to ${group.profile.username}`,
-        icon: 'paper-plane-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
-      setReply('');
-      setIsTyping(false);
-      setPaused(false);
-    } catch (e) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const conversationId = await createDirectConversation(user.id, group.profile.id);
+      await sendDM(conversationId, user.id, text, 'text');
+      const { data: me } = await supabase
+        .from('profiles')
+        .select('username, avatar_url')
+        .eq('id', user.id)
+        .single();
+      await sendPushToUser(
+        group.profile.id,
+        me?.username ?? 'Someone',
+        `Replied to your story: "${text.length > 60 ? text.slice(0, 57) + '…' : text}"`,
+        { type: 'story_reply', conversationId, storyId: story.id },
+        story.media_url,
+        me?.avatar_url ?? undefined,
+      );
+    } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: 'Could not send reply.',
+        message: e.message ?? 'Could not send reply.',
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1724,6 +1736,7 @@ interface FeedScreenProps {
   onCameraPress?: () => void; // New prop for manual camera access
   onNotifPress?: () => void;
   onMessagePress?: () => void;
+  messageBadge?: number;
   notifBadge?: number;
   onReelPress?: () => void;
   onUserPress?: (user: any) => void;
@@ -1738,7 +1751,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   onCameraPress,
   onNotifPress, 
   onMessagePress,
-  notifBadge = 0, 
+  messageBadge = 0,
+  notifBadge = 0,
   onReelPress, 
   onUserPress, 
   isMuted, 
@@ -2122,8 +2136,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity onPress={onMessagePress} style={{ padding: 4 }}>
+          <TouchableOpacity onPress={onMessagePress} style={{ padding: 4, position: 'relative' }}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
+            {messageBadge > 0 && (
+              <View style={styles.notifHeaderBadge}>
+                <Text style={styles.notifHeaderBadgeText}>{messageBadge > 99 ? '99+' : messageBadge}</Text>
+              </View>
+            )}
           </TouchableOpacity>
           <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
             <Ionicons name="notifications-outline" size={24} color={colors.text} />

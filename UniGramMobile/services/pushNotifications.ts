@@ -92,8 +92,9 @@ export async function sendPushToUser(
   title: string,
   body: string,
   data?: Record<string, any>,
+  imageUrl?: string,
+  senderAvatarUrl?: string,
 ): Promise<void> {
-  // Fetch this user's push tokens
   const { data: rows, error } = await supabase
     .from('push_tokens')
     .select('token')
@@ -101,36 +102,25 @@ export async function sendPushToUser(
 
   if (error || !rows?.length) return;
 
-  const messages = rows.map((r: any) => ({
-    to: r.token,
-    title,
-    body,
-    data: data ?? {},
-    sound: 'default',
-    priority: 'high',
-    channelId: 'default',
-  }));
-
-  // Call our custom Supabase Edge Function which uses Firebase Admin SDK
-  // This is more reliable for standalone builds and direct FCM/APNs control
   const { error: edgeError } = await supabase.functions.invoke('send-push-notification', {
-    body: { userId, title, body, data: data ?? {} },
+    body: { userId, title, body, data: data ?? {}, imageUrl, senderAvatarUrl },
   });
 
   if (edgeError) {
     console.warn('Edge function notification failed, falling back to Expo proxy:', edgeError);
-    
-    // Fallback to Expo push API for registered Expo tokens
+
     const expoMessages = rows
       .filter((r: any) => (r.token as string).startsWith('ExponentPushToken'))
       .map((r: any) => ({
         to: r.token,
         title,
         body,
-        data: data ?? {},
+        data: { ...(data ?? {}), imageUrl, senderAvatarUrl },
         sound: 'default',
         priority: 'high',
         channelId: 'default',
+        // Expo supports mutableContent for iOS notification service extensions
+        mutableContent: !!imageUrl,
       }));
 
     if (expoMessages.length > 0) {

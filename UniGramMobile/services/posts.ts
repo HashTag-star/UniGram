@@ -105,9 +105,9 @@ export async function createPost(
         post_id: data.id,
         text: notifText
       });
-      sendPushToUser(tid, 'New Mention', `@${actor?.username || 'Someone'} ${notifText}`, {
-        type: 'post', postId: data.id, userId
-      }).catch(() => {});
+      sendPushToUser(tid, actor?.username || 'Someone', notifText, {
+        type: 'post', postId: data.id, userId,
+      }, uploadedUrls[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     } catch (e) {}
   });
 
@@ -147,10 +147,12 @@ export async function likePost(postId: string, userId: string) {
   
   // Notify author
   try {
-    const { data: post } = await supabase.from('posts').select('user_id, caption').eq('id', postId).single();
+    const { data: post } = await supabase.from('posts').select('user_id, caption, media_urls').eq('id', postId).single();
     if (post && post.user_id !== userId) {
-      const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
-      const text = `liked your post: "${post.caption?.substring(0, 20) || ''}..."`;
+      const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
+      const text = post.caption?.trim()
+        ? `liked your post: "${post.caption.substring(0, 40)}${post.caption.length > 40 ? '…' : ''}"`
+        : 'liked your post.';
       await createNotification({
         user_id: post.user_id,
         actor_id: userId,
@@ -158,9 +160,9 @@ export async function likePost(postId: string, userId: string) {
         post_id: postId,
         text
       });
-      sendPushToUser(post.user_id, 'New Like', `@${actor?.username || 'Someone'} ${text}`, { 
-        type: 'like', postId, userId 
-      }).catch(() => {});
+      sendPushToUser(post.user_id, actor?.username || 'Someone', text, {
+        type: 'like', postId, userId,
+      }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     }
   } catch (e) {}
 }
@@ -318,13 +320,17 @@ export async function addPostComment(postId: string, userId: string, text: strin
     res = data;
   }
 
-  const { data: actor } = await supabase.from('profiles').select('username').eq('id', userId).single();
+  const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
+  const actorName = actor?.username || 'Someone';
+  const actorAvatar = actor?.avatar_url ?? undefined;
 
   // 1. Notify post author
   try {
-    const { data: post } = await supabase.from('posts').select('user_id').eq('id', postId).single();
+    const { data: post } = await supabase.from('posts').select('user_id, media_urls').eq('id', postId).single();
     if (post && post.user_id !== userId) {
-      const notifText = parentId ? `replied to a comment: "${text.substring(0, 30)}..."` : `commented: "${text.substring(0, 30)}..."`;
+      const notifText = parentId
+        ? `replied to a comment: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`
+        : `commented: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`;
       await createNotification({
         user_id: post.user_id,
         actor_id: userId,
@@ -332,9 +338,9 @@ export async function addPostComment(postId: string, userId: string, text: strin
         post_id: postId,
         text: notifText
       });
-      sendPushToUser(post.user_id, 'New Comment', `@${actor?.username || 'Someone'} ${notifText}`, { 
-        type: 'comment', postId, userId 
-      }).catch(() => {});
+      sendPushToUser(post.user_id, actorName, notifText, {
+        type: 'comment', postId, userId,
+      }, post.media_urls?.[0] ?? undefined, actorAvatar).catch(() => {});
     }
   } catch (e) {}
 
@@ -346,7 +352,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
       try {
         const { data: targetProfile } = await supabase.from('profiles').select('id').eq('username', uname).single();
         if (targetProfile && targetProfile.id !== userId) {
-          const mentionText = `mentioned you in a comment: "${text.substring(0, 30)}..."`;
+          const mentionText = `mentioned you in a comment: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`;
           await createNotification({
             user_id: targetProfile.id,
             actor_id: userId,
@@ -354,9 +360,9 @@ export async function addPostComment(postId: string, userId: string, text: strin
             post_id: postId,
             text: mentionText
           });
-          sendPushToUser(targetProfile.id, 'New Mention', `@${actor?.username || 'Someone'} ${mentionText}`, {
-            type: 'mention', postId, userId
-          }).catch(() => {});
+          sendPushToUser(targetProfile.id, actorName, mentionText, {
+            type: 'mention', postId, userId,
+          }, undefined, actorAvatar).catch(() => {});
         }
       } catch (e) {}
     });

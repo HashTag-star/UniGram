@@ -175,18 +175,22 @@ export async function followUser(followerId: string, followingId: string) {
 
   // Notify target user
   try {
-    const { data: follower } = await supabase.from('profiles').select('username').eq('id', followerId).single();
-    const text = 'started following you';
+    const { data: follower } = await supabase.from('profiles').select('username, avatar_url').eq('id', followerId).single();
+    const text = 'started following you.';
     await createNotification({
       user_id: followingId,
       actor_id: followerId,
       type: 'follow',
       text
     });
-    sendPushToUser(followingId, 'New Follower', `@${follower?.username || 'Someone'} ${text}`, {
-      type: 'follow',
-      userId: followerId // so they can see who followed them
-    }).catch(() => {});
+    sendPushToUser(
+      followingId,
+      follower?.username || 'Someone',
+      text,
+      { type: 'follow', userId: followerId },
+      undefined,
+      follower?.avatar_url ?? undefined,
+    ).catch(() => {});
   } catch (e) {}
 }
 

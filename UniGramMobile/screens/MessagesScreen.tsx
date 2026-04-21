@@ -64,7 +64,8 @@ import {
   unsendMessage,
   sendSharedContent,
 } from '../services/messages';
-import { updateActiveStatus } from '../services/profiles';
+import { updateActiveStatus, blockUser } from '../services/profiles';
+import { getUserStories, getViewedStoryIds, markStoryViewed } from '../services/stories';
 import { initiateCall, CallRecord, CallType } from '../services/calls';
 import { CallScreen } from './CallScreen';
 import { useTheme } from '../context/ThemeContext';
@@ -145,6 +146,65 @@ const TypingDots: React.FC = () => {
       <Animated.View style={dotStyle(dot2)} />
       <Animated.View style={dotStyle(dot3)} />
     </View>
+  );
+};
+
+// ─── Story Ring Avatar ────────────────────────────────────────────────────────
+
+const StoryRingAvatar: React.FC<{
+  uri?: string | null;
+  size: number;
+  hasStory: boolean;
+  viewed: boolean;
+  onPress?: () => void;
+  isGroup?: boolean;
+}> = ({ uri, size, hasStory, viewed, onPress, isGroup }) => {
+  const { colors } = useTheme();
+  const ringColor = hasStory ? (viewed ? '#888' : '#6366f1') : 'transparent';
+  const outerSize = hasStory ? size + 6 : size;
+
+  const inner = (
+    <View style={{
+      width: outerSize,
+      height: outerSize,
+      borderRadius: outerSize / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: ringColor,
+    }}>
+      {uri ? (
+        <CachedImage
+          uri={uri}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: hasStory ? 2 : 0,
+            borderColor: colors.bg,
+          }}
+        />
+      ) : (
+        <View style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: colors.bg2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: hasStory ? 2 : 0,
+          borderColor: colors.bg,
+        }}>
+          <Ionicons name={isGroup ? 'people' : 'person'} size={size * 0.44} color={colors.textMuted} />
+        </View>
+      )}
+    </View>
+  );
+
+  if (!onPress) return inner;
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.8} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+      {inner}
+    </TouchableOpacity>
   );
 };
 
@@ -270,7 +330,8 @@ const ReplyingToHeader: React.FC<{
 
 const VoiceRecorder: React.FC<{
   onRecordComplete: (uri: string, duration: number) => void;
-}> = ({ onRecordComplete }) => {
+  onRecordingChange?: (recording: boolean) => void;
+}> = ({ onRecordComplete, onRecordingChange }) => {
   const { colors } = useTheme();
   const { medium: hapticMedium, success: hapticSuccess } = useHaptics();
   const [duration, setDuration] = useState(0);
@@ -356,6 +417,7 @@ const VoiceRecorder: React.FC<{
       
       recordingRef.current = recording;
       setIsRecording(true);
+      onRecordingChange?.(true);
       setDuration(0);
       animateWave();
       
@@ -385,6 +447,7 @@ const VoiceRecorder: React.FC<{
     
     clearInterval(timerRef.current);
     setIsRecording(false);
+    onRecordingChange?.(false);
     resetWave();
     
     try {
@@ -697,14 +760,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
 
           {/* Timestamp + read receipt */}
-          {showTimestamp && (
+          {(showTimestamp || msg._sending) && (
             <View style={[styles.msgMeta, isMe && { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 3 }]}>
               <Text style={[styles.msgTime, { color: colors.textMuted }]}>{fmtTime(msg.created_at)}</Text>
               {isMe && (
                 <Ionicons
-                  name={isRead ? 'checkmark-done' : 'checkmark'}
+                  name={msg._sending ? 'time-outline' : isRead ? 'checkmark-done' : 'checkmark'}
                   size={12}
-                  color={isRead ? colors.accent : colors.textMuted}
+                  color={msg._sending ? colors.textMuted : isRead ? '#60a5fa' : colors.textMuted}
                 />
               )}
             </View>
@@ -1057,9 +1120,13 @@ interface ChatViewProps {
   convData: { convId: string; otherProfile: any };
   currentUserId: string;
   onBack: () => void;
+  storyUserIds?: Set<string>;
+  viewedUserIds?: Set<string>;
+  onAvatarPress?: (userId: string, hasStory: boolean, profile: any) => void;
+  onHeaderPress?: () => void;
 }
 
-const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) => {
+const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, storyUserIds, viewedUserIds, onAvatarPress, onHeaderPress }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { light: hapticLight } = useHaptics();
@@ -1078,6 +1145,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
   const [replyingTo, setReplyingTo] = useState<any | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [profile, setProfile] = useState<any>(otherProfile);
+  const [isOtherRecording, setIsOtherRecording] = useState(false);
 
   // Recovery effect for erased/missing names
   useEffect(() => {
@@ -1149,6 +1217,13 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       (msg) => {
         setMessages((prev) => {
           if (prev.find((m) => m.id === msg.id)) return prev;
+          // Replace any optimistic duplicate (same sender + text + recent)
+          const tempIdx = prev.findIndex(m => m._sending && m.sender_id === msg.sender_id && m.text === msg.text);
+          if (tempIdx !== -1) {
+            const next = [...prev];
+            next[tempIdx] = { ...msg, _sending: false };
+            return next;
+          }
           return [...prev, msg];
         });
         if (msg.sender_id !== currentUserId) {
@@ -1164,22 +1239,18 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     const statusInterval = setInterval(() => updateActiveStatus(currentUserId), 60000);
     updateActiveStatus(currentUserId);
 
-    // Typing presence (optional — try/catch if presence not available)
+    // Typing + recording presence
     try {
       typingChannelRef.current = supabase
         .channel(`typing:${convId}`)
         .on('presence', { event: 'sync' }, function (this: RealtimeChannel) {
           const state = (this as any).presenceState?.() ?? {};
-          const typingUsers: string[] = Object.values(state)
-            .flat()
-            .map((u: any) => u.user_id)
-            .filter((uid: string) => uid !== currentUserId);
-          setIsOtherTyping(typingUsers.length > 0);
+          const others = (Object.values(state) as any[][]).flat().filter((u: any) => u.user_id !== currentUserId);
+          setIsOtherTyping(others.some((u: any) => u.isTyping && !u.isRecording));
+          setIsOtherRecording(others.some((u: any) => u.isRecording));
         })
         .subscribe();
-    } catch (_) {
-      // Presence not supported in this environment
-    }
+    } catch (_) { }
 
     return () => {
       msgChannelRef.current?.unsubscribe();
@@ -1203,7 +1274,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
       try {
         if (!isTypingSentRef.current) {
           isTypingSentRef.current = true;
-          typingChannelRef.current.track({ user_id: currentUserId });
+          typingChannelRef.current.track({ user_id: currentUserId, isTyping: true });
         }
         if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
         typingTimerRef.current = setTimeout(() => {
@@ -1219,24 +1290,57 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
     const t = text.trim();
     if (!t || uploading) return;
     setText('');
-    // Stop typing indicator
+    try { typingChannelRef.current?.untrack(); isTypingSentRef.current = false; } catch (_) {}
+
+    // Optimistic message — shown immediately
+    const tempId = `_tmp_${Date.now()}`;
+    const pendingReply = replyingTo;
+    const optimistic: any = {
+      id: tempId,
+      conversation_id: convId,
+      sender_id: currentUserId,
+      text: t,
+      type: 'text',
+      created_at: new Date().toISOString(),
+      is_read: false,
+      is_deleted: false,
+      _sending: true,
+      profiles: null,
+      message_reactions: [],
+      reply: pendingReply ?? null,
+      reply_to_message_id: pendingReply?.id ?? null,
+    };
+    setMessages(prev => [...prev, optimistic]);
+    setReplyingTo(null);
+
     try {
-      typingChannelRef.current?.untrack();
-      isTypingSentRef.current = false;
-    } catch (_) { }
-    try {
-      await sendMessage(convId, currentUserId, t, 'text', undefined, replyingTo?.id);
-      setReplyingTo(null);
+      const sent = await sendMessage(convId, currentUserId, t, 'text', undefined, pendingReply?.id);
+      setMessages(prev => {
+        if (prev.find(m => m.id === sent.id)) return prev.filter(m => m.id !== tempId);
+        return prev.map(m => m.id === tempId ? { ...sent, _sending: false } : m);
+      });
     } catch (e: any) {
+      setMessages(prev => prev.filter(m => m.id !== tempId));
       setText(t);
       showPopup({
         title: 'Failed to send',
         message: e.message ?? 'Please try again.',
         icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
+        buttons: [{ text: 'OK', onPress: () => {} }],
       });
     }
   }, [text, uploading, convId, currentUserId, replyingTo]);
+
+  const handleRecordingChange = useCallback((recording: boolean) => {
+    if (!typingChannelRef.current) return;
+    try {
+      if (recording) {
+        typingChannelRef.current.track({ user_id: currentUserId, isRecording: true });
+      } else {
+        typingChannelRef.current.untrack();
+      }
+    } catch (_) {}
+  }, [currentUserId]);
 
   const onVoiceRecorded = useCallback(async (uri: string, duration: number) => {
     setUploading(true);
@@ -1454,18 +1558,31 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
         <TouchableOpacity onPress={onBack} style={styles.chatBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.chatHeaderUser} activeOpacity={0.8}>
-          <View style={{ position: 'relative' }}>
-            {profile?.avatar_url ? (
-              <CachedImage uri={profile.avatar_url} style={styles.chatAvatar} />
-            ) : (
-              <View style={[styles.chatAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name={isGroup ? 'people' : 'person'} size={16} color={colors.textMuted} />
-              </View>
-            )}
-            {!isGroup && <View style={styles.chatOnlineDot} />}
-          </View>
-          <View style={{ marginLeft: 10 }}>
+        <View style={styles.chatHeaderUser}>
+          {/* Avatar with story ring */}
+          {(() => {
+            const otherUserId = profile?.id;
+            const hasStory = !isGroup && !!otherUserId && (storyUserIds?.has(otherUserId) ?? false);
+            const storyViewed = !isGroup && !!otherUserId && (viewedUserIds?.has(otherUserId) ?? false);
+            return (
+              <StoryRingAvatar
+                uri={profile?.avatar_url}
+                size={36}
+                hasStory={hasStory}
+                viewed={storyViewed}
+                isGroup={isGroup}
+                onPress={(!isGroup && otherUserId && onAvatarPress)
+                  ? () => onAvatarPress(otherUserId, hasStory, profile)
+                  : undefined}
+              />
+            );
+          })()}
+          {/* Name + status — tapping navigates to Chat Info */}
+          <TouchableOpacity
+            style={{ marginLeft: 10, flex: 1 }}
+            activeOpacity={onHeaderPress ? 0.7 : 1}
+            onPress={onHeaderPress}
+          >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>
                 {profile?.full_name ?? profile?.username ?? 'Chat'}
@@ -1474,11 +1591,11 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
                 <VerifiedBadge type={profile.verification_type} size="sm" />
               )}
             </View>
-            <Text style={styles.chatStatus}>
-              {isOtherTyping ? 'typing…' : isGroup ? 'Group chat' : 'Active now'}
+            <Text style={[styles.chatStatus, { color: isOtherTyping || isOtherRecording ? colors.accent : colors.textMuted }]}>
+              {isOtherRecording ? '🎤 recording…' : isOtherTyping ? 'typing…' : isGroup ? 'Group chat' : 'Active now'}
             </Text>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
         <View style={{ flexDirection: 'row', gap: 0 }}>
           <TouchableOpacity style={styles.chatAction} onPress={() => startCall('audio')}>
             <Ionicons name="call-outline" size={21} color={colors.textMuted} />
@@ -1541,7 +1658,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
             </View>
           }
           ListFooterComponent={
-            isOtherTyping ? (
+            (isOtherTyping || isOtherRecording) ? (
               <View style={styles.typingRow}>
                 <View style={{ width: 30, marginRight: 6 }}>
                   {profile?.avatar_url ? (
@@ -1550,7 +1667,14 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
                     <View style={[styles.msgAvatar, { backgroundColor: colors.bg2 }]} />
                   )}
                 </View>
-                <TypingDots />
+                {isOtherRecording ? (
+                  <View style={[styles.typingBubble, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                    <Ionicons name="mic" size={13} color={colors.accent} />
+                    <Text style={{ color: colors.textSub, fontSize: 12 }}>recording…</Text>
+                  </View>
+                ) : (
+                  <TypingDots />
+                )}
               </View>
             ) : null
           }
@@ -1636,7 +1760,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
               />
             </TouchableOpacity>
           ) : (
-            <VoiceRecorder onRecordComplete={onVoiceRecorded} />
+            <VoiceRecorder onRecordComplete={onVoiceRecorded} onRecordingChange={handleRecordingChange} />
           )}
         </View>
       </View>
@@ -1688,11 +1812,297 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack }) 
 
 // ─── Conversation List ────────────────────────────────────────────────────────
 
+// ─── User Story Modal ─────────────────────────────────────────────────────────
+
+const UserStoryModal: React.FC<{
+  userId: string;
+  profile: any;
+  currentUserId: string;
+  onClose: () => void;
+}> = ({ userId, profile, currentUserId, onClose }) => {
+  const { colors } = useTheme();
+  const [stories, setStories] = useState<any[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const progress = useRef(new Animated.Value(0)).current;
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    getUserStories(userId)
+      .then((data) => { setStories(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!stories.length) return;
+    const story = stories[idx];
+    if (story) markStoryViewed(story.id, currentUserId).catch(() => {});
+    progress.setValue(0);
+    animRef.current?.stop();
+    animRef.current = Animated.timing(progress, {
+      toValue: 1,
+      duration: 5000,
+      useNativeDriver: false,
+    });
+    animRef.current.start(({ finished }) => {
+      if (finished) {
+        if (idx < stories.length - 1) setIdx((i) => i + 1);
+        else onClose();
+      }
+    });
+    return () => animRef.current?.stop();
+  }, [idx, stories.length]);
+
+  if (loading) {
+    return (
+      <Modal visible animationType="fade" onRequestClose={onClose}>
+        <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color="#fff" />
+        </View>
+      </Modal>
+    );
+  }
+
+  if (!stories.length) {
+    onClose();
+    return null;
+  }
+
+  const story = stories[idx];
+
+  return (
+    <Modal visible animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {/* Progress bars */}
+        <View style={{ flexDirection: 'row', gap: 4, paddingHorizontal: 12, paddingTop: 52, paddingBottom: 8 }}>
+          {stories.map((_, i) => (
+            <View key={i} style={{ flex: 1, height: 2, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 1 }}>
+              {i < idx && <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 1 }} />}
+              {i === idx && (
+                <Animated.View style={{ width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }), height: 2, backgroundColor: '#fff', borderRadius: 1 }} />
+              )}
+            </View>
+          ))}
+        </View>
+
+        {/* Header */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8 }}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4, marginRight: 8 }}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          {profile?.avatar_url ? (
+            <CachedImage uri={profile.avatar_url} style={{ width: 36, height: 36, borderRadius: 18 }} />
+          ) : (
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="person" size={16} color="#fff" />
+            </View>
+          )}
+          <View style={{ marginLeft: 10 }}>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{profile?.full_name || profile?.username}</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>{timeAgo(story.created_at)}</Text>
+          </View>
+        </View>
+
+        {/* Media */}
+        <TouchableOpacity
+          activeOpacity={1}
+          style={{ flex: 1 }}
+          onPress={(e) => {
+            const x = e.nativeEvent.locationX;
+            const screenWidth = 400;
+            if (x < screenWidth / 3) {
+              setIdx((i) => Math.max(0, i - 1));
+            } else {
+              if (idx < stories.length - 1) setIdx((i) => i + 1);
+              else onClose();
+            }
+          }}
+        >
+          {story.media_url ? (
+            <Image source={{ uri: story.media_url }} style={{ flex: 1 }} resizeMode="contain" />
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: '#fff', fontSize: 16 }}>{story.caption ?? ''}</Text>
+            </View>
+          )}
+          {story.caption ? (
+            <View style={{ position: 'absolute', bottom: 60, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 24 }}>
+              <Text style={{ color: '#fff', fontSize: 16, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 6 }}>
+                {story.caption}
+              </Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+};
+
+// ─── Chat Info View ───────────────────────────────────────────────────────────
+
+const ChatInfoView: React.FC<{
+  convId: string;
+  profile: any;
+  currentUserId: string;
+  onBack: () => void;
+  onViewStory?: () => void;
+  hasStory?: boolean;
+}> = ({ convId, profile, currentUserId, onBack, onViewStory, hasStory }) => {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { showPopup } = usePopup();
+  const [sharedMedia, setSharedMedia] = useState<any[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from('messages')
+      .select('media_url, created_at')
+      .eq('conversation_id', convId)
+      .eq('type', 'image')
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(12)
+      .then(({ data }) => setSharedMedia(data ?? []));
+  }, [convId]);
+
+  const handleBlock = () => {
+    showPopup({
+      title: `Block ${profile?.username ?? 'user'}?`,
+      message: 'They won\'t be able to message you or see your content.',
+      icon: 'ban-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await blockUser(profile.id);
+              onBack();
+            } catch {
+              showPopup({ title: 'Error', message: 'Could not block user.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+            }
+          },
+        },
+      ],
+    });
+  };
+
+  const handleClearChat = () => {
+    showPopup({
+      title: 'Clear Chat?',
+      message: 'This only clears messages on your side.',
+      icon: 'trash-outline',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            // Soft-delete: mark messages as deleted for this user
+            await supabase
+              .from('conversation_participants')
+              .update({ cleared_at: new Date().toISOString() })
+              .eq('conversation_id', convId)
+              .eq('user_id', currentUserId);
+            onBack();
+          },
+        },
+      ],
+    });
+  };
+
+  return (
+    <View style={[{ flex: 1, backgroundColor: colors.bg }, { paddingTop: insets.top }]}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+        <TouchableOpacity onPress={onBack} style={{ padding: 4, marginRight: 8 }}>
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text }}>Chat Info</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Profile section */}
+        <View style={{ alignItems: 'center', paddingVertical: 28 }}>
+          {profile?.avatar_url ? (
+            <CachedImage uri={profile.avatar_url} style={{ width: 88, height: 88, borderRadius: 44 }} />
+          ) : (
+            <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="person" size={38} color={colors.textMuted} />
+            </View>
+          )}
+          <Text style={{ color: colors.text, fontSize: 20, fontWeight: 'bold', marginTop: 12 }}>
+            {profile?.full_name || profile?.username}
+          </Text>
+          {profile?.username && (
+            <Text style={{ color: colors.textMuted, fontSize: 13, marginTop: 3 }}>@{profile.username}</Text>
+          )}
+          {profile?.bio ? (
+            <Text style={{ color: colors.textSub, fontSize: 13, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>{profile.bio}</Text>
+          ) : null}
+          {profile?.university ? (
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>{profile.university}</Text>
+          ) : null}
+        </View>
+
+        {/* Story button */}
+        {hasStory && onViewStory && (
+          <TouchableOpacity
+            onPress={onViewStory}
+            style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, backgroundColor: colors.bg2, borderRadius: 12, padding: 14, gap: 12 }}
+          >
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="aperture-outline" size={20} color="#fff" />
+            </View>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>View Status</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Shared media */}
+        {sharedMedia.length > 0 && (
+          <View style={{ marginHorizontal: 16, marginTop: 8, marginBottom: 8 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 10 }}>SHARED MEDIA</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3 }}>
+              {sharedMedia.map((m, i) => (
+                <CachedImage key={i} uri={m.media_url} style={{ width: 80, height: 80, borderRadius: 8 }} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Actions */}
+        <View style={{ marginTop: 16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+          <TouchableOpacity
+            onPress={handleBlock}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+          >
+            <Ionicons name="ban-outline" size={20} color="#ef4444" />
+            <Text style={{ color: '#ef4444', fontSize: 15 }}>Block {profile?.username ?? 'User'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleClearChat}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 14 }}
+          >
+            <Ionicons name="trash-outline" size={20} color="#ef4444" />
+            <Text style={{ color: '#ef4444', fontSize: 15 }}>Clear Chat</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+// ─── Conversation List ────────────────────────────────────────────────────────
+
 interface ConversationListProps {
   currentUserId: string;
   currentUsername: string;
   onPress: (convId: string, otherProfile: any) => void;
   onCompose: () => void;
+  storyUserIds: Set<string>;
+  viewedUserIds: Set<string>;
+  onAvatarPress: (userId: string, hasStory: boolean, profile: any) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -1700,6 +2110,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
   currentUsername,
   onPress,
   onCompose,
+  storyUserIds,
+  viewedUserIds,
+  onAvatarPress,
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1786,6 +2199,10 @@ const ConversationList: React.FC<ConversationListProps> = ({
       const displayName = isGroup ? conv.group_name : (other?.full_name || other?.username);
       const hasUnread = (c.unread_count ?? 0) > 0;
 
+      const otherUserId = other?.id;
+      const hasStory = !isGroup && !!otherUserId && storyUserIds.has(otherUserId);
+      const storyViewed = !isGroup && !!otherUserId && viewedUserIds.has(otherUserId);
+
       return (
         <TouchableOpacity
           style={styles.convItem}
@@ -1793,15 +2210,16 @@ const ConversationList: React.FC<ConversationListProps> = ({
           activeOpacity={0.75}
         >
           <View style={styles.convAvatarWrap}>
-            {other?.avatar_url ? (
-              <CachedImage uri={other.avatar_url} style={styles.convAvatar} />
-            ) : (
-              <View style={[styles.convAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name={isGroup ? 'people' : 'person'} size={21} color={colors.textMuted} />
-              </View>
-            )}
+            <StoryRingAvatar
+              uri={other?.avatar_url}
+              size={52}
+              hasStory={hasStory}
+              viewed={storyViewed}
+              isGroup={isGroup}
+              onPress={(!isGroup && otherUserId) ? () => onAvatarPress(otherUserId, hasStory, other) : undefined}
+            />
             {hasUnread && (
-              <View style={styles.unreadBadge}>
+              <View style={[styles.unreadBadge, { top: hasStory ? -5 : -2, right: hasStory ? -5 : -2 }]}>
                 <Text style={styles.unreadText}>
                   {c.unread_count > 9 ? '9+' : c.unread_count}
                 </Text>
@@ -1836,7 +2254,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
         </TouchableOpacity>
       );
     },
-    [currentUserId, onPress],
+    [currentUserId, onPress, storyUserIds, viewedUserIds, onAvatarPress],
   );
 
   const keyExtractor = useCallback((c: any) => c.conversations?.id ?? String(Math.random()), []);
@@ -1976,7 +2394,7 @@ function getOtherParticipant(conv: any, currentUserId: string): any | null {
 
 // ─── Messages Screen (root) ───────────────────────────────────────────────────
 
-type ScreenState = 'list' | 'chat' | 'new';
+type ScreenState = 'list' | 'chat' | 'new' | 'info';
 
 interface MessagesScreenProps {
   onChatStateChange?: (inChat: boolean) => void;
@@ -1993,6 +2411,11 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const [incomingCall, setIncomingCall] = useState<CallRecord | null>(null);
   const incomingCallChannelRef = useRef<any>(null);
 
+  // Story state
+  const [storyUserIds, setStoryUserIds] = useState<Set<string>>(new Set());
+  const [viewedUserIds, setViewedUserIds] = useState<Set<string>>(new Set());
+  const [viewingStoryUser, setViewingStoryUser] = useState<{ userId: string; profile: any } | null>(null);
+
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) return;
@@ -2005,6 +2428,31 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
       if (prof?.username) setCurrentUsername(prof.username);
     });
   }, []);
+
+  // Fetch which users have active stories and which ones the current user has viewed
+  useEffect(() => {
+    if (!currentUserId) return;
+    const { getActiveStories: fetchActive } = require('../services/stories');
+    fetchActive().then((groups: any[]) => {
+      setStoryUserIds(new Set(groups.map((g: any) => g.profile?.id).filter(Boolean)));
+    }).catch(() => {});
+    getViewedStoryIds(currentUserId).then((ids: string[]) => {
+      // ids are story IDs; we map them to user IDs via separate lookup
+      // Actually getViewedStoryIds returns story IDs, not user IDs
+      // We need to track which users' stories the current user has viewed
+      // Load story→user mapping to compute viewedUserIds
+      if (ids.length === 0) return;
+      supabase
+        .from('stories')
+        .select('id, user_id')
+        .in('id', ids)
+        .then(({ data }) => {
+          if (data) {
+            setViewedUserIds(new Set(data.map((s: any) => s.user_id)));
+          }
+        });
+    }).catch(() => {});
+  }, [currentUserId]);
 
   // Subscribe to incoming calls globally
   useEffect(() => {
@@ -2042,6 +2490,27 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const openCompose = useCallback(() => setScreenState('new'), []);
   const closeCompose = useCallback(() => setScreenState('list'), []);
 
+  const handleAvatarPress = useCallback((userId: string, hasStory: boolean, profile: any) => {
+    const buttons: any[] = [
+      { text: 'View Profile', onPress: () => {} }, // profile nav placeholder
+    ];
+    if (hasStory) {
+      buttons.unshift({
+        text: 'View Status',
+        onPress: () => setViewingStoryUser({ userId, profile }),
+      });
+    }
+    buttons.push({ text: 'Cancel', style: 'cancel', onPress: () => {} });
+    Alert.alert(
+      profile?.full_name || profile?.username || 'User',
+      undefined,
+      buttons,
+    );
+  }, []);
+
+  const openChatInfo = useCallback(() => setScreenState('info'), []);
+  const closeChatInfo = useCallback(() => setScreenState('chat'), []);
+
   if (!currentUserId) {
     return (
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -2061,13 +2530,57 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
     );
   }
 
-  if (screenState === 'chat' && activeConv) {
+  if ((screenState === 'chat' || screenState === 'info') && activeConv) {
+    const otherProfile = activeConv.otherProfile;
+    const otherUserId = otherProfile?.id;
+    const hasStory = !!otherUserId && storyUserIds.has(otherUserId);
+
+    if (screenState === 'info') {
+      return (
+        <>
+          <ChatInfoView
+            convId={activeConv.convId}
+            profile={otherProfile}
+            currentUserId={currentUserId}
+            onBack={closeChatInfo}
+            hasStory={hasStory}
+            onViewStory={hasStory ? () => {
+              setViewingStoryUser({ userId: otherUserId, profile: otherProfile });
+              closeChatInfo();
+            } : undefined}
+          />
+          {viewingStoryUser && (
+            <UserStoryModal
+              userId={viewingStoryUser.userId}
+              profile={viewingStoryUser.profile}
+              currentUserId={currentUserId}
+              onClose={() => setViewingStoryUser(null)}
+            />
+          )}
+        </>
+      );
+    }
+
     return (
-      <ChatView
-        convData={activeConv}
-        currentUserId={currentUserId}
-        onBack={closeChat}
-      />
+      <>
+        <ChatView
+          convData={activeConv}
+          currentUserId={currentUserId}
+          onBack={closeChat}
+          storyUserIds={storyUserIds}
+          viewedUserIds={viewedUserIds}
+          onAvatarPress={handleAvatarPress}
+          onHeaderPress={openChatInfo}
+        />
+        {viewingStoryUser && (
+          <UserStoryModal
+            userId={viewingStoryUser.userId}
+            profile={viewingStoryUser.profile}
+            currentUserId={currentUserId}
+            onClose={() => setViewingStoryUser(null)}
+          />
+        )}
+      </>
     );
   }
 
@@ -2078,6 +2591,9 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
         currentUsername={currentUsername}
         onPress={openChat}
         onCompose={openCompose}
+        storyUserIds={storyUserIds}
+        viewedUserIds={viewedUserIds}
+        onAvatarPress={handleAvatarPress}
       />
       <NewConvModal
         visible={screenState === 'new'}
@@ -2088,6 +2604,14 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
           openChat(convId, profile);
         }}
       />
+      {viewingStoryUser && (
+        <UserStoryModal
+          userId={viewingStoryUser.userId}
+          profile={viewingStoryUser.profile}
+          currentUserId={currentUserId}
+          onClose={() => setViewingStoryUser(null)}
+        />
+      )}
     </>
   );
 };
