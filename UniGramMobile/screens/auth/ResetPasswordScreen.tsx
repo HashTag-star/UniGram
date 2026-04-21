@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { usePopup } from '../../context/PopupContext';
 
@@ -67,6 +68,7 @@ const Field: React.FC<{
 };
 
 export default function ResetPasswordScreen({ onDone }: Props) {
+  const insets = useSafeAreaInsets();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -149,7 +151,7 @@ export default function ResetPasswordScreen({ onDone }: Props) {
           showsVerticalScrollIndicator={false}
         >
           {/* Icon */}
-          <View style={styles.iconWrap}>
+          <View style={[styles.iconWrap, { marginTop: insets.top + 24 }]}>
             <LinearGradient
               colors={['#818cf8', '#6366f1', '#4338ca']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
@@ -220,7 +222,7 @@ const styles = StyleSheet.create({
   blobTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 420, zIndex: 0 },
   blobBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 300, zIndex: 0 },
 
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 48, justifyContent: 'center' },
+  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 48 },
 
   iconWrap: { alignItems: 'center', marginBottom: 28 },
   iconCircle: {

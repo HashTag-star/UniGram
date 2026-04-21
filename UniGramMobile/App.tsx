@@ -356,13 +356,14 @@ const NotifPostModal: React.FC<{
   onClose: () => void;
 }> = ({ post, currentUserId, isMuted, setIsMuted, openComments, onClose }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const [showComments, setShowComments] = useState(openComments);
   const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 14, paddingBottom: 14, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>

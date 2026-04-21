@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { signUp, signInWithGoogle, checkUsernameAvailable, detectUniversityFromEmail } from '../../services/auth';
 import { usePopup } from '../../context/PopupContext';
 
@@ -134,9 +135,10 @@ const Field: React.FC<{
 };
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
-export default function SignupScreen({ 
-  onNavigateLogin, onShowPrivacy, onShowTerms, onShowGuidelines 
+export default function SignupScreen({
+  onNavigateLogin, onShowPrivacy, onShowTerms, onShowGuidelines
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -373,6 +375,7 @@ export default function SignupScreen({
         >
           {/* ── Hero ── */}
           <Animated.View style={[styles.hero, {
+            paddingTop: insets.top + 32,
             opacity: heroAnim,
             transform: [{ scale: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }) }],
           }]}>
@@ -611,7 +614,7 @@ const styles = StyleSheet.create({
 
   scroll: { flexGrow: 1, paddingBottom: 48 },
 
-  hero: { alignItems: 'center', paddingTop: 60, paddingBottom: 28 },
+  hero: { alignItems: 'center', paddingBottom: 28 },
   wordmark: { fontSize: 30, fontWeight: '800', color: '#fff', letterSpacing: -0.5, marginBottom: 5 },
   tagline: { fontSize: 13, color: 'rgba(255,255,255,0.38)', letterSpacing: 0.2 },
 

@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { signIn, signInWithGoogle, sendPasswordReset } from '../../services/auth';
 import { supabase } from '../../lib/supabase';
 import { usePopup } from '../../context/PopupContext';
@@ -175,6 +176,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const { showPopup } = usePopup();
+  const insets = useSafeAreaInsets();
 
   const heroAnim = useRef(new Animated.Value(0)).current;
   const formSlide = useRef(new Animated.Value(50)).current;
@@ -325,6 +327,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
         >
           {/* ── Hero ── */}
           <Animated.View style={[styles.hero, {
+            paddingTop: insets.top + 40,
             opacity: heroAnim,
             transform: [{ scale: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }) }],
           }]}>
@@ -445,7 +448,7 @@ const styles = StyleSheet.create({
 
   scroll: { flexGrow: 1, paddingBottom: 48 },
 
-  hero: { alignItems: 'center', paddingTop: 80, paddingBottom: 8 },
+  hero: { alignItems: 'center', paddingBottom: 8 },
   wordmark: { fontSize: 34, fontWeight: '800', color: '#fff', letterSpacing: -0.5, marginBottom: 6 },
   tagline: { fontSize: 14, color: 'rgba(255,255,255,0.38)', letterSpacing: 0.2 },
 
