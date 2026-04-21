@@ -47,8 +47,7 @@ const ReelVideo: React.FC<{
   muted: boolean;
   onProgress: (p: number) => void;
   onPlayerReady: (player: any) => void;
-  onBufferingChange: (buffering: boolean) => void;
-}> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady, onBufferingChange }) => {
+}> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady }) => {
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
     p.muted = muted;
@@ -81,28 +80,6 @@ const ReelVideo: React.FC<{
     });
     return () => sub.remove();
   }, [player, onProgress]);
-
-  // Buffering detection via playingChange + statusChange
-  useEffect(() => {
-    const subs: any[] = [];
-    try {
-      subs.push(player.addListener('statusChange', (event: any) => {
-        const status = event?.status ?? event;
-        onBufferingChange(status === 'loading');
-      }));
-    } catch {}
-    try {
-      subs.push(player.addListener('playingChange', (event: any) => {
-        // If video should be playing but stopped → buffering
-        if (isActive && !isPaused && event?.isPlaying === false) {
-          onBufferingChange(true);
-        } else {
-          onBufferingChange(false);
-        }
-      }));
-    } catch {}
-    return () => subs.forEach(s => { try { s.remove(); } catch {} });
-  }, [player, isActive, isPaused, onBufferingChange]);
 
   return (
     <VideoView
@@ -145,6 +122,7 @@ const ReelItem: React.FC<{
   const isSeekingRef = useRef(false);
   const pendingPauseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
+  const seekContainerWidth = useRef(width);
   const { showPopup } = usePopup();
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
@@ -464,7 +442,7 @@ const ReelItem: React.FC<{
   const handleSeekBarPress = (e: any) => {
     const player = playerRef.current;
     if (!player) return;
-    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
+    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekContainerWidth.current));
     player.currentTime = ratio * (player.duration ?? 0);
     setProgress(ratio);
     setIsSeeking(true);
@@ -474,7 +452,7 @@ const ReelItem: React.FC<{
   const handleSeekBarMove = (e: any) => {
     const player = playerRef.current;
     if (!player) return;
-    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / width));
+    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekContainerWidth.current));
     player.currentTime = ratio * (player.duration ?? 0);
     setProgress(ratio);
   };
@@ -495,7 +473,6 @@ const ReelItem: React.FC<{
             muted={muted}
             onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
             onPlayerReady={(p) => { playerRef.current = p; }}
-            onBufferingChange={handleBufferingChange}
           />
         ) : reel.thumbnail_url ? (
           <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
@@ -641,6 +618,7 @@ const ReelItem: React.FC<{
       {/* Seek bar — 44 px touch target, sits right at top of tab bar */}
       <View
         style={[styles.seekBarContainer, { bottom: 0 }]}
+        onLayout={(e) => { seekContainerWidth.current = e.nativeEvent.layout.width; }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderGrant={handleSeekBarPress}
@@ -928,7 +906,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   seekBarTrack: {
-    height: 2,
+    height: 3,
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   seekBarTrackActive: {
