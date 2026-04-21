@@ -29,7 +29,8 @@ import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { usePopup } from '../context/PopupContext';
-import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent } from '../services/posts';
+import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent, getPostLikers } from '../services/posts';
+import { UsersListSheet } from '../components/UsersListSheet';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { createDirectConversation, sendMessage as sendDM } from '../services/messages';
@@ -1130,6 +1131,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [showOptions, setShowOptions] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showLikers, setShowLikers] = useState(false);
   // If a post has >= 5 pending reports it's soft-hidden; user can reveal it
   const [showFlagged, setShowFlagged] = useState(false);
   // Initialize directly from parent-passed props — no per-post server round-trip
@@ -1551,7 +1553,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
       <View style={styles.postInfo}>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
-          {likes > 0 && <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>}
+          {likes > 0 && (
+            <TouchableOpacity onPress={() => setShowLikers(true)} activeOpacity={0.7}>
+              <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
+            </TouchableOpacity>
+          )}
           {commentCount > 0 && (
             <TouchableOpacity onPress={() => {
               onOpenComments?.(post.id, post.user_id);
@@ -1573,6 +1579,14 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         visible={showShare}
         onClose={() => setShowShare(false)}
         content={{ type: 'post', id: post.id, thumbnail: post.media_url!, username: profile?.username }}
+      />
+
+      <UsersListSheet
+        visible={showLikers}
+        title={`${fmtCount(likes)} likes`}
+        fetchUsers={() => getPostLikers(post.id)}
+        onClose={() => setShowLikers(false)}
+        onUserPress={onUserPress}
       />
     </View>
   );

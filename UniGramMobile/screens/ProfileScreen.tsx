@@ -26,6 +26,8 @@ import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
+import { UsersListSheet } from '../components/UsersListSheet';
+import { ProfilePicViewer } from '../components/ProfilePicViewer';
 
 const { width, height } = Dimensions.get('window');
 const COL = (width - 2) / 3;
@@ -79,6 +81,9 @@ export const ProfileScreen: React.FC<Props> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showFollowersSheet, setShowFollowersSheet] = useState(false);
+  const [showFollowingSheet, setShowFollowingSheet] = useState(false);
+  const [showPicViewer, setShowPicViewer] = useState(false);
   const [showEditPost, setShowEditPost] = useState(false);
   const [editPostCaption, setEditPostCaption] = useState('');
   const [saving, setSaving] = useState(false);
@@ -281,7 +286,13 @@ export const ProfileScreen: React.FC<Props> = ({
           <View style={styles.avatarRow}>
             <View style={styles.avatarContainer}>
               <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
-                <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
+                <TouchableOpacity
+                  onPress={() => profile?.avatar_url && setShowPicViewer(true)}
+                  activeOpacity={0.88}
+                  disabled={!profile?.avatar_url}
+                >
+                  <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
+                </TouchableOpacity>
                 {isOwn && (
                   <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
                     <Ionicons name="camera" size={24} color="#fff" />
@@ -347,8 +358,14 @@ export const ProfileScreen: React.FC<Props> = ({
 
           <View style={[styles.statsRow, { borderColor: colors.border }]}>
             <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
-            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text></View>
-            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text></View>
+            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7}>
+              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
+              <Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7}>
+              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
+              <Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -567,6 +584,34 @@ export const ProfileScreen: React.FC<Props> = ({
           setShowAccountSwitcher(false);
           // Standard login flow for new account
           await supabase.auth.signOut();
+        }}
+      />
+
+      <ProfilePicViewer
+        visible={showPicViewer}
+        uri={profile?.avatar_url}
+        username={profile?.username}
+        onClose={() => setShowPicViewer(false)}
+      />
+
+      <UsersListSheet
+        visible={showFollowersSheet}
+        title="Followers"
+        users={followers}
+        onClose={() => setShowFollowersSheet(false)}
+        onUserPress={(profile) => {
+          setShowFollowersSheet(false);
+          DeviceEventEmitter.emit('NAVIGATE_PROFILE', { userId: profile.id });
+        }}
+      />
+      <UsersListSheet
+        visible={showFollowingSheet}
+        title="Following"
+        users={following}
+        onClose={() => setShowFollowingSheet(false)}
+        onUserPress={(profile) => {
+          setShowFollowingSheet(false);
+          DeviceEventEmitter.emit('NAVIGATE_PROFILE', { userId: profile.id });
         }}
       />
     </View>

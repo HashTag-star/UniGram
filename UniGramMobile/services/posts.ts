@@ -202,6 +202,17 @@ export async function getLikedPostIds(userId: string): Promise<string[]> {
   return data?.map((r: any) => r.post_id) ?? [];
 }
 
+export async function getPostLikers(postId: string): Promise<any[]> {
+  const { data, error } = await supabase
+    .from('post_likes')
+    .select('profiles!post_likes_user_id_fkey(*)')
+    .eq('post_id', postId)
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return data?.map((l: any) => l.profiles).filter(Boolean) ?? [];
+}
+
 export async function getSavedPostIds(userId: string): Promise<string[]> {
   const { data } = await supabase.from('post_saves').select('post_id').eq('user_id', userId);
   return data?.map((r: any) => r.post_id) ?? [];

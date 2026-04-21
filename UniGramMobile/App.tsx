@@ -413,7 +413,8 @@ function AppShell() {
   const [showDiscoverPeople, setShowDiscoverPeople] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
-  const [globalMuted, setGlobalMuted] = useState(false);
+  const [feedMuted, setFeedMuted] = useState(true);   // feed videos always start muted
+  const [globalMuted, setGlobalMuted] = useState(false); // reels auto-unmute
 
   const handleCapture = (items: any[]) => {
     setActiveMedia(items);
@@ -531,10 +532,17 @@ function AppShell() {
       setAuthScreen('login');
     });
 
+    const navProfileSub = DeviceEventEmitter.addListener('NAVIGATE_PROFILE', ({ userId }: { userId: string }) => {
+      setViewedUserId(userId);
+      setActiveTab('profile');
+      setActiveTabVisual('profile');
+    });
+
     return () => {
       listener.subscription.unsubscribe();
       switchSub.remove();
       logoutSub.remove();
+      navProfileSub.remove();
       clearTimeout(splashTimer);
       clearTimeout(fallbackTimer);
     };
@@ -846,8 +854,8 @@ function AppShell() {
                   notifBadge={notifBadge}
                   onReelPress={() => setActiveTab('reels')}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
-                  isMuted={globalMuted}
-                  setIsMuted={setGlobalMuted}
+                  isMuted={feedMuted}
+                  setIsMuted={setFeedMuted}
                 />
             </View>
             {shouldMount('explore') && (
@@ -1050,8 +1058,8 @@ function AppShell() {
         <NotifPostModal
           post={notifPost}
           currentUserId={session?.user?.id ?? ''}
-          isMuted={globalMuted}
-          setIsMuted={setGlobalMuted}
+          isMuted={feedMuted}
+          setIsMuted={setFeedMuted}
           openComments={notifPostComments}
           onClose={() => { setNotifPost(null); setNotifPostComments(false); }}
         />

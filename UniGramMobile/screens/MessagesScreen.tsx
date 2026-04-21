@@ -67,6 +67,7 @@ import {
 import { updateActiveStatus, blockUser } from '../services/profiles';
 import { getUserStories, getViewedStoryIds, markStoryViewed } from '../services/stories';
 import { ProfileScreen } from './ProfileScreen';
+import { ProfilePicViewer } from '../components/ProfilePicViewer';
 import { initiateCall, CallRecord, CallType } from '../services/calls';
 import { CallScreen } from './CallScreen';
 import { useTheme } from '../context/ThemeContext';
@@ -2548,6 +2549,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const [viewedUserIds, setViewedUserIds] = useState<Set<string>>(new Set());
   const [viewingStoryUser, setViewingStoryUser] = useState<{ userId: string; profile: any } | null>(null);
   const [viewingProfileUser, setViewingProfileUser] = useState<any | null>(null);
+  const [viewingPicUser, setViewingPicUser] = useState<any | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -2624,25 +2626,8 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
   const closeCompose = useCallback(() => setScreenState('list'), []);
 
   const handleAvatarPress = useCallback((userId: string, hasStory: boolean, profile: any) => {
-    const buttons: any[] = [
-      {
-        text: 'View Profile',
-        onPress: () => setViewingProfileUser(profile),
-      },
-    ];
-    if (hasStory) {
-      buttons.unshift({
-        text: 'View Status',
-        onPress: () => setViewingStoryUser({ userId, profile }),
-      });
-    }
-    buttons.push({ text: 'Cancel', style: 'cancel', onPress: () => {} });
-    showPopup({
-      title: profile?.full_name || profile?.username || 'User',
-      icon: 'person-circle-outline',
-      buttons,
-    });
-  }, [showPopup]);
+    setViewingPicUser({ userId, hasStory, profile });
+  }, []);
 
   const openChatInfo = useCallback(() => setScreenState('info'), []);
   const closeChatInfo = useCallback(() => setScreenState('chat'), []);
@@ -2732,6 +2717,24 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
           onClose={() => setViewingStoryUser(null)}
         />
       )}
+
+      {/* Profile picture IG-style viewer */}
+      <ProfilePicViewer
+        visible={!!viewingPicUser}
+        uri={viewingPicUser?.profile?.avatar_url}
+        username={viewingPicUser?.profile?.username}
+        onClose={() => setViewingPicUser(null)}
+        onViewProfile={() => {
+          const p = viewingPicUser?.profile;
+          setViewingPicUser(null);
+          if (p) setViewingProfileUser(p);
+        }}
+        onViewStatus={viewingPicUser?.hasStory ? () => {
+          const { userId, profile } = viewingPicUser;
+          setViewingPicUser(null);
+          setViewingStoryUser({ userId, profile });
+        } : undefined}
+      />
 
       {/* Profile overlay — slides in over the current screen */}
       {viewingProfileUser && (

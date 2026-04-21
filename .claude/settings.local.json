@@ -9,7 +9,8 @@
       "Bash(python3 *)",
       "Bash(node *)",
       "Bash(xargs grep *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(grep -n \"VerificationScreen\\\\|showVerification\\\\|</View>.*;$\\\\|return \\(\" screens/ProfileScreen.tsx)"
     ]
   }
 }

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
-  Alert,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -47,20 +47,17 @@ const ReelVideo: React.FC<{
   muted: boolean;
   onProgress: (p: number) => void;
   onPlayerReady: (player: any) => void;
-}> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady }) => {
+  onBufferingChange: (buffering: boolean) => void;
+}> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady, onBufferingChange }) => {
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
     p.muted = muted;
-    // Start in 'mixWithOthers' so we never kill the user's background music on launch.
-    // The useEffect below upgrades to 'duckOthers' only when actually unmuted.
     p.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
     if (isActive && !isPaused) p.play();
   });
 
   useEffect(() => {
     player.muted = muted;
-    // When muted: mix silently and let background music play at full volume.
-    // When unmuted: duck background music politely instead of stealing focus.
     player.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
   }, [muted, player]);
 
@@ -76,14 +73,36 @@ const ReelVideo: React.FC<{
     onPlayerReady(player);
   }, [player]);
 
+  // Progress tracking via timeUpdate event
   useEffect(() => {
     const sub = player.addListener('timeUpdate', (event: any) => {
-      if (player.duration > 0) {
-        onProgress(event.currentTime / player.duration);
-      }
+      const dur = player.duration > 0 ? player.duration : (event.duration ?? 0);
+      if (dur > 0) onProgress(event.currentTime / dur);
     });
     return () => sub.remove();
   }, [player, onProgress]);
+
+  // Buffering detection via playingChange + statusChange
+  useEffect(() => {
+    const subs: any[] = [];
+    try {
+      subs.push(player.addListener('statusChange', (event: any) => {
+        const status = event?.status ?? event;
+        onBufferingChange(status === 'loading');
+      }));
+    } catch {}
+    try {
+      subs.push(player.addListener('playingChange', (event: any) => {
+        // If video should be playing but stopped → buffering
+        if (isActive && !isPaused && event?.isPlaying === false) {
+          onBufferingChange(true);
+        } else {
+          onBufferingChange(false);
+        }
+      }));
+    } catch {}
+    return () => subs.forEach(s => { try { s.remove(); } catch {} });
+  }, [player, isActive, isPaused, onBufferingChange]);
 
   return (
     <VideoView
@@ -135,6 +154,55 @@ const ReelItem: React.FC<{
   const pauseOverlayOpacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
   const profile = reel.profiles;
+
+  // Buffering / network error state
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [netError, setNetError] = useState(false);
+  const bufferTimeoutRef = useRef<any>(null);
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+  // Pulsing shimmer loop for seek bar during buffer
+  useEffect(() => {
+    if (isBuffering) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(shimmerAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+          Animated.timing(shimmerAnim, { toValue: 0.2, duration: 700, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      shimmerAnim.stopAnimation();
+      shimmerAnim.setValue(0);
+    }
+  }, [isBuffering]);
+
+  const handleBufferingChange = useCallback((buffering: boolean) => {
+    setIsBuffering(buffering);
+    if (buffering) {
+      bufferTimeoutRef.current = setTimeout(() => setNetError(true), 10000);
+    } else {
+      clearTimeout(bufferTimeoutRef.current);
+      setNetError(false);
+    }
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    setNetError(false);
+    setIsBuffering(true);
+    try { playerRef.current?.play(); } catch {}
+    bufferTimeoutRef.current = setTimeout(() => setNetError(true), 10000);
+  }, []);
+
+  useEffect(() => () => clearTimeout(bufferTimeoutRef.current), []);
+
+  // Reset error state when reel becomes inactive
+  useEffect(() => {
+    if (!isActive) {
+      clearTimeout(bufferTimeoutRef.current);
+      setNetError(false);
+      setIsBuffering(false);
+    }
+  }, [isActive]);
 
   // Reset pause state and cancel any pending tap when reel becomes inactive
   useEffect(() => {
@@ -410,6 +478,7 @@ const ReelItem: React.FC<{
             muted={muted}
             onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
             onPlayerReady={(p) => { playerRef.current = p; }}
+            onBufferingChange={handleBufferingChange}
           />
         ) : reel.thumbnail_url ? (
           <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
@@ -532,6 +601,26 @@ const ReelItem: React.FC<{
         </Text>
       </View>
 
+      {/* Buffering spinner — only when active and buffering, not on network error */}
+      {isBuffering && !netError && (
+        <View style={[styles.centerOverlay, { pointerEvents: 'none' }]}>
+          <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
+        </View>
+      )}
+
+      {/* Network error overlay */}
+      {netError && (
+        <View style={styles.netErrorOverlay}>
+          <Ionicons name="cloud-offline-outline" size={48} color="rgba(255,255,255,0.7)" />
+          <Text style={styles.netErrorTitle}>No internet connection</Text>
+          <Text style={styles.netErrorSub}>Check your connection and try again</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
+            <Ionicons name="refresh" size={16} color="#fff" />
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Seek bar — 44 px touch target, sits right at top of tab bar */}
       <View
         style={[styles.seekBarContainer, { bottom: 0 }]}
@@ -542,12 +631,19 @@ const ReelItem: React.FC<{
         onResponderRelease={handleSeekBarRelease}
         onResponderTerminate={handleSeekBarRelease}
       >
-        <View style={[styles.seekBarTrack, (showControls || isSeeking) && styles.seekBarTrackActive]}>
-          <View style={[styles.seekBarFill, { width: `${progress * 100}%` }]} />
-          {(showControls || isSeeking) && (
-            <View style={[styles.seekThumb, { left: `${progress * 100}%` as any }]} />
-          )}
-        </View>
+        {isBuffering && !netError ? (
+          /* Pulsating shimmer during buffering */
+          <Animated.View style={[styles.seekBarTrack, styles.seekBarTrackActive, { opacity: shimmerAnim }]}>
+            <View style={[styles.seekBarFill, { width: `${progress * 100}%`, opacity: 0.5 }]} />
+          </Animated.View>
+        ) : (
+          <View style={[styles.seekBarTrack, (showControls || isSeeking) && styles.seekBarTrackActive]}>
+            <View style={[styles.seekBarFill, { width: `${progress * 100}%` }]} />
+            {(showControls || isSeeking) && (
+              <View style={[styles.seekThumb, { left: `${progress * 100}%` as any }]} />
+            )}
+          </View>
+        )}
       </View>
 
       <CommentSheet
@@ -857,5 +953,18 @@ const styles = StyleSheet.create({
   songRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   songText: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   viewCount: { color: 'rgba(255,255,255,0.5)', fontSize: 11 },
+  netErrorOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    alignItems: 'center', justifyContent: 'center', gap: 10,
+  },
+  netErrorTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 8 },
+  netErrorSub: { color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', paddingHorizontal: 32 },
+  retryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12,
+    backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 24,
+    paddingHorizontal: 22, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  retryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 });
 
