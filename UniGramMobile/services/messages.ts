@@ -154,12 +154,13 @@ export async function sendImageMessage(
   senderId: string,
   imageUri: string,
   replyToId?: string,
+  caption?: string,
 ) {
   const ext = imageUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${senderId}/${Date.now()}.${ext}`;
   const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
   const publicUrl = await uploadFile('message-media', path, imageUri, mimeType);
-  return sendMessage(conversationId, senderId, '', 'image', publicUrl, replyToId);
+  return sendMessage(conversationId, senderId, caption || '📷 Photo', 'image', publicUrl, replyToId);
 }
 
 export async function sendVoiceMessage(
@@ -171,7 +172,7 @@ export async function sendVoiceMessage(
 ) {
   const path = `${senderId}/${Date.now()}.m4a`;
   const publicUrl = await uploadFile('message-media', path, audioUri, 'audio/m4a');
-  return sendMessage(conversationId, senderId, '', 'audio', publicUrl, replyToId, duration);
+  return sendMessage(conversationId, senderId, '🎤 Voice message', 'audio', publicUrl, replyToId, duration);
 }
 
 export async function unsendMessage(messageId: string, userId: string) {

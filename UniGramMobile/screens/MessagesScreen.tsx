@@ -1146,6 +1146,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [profile, setProfile] = useState<any>(otherProfile);
   const [isOtherRecording, setIsOtherRecording] = useState(false);
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
 
   // Recovery effect for erased/missing names
   useEffect(() => {
@@ -1398,30 +1399,38 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
         title: 'Permission required',
         message: 'Photo library access is needed to send images.',
         icon: 'images-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
+        buttons: [{ text: 'OK', onPress: () => {} }],
       });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: 'images' as any,
       quality: 0.85,
-      allowsEditing: false,
+      allowsEditing: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
+    setPendingImage(result.assets[0].uri);
+  }, []);
+
+  const sendPendingImage = useCallback(async (caption: string) => {
+    if (!pendingImage) return;
+    const uri = pendingImage;
+    setPendingImage(null);
     setUploading(true);
     try {
-      await sendImageMessage(convId, currentUserId, result.assets[0].uri);
+      await sendImageMessage(convId, currentUserId, uri, replyingTo?.id, caption || undefined);
+      setReplyingTo(null);
     } catch (e: any) {
       showPopup({
         title: 'Upload failed',
         message: e.message ?? 'Could not send image.',
         icon: 'cloud-offline-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
+        buttons: [{ text: 'OK', onPress: () => {} }],
       });
     } finally {
       setUploading(false);
     }
-  }, [convId, currentUserId]);
+  }, [pendingImage, convId, currentUserId, replyingTo]);
 
   const handleReaction = useCallback(
     async (emoji: string) => {
@@ -1806,11 +1815,91 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Media preview modal */}
+      {pendingImage && (
+        <MediaPreviewModal
+          uri={pendingImage}
+          onCancel={() => setPendingImage(null)}
+          onSend={sendPendingImage}
+          uploading={uploading}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 };
 
 // ─── Conversation List ────────────────────────────────────────────────────────
+
+// ─── Media Preview Modal ──────────────────────────────────────────────────────
+
+const MediaPreviewModal: React.FC<{
+  uri: string;
+  onCancel: () => void;
+  onSend: (caption: string) => void;
+  uploading: boolean;
+}> = ({ uri, onCancel, onSend, uploading }) => {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [caption, setCaption] = useState('');
+  const inputRef = useRef<TextInput>(null);
+
+  return (
+    <Modal visible animationType="slide" statusBarTranslucent onRequestClose={onCancel}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: '#000' }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        {/* Header */}
+        <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={onCancel} style={{ padding: 6 }}>
+            <Ionicons name="close" size={26} color="#fff" />
+          </TouchableOpacity>
+          <Text style={{ flex: 1, color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>Send Photo</Text>
+          <View style={{ width: 38 }} />
+        </View>
+
+        {/* Image preview */}
+        <Image
+          source={{ uri }}
+          style={{ flex: 1 }}
+          resizeMode="contain"
+        />
+
+        {/* Caption + Send */}
+        <View style={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, paddingTop: 10, flexDirection: 'row', alignItems: 'flex-end', gap: 10, backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 24, paddingHorizontal: 14, paddingVertical: 8, minHeight: 40 }}
+            activeOpacity={1}
+            onPress={() => inputRef.current?.focus()}
+          >
+            <TextInput
+              ref={inputRef}
+              style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 0 }}
+              placeholder="Add a caption…"
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              value={caption}
+              onChangeText={setCaption}
+              multiline
+              maxLength={500}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { if (!uploading) onSend(caption); }}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center' }}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
 
 // ─── User Story Modal ─────────────────────────────────────────────────────────
 
@@ -2203,6 +2292,8 @@ const ConversationList: React.FC<ConversationListProps> = ({
       const hasStory = !isGroup && !!otherUserId && storyUserIds.has(otherUserId);
       const storyViewed = !isGroup && !!otherUserId && viewedUserIds.has(otherUserId);
 
+      const unreadCount = c.unread_count ?? 0;
+
       return (
         <TouchableOpacity
           style={styles.convItem}
@@ -2218,39 +2309,78 @@ const ConversationList: React.FC<ConversationListProps> = ({
               isGroup={isGroup}
               onPress={(!isGroup && otherUserId) ? () => onAvatarPress(otherUserId, hasStory, other) : undefined}
             />
-            {hasUnread && (
-              <View style={[styles.unreadBadge, { top: hasStory ? -5 : -2, right: hasStory ? -5 : -2 }]}>
-                <Text style={styles.unreadText}>
-                  {c.unread_count > 9 ? '9+' : c.unread_count}
-                </Text>
-              </View>
-            )}
           </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <View style={styles.convHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
-                <Text
-                  style={[styles.convName, { color: colors.text }, hasUnread && { fontWeight: 'bold' }]}
-                  numberOfLines={1}
-                >
-                  {displayName}
-                </Text>
-                {!isGroup && other?.is_verified && (
-                  <VerifiedBadge type={other.verification_type} size="sm" />
-                )}
-              </View>
-              {conv.last_message_at && (
-                <Text style={[styles.convTime, { color: colors.textMuted }]}>{timeAgo(conv.last_message_at)}</Text>
+          <View style={{ flex: 1, marginLeft: 12, minWidth: 0 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+              <Text
+                style={[styles.convName, { color: colors.text, flex: 1 }, hasUnread && { fontWeight: 'bold' }]}
+                numberOfLines={1}
+              >
+                {displayName}
+              </Text>
+              {!isGroup && other?.is_verified && (
+                <VerifiedBadge type={other.verification_type} size="sm" />
               )}
             </View>
-            <Text
-              style={[styles.convPreview, { color: colors.textSub }, hasUnread && { color: colors.text, fontWeight: '500' }]}
-              numberOfLines={1}
-            >
-              {conv.last_message ?? 'Start a conversation'}
-            </Text>
+            {/* Last message preview with media type icons */}
+            {(() => {
+              const lastMsg = conv.last_message ?? '';
+              const previewColor = hasUnread ? colors.text : colors.textSub;
+              const previewWeight = hasUnread ? '500' : 'normal';
+              if (lastMsg.startsWith('📷')) {
+                const caption = lastMsg.slice(3).trim(); // remove '📷 '
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Ionicons name="image-outline" size={13} color={previewColor} />
+                    <Text style={[styles.convPreview, { color: previewColor, fontWeight: previewWeight, flex: 1 }]} numberOfLines={1}>
+                      {caption || 'Photo'}
+                    </Text>
+                  </View>
+                );
+              }
+              if (lastMsg.startsWith('🎤')) {
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Ionicons name="mic-outline" size={13} color={previewColor} />
+                    <Text style={[styles.convPreview, { color: previewColor, fontWeight: previewWeight }]}>Voice message</Text>
+                  </View>
+                );
+              }
+              if (lastMsg.startsWith('🎬') || lastMsg.startsWith('📹')) {
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Ionicons name="videocam-outline" size={13} color={previewColor} />
+                    <Text style={[styles.convPreview, { color: previewColor, fontWeight: previewWeight }]}>Video</Text>
+                  </View>
+                );
+              }
+              return (
+                <Text
+                  style={[styles.convPreview, { color: previewColor, fontWeight: previewWeight }]}
+                  numberOfLines={1}
+                >
+                  {lastMsg || 'Start a conversation'}
+                </Text>
+              );
+            })()}
           </View>
-          {hasUnread && <View style={styles.unreadDot} />}
+          {/* Right column: time + unread badge */}
+          <View style={{ alignItems: 'flex-end', justifyContent: 'center', gap: 5, marginLeft: 8, minWidth: 40 }}>
+            {conv.last_message_at && (
+              <Text style={[styles.convTime, { color: hasUnread ? colors.accent : colors.textMuted }]}>
+                {timeAgo(conv.last_message_at)}
+              </Text>
+            )}
+            {hasUnread ? (
+              <View style={styles.convUnreadPill}>
+                <Text style={styles.convUnreadPillText}>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ height: 18 }} />
+            )}
+          </View>
         </TouchableOpacity>
       );
     },
@@ -2530,39 +2660,28 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
     );
   }
 
-  if ((screenState === 'chat' || screenState === 'info') && activeConv) {
-    const otherProfile = activeConv.otherProfile;
-    const otherUserId = otherProfile?.id;
-    const hasStory = !!otherUserId && storyUserIds.has(otherUserId);
+  const inChat = screenState === 'chat' || screenState === 'info';
+  const otherProfile = activeConv?.otherProfile;
+  const otherUserId = otherProfile?.id;
+  const hasStory = !!otherUserId && storyUserIds.has(otherUserId);
 
-    if (screenState === 'info') {
-      return (
-        <>
-          <ChatInfoView
-            convId={activeConv.convId}
-            profile={otherProfile}
-            currentUserId={currentUserId}
-            onBack={closeChatInfo}
-            hasStory={hasStory}
-            onViewStory={hasStory ? () => {
-              setViewingStoryUser({ userId: otherUserId, profile: otherProfile });
-              closeChatInfo();
-            } : undefined}
-          />
-          {viewingStoryUser && (
-            <UserStoryModal
-              userId={viewingStoryUser.userId}
-              profile={viewingStoryUser.profile}
-              currentUserId={currentUserId}
-              onClose={() => setViewingStoryUser(null)}
-            />
-          )}
-        </>
-      );
-    }
+  return (
+    <>
+      {/* ConversationList stays mounted at all times — hidden when in chat to prevent reload */}
+      <View style={{ flex: 1, display: inChat ? 'none' : 'flex' }}>
+        <ConversationList
+          currentUserId={currentUserId}
+          currentUsername={currentUsername}
+          onPress={openChat}
+          onCompose={openCompose}
+          storyUserIds={storyUserIds}
+          viewedUserIds={viewedUserIds}
+          onAvatarPress={handleAvatarPress}
+        />
+      </View>
 
-    return (
-      <>
+      {/* Chat view */}
+      {screenState === 'chat' && activeConv && (
         <ChatView
           convData={activeConv}
           currentUserId={currentUserId}
@@ -2572,29 +2691,24 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChang
           onAvatarPress={handleAvatarPress}
           onHeaderPress={openChatInfo}
         />
-        {viewingStoryUser && (
-          <UserStoryModal
-            userId={viewingStoryUser.userId}
-            profile={viewingStoryUser.profile}
-            currentUserId={currentUserId}
-            onClose={() => setViewingStoryUser(null)}
-          />
-        )}
-      </>
-    );
-  }
+      )}
 
-  return (
-    <>
-      <ConversationList
-        currentUserId={currentUserId}
-        currentUsername={currentUsername}
-        onPress={openChat}
-        onCompose={openCompose}
-        storyUserIds={storyUserIds}
-        viewedUserIds={viewedUserIds}
-        onAvatarPress={handleAvatarPress}
-      />
+      {/* Chat info view */}
+      {screenState === 'info' && activeConv && (
+        <ChatInfoView
+          convId={activeConv.convId}
+          profile={otherProfile}
+          currentUserId={currentUserId}
+          onBack={closeChatInfo}
+          hasStory={hasStory}
+          onViewStory={hasStory ? () => {
+            setViewingStoryUser({ userId: otherUserId!, profile: otherProfile });
+            closeChatInfo();
+          } : undefined}
+        />
+      )}
+
+      {/* Overlays */}
       <NewConvModal
         visible={screenState === 'new'}
         currentUserId={currentUserId}
@@ -2691,6 +2805,16 @@ const styles = StyleSheet.create({
   },
   unreadText: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4f46e5', marginLeft: 8 },
+  convUnreadPill: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#4f46e5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  convUnreadPillText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   convHeader: {
     flexDirection: 'row',
     alignItems: 'center',
