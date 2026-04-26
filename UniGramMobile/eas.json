@@ -47,9 +47,6 @@
     },
     "production": {
       "autoIncrement": true,
-      "android": {
-        "prebuildCommand": "yes | sdkmanager 'cmake;3.22.1'"
-      },
       "env": {
         "EXPO_PUBLIC_ENV": "production",
         "EXPO_PUBLIC_SUPABASE_URL": "https://rcvzcbfmstgwzrolnhvy.supabase.co",
