@@ -35,7 +35,7 @@ import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { createDirectConversation, sendMessage as sendDM } from '../services/messages';
 import { sendPushToUser } from '../services/pushNotifications';
-import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions } from '../services/algorithm';
+import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions, getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { sendFollowSuggestionNotif } from '../services/notifications';
 import { getReels } from '../services/reels';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
@@ -1368,6 +1368,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     });
   };
 
+  const handleNotInterested = async () => {
+    try {
+      await recordContentFeedback(currentUserId, post.id, 'post', 'not_interested', post.user_id);
+      onDeleted?.(post.id);
+    } catch {}
+  };
+
   const profile = post.profiles;
 
   // Soft-hide: post has been reported but not yet removed
@@ -1468,6 +1475,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         onDelete={handleDeletePost}
         onReport={handleReport}
         onBlock={handleBlock}
+        onNotInterested={handleNotInterested}
         onShare={() => {
           setShowOptions(false);
           Share.share({ message: `Check out this post on UniGram by @${profile?.username ?? 'user'}:\n\n${post.caption ?? ''}` });
@@ -1595,7 +1603,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
 // ─── Reel Strip Row ───────────────────────────────────────────────────────────
 
-const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; colors: any }> = React.memo(({ reels, onSeeAll, colors }) => (
+const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?: (reelId: string) => void; colors: any }> = React.memo(({ reels, onSeeAll, onReelPress, colors }) => (
   <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
     <View style={feedInjStyles.sectionHeader}>
       <Text style={[feedInjStyles.sectionTitle, { color: colors.text }]}>Reels for you</Text>
@@ -1603,16 +1611,16 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; colors: any 
         <Text style={feedInjStyles.seeAll}>See all</Text>
       </TouchableOpacity>
     </View>
-    <ScrollView 
-      horizontal 
-      showsHorizontalScrollIndicator={false} 
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
       onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
       onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
       onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
     >
-      {reels.map((reel, idx) => (
-        <TouchableOpacity key={reel.id} style={feedInjStyles.reelThumb} onPress={onSeeAll} activeOpacity={0.85}>
+      {reels.map((reel) => (
+        <TouchableOpacity key={reel.id} style={feedInjStyles.reelThumb} onPress={() => onReelPress?.(reel.id)} activeOpacity={0.85}>
           <ReelPreview reel={reel} isActive={true} />
           <View style={feedInjStyles.reelPlayOverlay}>
             <Ionicons name="play" size={20} color="#fff" />
@@ -1752,7 +1760,7 @@ interface FeedScreenProps {
   onMessagePress?: () => void;
   messageBadge?: number;
   notifBadge?: number;
-  onReelPress?: () => void;
+  onReelPress?: (reelId?: string, previewReels?: any[]) => void;
   onUserPress?: (user: any) => void;
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
@@ -1874,7 +1882,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         supabase.from('profiles')
           .select('id, username, full_name, avatar_url, is_verified, verification_type')
           .eq('id', user.id).single().then(r => r.data),
-        getReels(6, 0).catch(() => []),
+        getPersonalizedReels(user.id, 6, 0).catch(() => []),
         getFollowSuggestions(user.id, 8).catch(() => []),
       ]);
 
@@ -2230,7 +2238,14 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         )}
         renderItem={useCallback(({ item }: any) => {
           if (item._type === 'reels_strip') {
-            return <ReelStripRow reels={item.reels} onSeeAll={onReelPress} colors={colors} />;
+            return (
+              <ReelStripRow
+                reels={item.reels}
+                onSeeAll={() => onReelPress?.()}
+                onReelPress={(reelId) => onReelPress?.(reelId, item.reels)}
+                colors={colors}
+              />
+            );
           }
           if (item._type === 'suggestions') {
             return (

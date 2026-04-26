@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, title, body, data, imageUrl, senderAvatarUrl } = await req.json();
+    const { userId, title, body, data, imageUrl, senderAvatarUrl, categoryId, groupId } = await req.json();
 
     if (!userId || !title || !body) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
@@ -66,20 +66,27 @@ Deno.serve(async (req) => {
           token: t.token,
           notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
           android: {
+            // Android OS displays this when app is in background
             notification: {
               sound: 'notification_alert',
               channelId: 'default',
+              // icon: 'ic_notification', // MUST be a local drawable resource name, not a URL
               ...(imageUrl ? { imageUrl } : {}),
-              ...(senderAvatarUrl ? { icon: senderAvatarUrl } : {}),
+              ...(groupId ? { tag: groupId } : {}),
+              ...(categoryId ? { clickAction: categoryId } : {}),
             },
+            // If we want grouping (collapseKey)
+            ...(groupId ? { collapseKey: groupId } : {}),
           },
           apns: {
             payload: {
               aps: {
                 sound: 'notification_alert.wav',
+                ...(categoryId ? { category: categoryId } : {}),
+                ...(groupId ? { 'thread-id': groupId } : {}),
                 // mutable-content lets a Notification Service Extension
-                // download and attach the image before display
-                ...(imageUrl ? { 'mutable-content': 1 } : {}),
+                // download and attach the image/avatar before display
+                ...(imageUrl || senderAvatarUrl ? { 'mutable-content': 1 } : {}),
               },
             },
             ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
@@ -88,6 +95,8 @@ Deno.serve(async (req) => {
             ...(data || {}),
             ...(imageUrl ? { imageUrl } : {}),
             ...(senderAvatarUrl ? { senderAvatarUrl } : {}),
+            ...(categoryId ? { categoryId } : {}),
+            ...(groupId ? { groupId } : {}),
           },
         };
         const response = await admin.messaging().send(message);

@@ -404,6 +404,107 @@ function _buildReason(u: {
   return 'Suggested for you';
 }
 
+// ─── Reels ────────────────────────────────────────────────────────────────────
+
+/**
+ * Personalized reels feed scored by recency, engagement, following relationship,
+ * and user interests. Replaces the raw chronological getReels query.
+ */
+export async function getPersonalizedReels(userId: string, limit = 20, offset = 0) {
+  let blockedIds: string[] = [];
+  try {
+    const { getBlockedUserIds } = require('./profiles');
+    blockedIds = await getBlockedUserIds(userId);
+  } catch {}
+
+  const [reelsResult, followingResult, interests, feedbackResult] = await Promise.all([
+    supabase
+      .from('reels')
+      .select('*, profiles!reels_user_id_fkey(*)')
+      .order('created_at', { ascending: false })
+      .range(0, limit * 3 - 1),
+    supabase.from('follows').select('following_id').eq('follower_id', userId),
+    getUserInterests(userId).catch(() => [] as string[]),
+    supabase
+      .from('user_feedback')
+      .select('target_id, author_id, feedback_type')
+      .eq('user_id', userId)
+      .eq('target_type', 'reel'),
+  ]);
+
+  const reels = reelsResult.data ?? [];
+  if (!reels.length) return [];
+
+  const followingSet = new Set((followingResult.data ?? []).map((f: any) => f.following_id));
+  const interestKeywords = interests
+    .map((id: string) => INTERESTS.find(i => i.id === id)?.label?.toLowerCase())
+    .filter(Boolean) as string[];
+
+  // Build not-interested sets from user feedback
+  const notInterestedIds = new Set<string>();
+  const authorDislikeCount: Record<string, number> = {};
+  (feedbackResult.data ?? []).forEach((f: any) => {
+    if (f.feedback_type === 'not_interested') {
+      notInterestedIds.add(f.target_id);
+      if (f.author_id) authorDislikeCount[f.author_id] = (authorDislikeCount[f.author_id] ?? 0) + 1;
+    }
+  });
+
+  // Batch report check
+  const { data: reportsData } = await supabase
+    .from('reports')
+    .select('target_id')
+    .in('target_id', reels.map(r => r.id))
+    .eq('status', 'pending');
+  const reportCounts: Record<string, number> = {};
+  (reportsData ?? []).forEach((r: any) => {
+    reportCounts[r.target_id] = (reportCounts[r.target_id] ?? 0) + 1;
+  });
+
+  const now = Date.now();
+  const scored = reels
+    .filter((r: any) =>
+      !blockedIds.includes(r.user_id) &&
+      !notInterestedIds.has(r.id) &&
+      (reportCounts[r.id] ?? 0) < 5
+    )
+    .map((r: any) => {
+      const hoursOld = (now - new Date(r.created_at).getTime()) / 3_600_000;
+      const recency = Math.exp(-hoursOld / 48) * 30;
+      const engagement =
+        (r.likes_count ?? 0) * 0.4 +
+        (r.comments_count ?? 0) * 2.0 +
+        (r.views_count ?? 0) * 0.02;
+      const followingBonus = followingSet.has(r.user_id) ? 50 : 0;
+      const caption = (r.caption ?? '').toLowerCase();
+      const interestBonus = interestKeywords.some((kw: string) => caption.includes(kw)) ? 20 : 0;
+      const dislikePenalty = (authorDislikeCount[r.user_id] ?? 0) * 15;
+      return { ...r, _score: recency + engagement + followingBonus + interestBonus - dislikePenalty };
+    });
+
+  return scored
+    .sort((a: any, b: any) => b._score - a._score)
+    .slice(offset, offset + limit)
+    .map(({ _score, ...r }: any) => r);
+}
+
+/**
+ * Records user feedback on a piece of content.
+ * 'not_interested' hides that item and down-ranks the author in future feeds.
+ */
+export async function recordContentFeedback(
+  userId: string,
+  targetId: string,
+  targetType: 'post' | 'reel',
+  feedbackType: 'not_interested' | 'interested',
+  authorId?: string,
+) {
+  await supabase.from('user_feedback').upsert(
+    { user_id: userId, target_id: targetId, target_type: targetType, feedback_type: feedbackType, author_id: authorId ?? null },
+    { onConflict: 'user_id,target_id,feedback_type' },
+  );
+}
+
 // ─── Trending ─────────────────────────────────────────────────────────────────
 
 /**

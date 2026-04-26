@@ -70,6 +70,32 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     }),
   });
 
+  // Register notification categories for rich actions (like Snapchat/Instagram)
+  await Notifications.setNotificationCategoryAsync('follow_suggestion', [
+    {
+      identifier: 'VIEW',
+      buttonTitle: 'View',
+      options: { opensAppToForeground: true },
+    },
+    {
+      identifier: 'NOT_INTERESTED',
+      buttonTitle: 'Not Interested',
+      options: { isDestructive: true, opensAppToForeground: false },
+    },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync('chat_message', [
+    {
+      identifier: 'REPLY',
+      buttonTitle: 'Reply',
+      textInput: {
+        submitButtonTitle: 'Send',
+        placeholder: 'Type a message...',
+      },
+      options: { opensAppToForeground: false },
+    },
+  ]);
+
   if (Platform.OS === 'android') {
     Notifications.setNotificationChannelAsync('default', {
       name: 'UniGram',
@@ -94,6 +120,8 @@ export async function sendPushToUser(
   data?: Record<string, any>,
   imageUrl?: string,
   senderAvatarUrl?: string,
+  categoryId?: string,
+  groupId?: string,
 ): Promise<void> {
   const { data: rows, error } = await supabase
     .from('push_tokens')
@@ -103,7 +131,7 @@ export async function sendPushToUser(
   if (error || !rows?.length) return;
 
   const { error: edgeError } = await supabase.functions.invoke('send-push-notification', {
-    body: { userId, title, body, data: data ?? {}, imageUrl, senderAvatarUrl },
+    body: { userId, title, body, data: data ?? {}, imageUrl, senderAvatarUrl, categoryId, groupId },
   });
 
   if (edgeError) {
@@ -115,10 +143,11 @@ export async function sendPushToUser(
         to: r.token,
         title,
         body,
-        data: { ...(data ?? {}), imageUrl, senderAvatarUrl },
+        data: { ...(data ?? {}), imageUrl, senderAvatarUrl, categoryId, groupId },
         sound: 'default',
         priority: 'high',
         channelId: 'default',
+        categoryId, // For interactive buttons
         // Expo supports mutableContent for iOS notification service extensions
         mutableContent: !!imageUrl,
       }));

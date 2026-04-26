@@ -415,6 +415,8 @@ function AppShell() {
   const [isLive, setIsLive] = useState(false);
   const [feedMuted, setFeedMuted] = useState(true);   // feed videos always start muted
   const [globalMuted, setGlobalMuted] = useState(false); // reels auto-unmute
+  const [initialReelId, setInitialReelId] = useState<string | undefined>(undefined);
+  const [initialReels, setInitialReels] = useState<any[] | undefined>(undefined);
 
   const handleCapture = (items: any[]) => {
     setActiveMedia(items);
@@ -781,7 +783,12 @@ function AppShell() {
     setHideTabBar(false);
     // Deferred: pure bookkeeping that has no visible effect on the incoming screen
     startTransition(() => {
-      if (tab === 'reels') setPrevTab(activeTab);
+      if (tab === 'reels') {
+        setPrevTab(activeTab);
+        // Clear deep-link state when navigating to Reels via tab bar (not a reel tap)
+        setInitialReelId(undefined);
+        setInitialReels(undefined);
+      }
       if (tab !== 'profile') setViewedUserId(null);
       if (tab !== 'messages') setInitialConv(null);
       if (tab === 'messages') setMessageBadge(0);
@@ -852,7 +859,18 @@ function AppShell() {
                   onMessagePress={() => { setMessageBadge(0); setActiveTab('messages'); }}
                   messageBadge={messageBadge}
                   notifBadge={notifBadge}
-                  onReelPress={() => setActiveTab('reels')}
+                  onReelPress={(reelId?, previewReels?) => {
+                    if (reelId) {
+                      setInitialReelId(reelId);
+                      setInitialReels(previewReels);
+                    } else {
+                      setInitialReelId(undefined);
+                      setInitialReels(undefined);
+                    }
+                    setPrevTab('feed');
+                    setActiveTabVisual('reels');
+                    setActiveTab('reels');
+                  }}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
                   isMuted={feedMuted}
                   setIsMuted={setFeedMuted}
@@ -905,10 +923,12 @@ function AppShell() {
             {/* Reels: full-screen video, only mount when active to free GPU memory */}
             {isReels && (
               <View style={styles.screen}>
-                <ReelsScreen 
-                  onBack={() => setActiveTab(prevTab)} 
+                <ReelsScreen
+                  onBack={() => setActiveTab(prevTab)}
                   isMuted={globalMuted}
                   setIsMuted={setGlobalMuted}
+                  initialReelId={initialReelId}
+                  initialReels={initialReels}
                 />
               </View>
             )}

@@ -32,7 +32,9 @@ export async function notifyAdmins(opts: {
 
   if (!rows.length) return;
 
-  await supabase.from('notifications').insert(rows).catch(() => {});
+  try {
+    await supabase.from('notifications').insert(rows);
+  } catch (err) {}
 
   const pushTitle = opts.type === 'admin_report' ? '🚩 New Report' : '🔖 Verification Request';
   rows.forEach((r: any) => {
@@ -44,26 +46,38 @@ export async function notifyAdmins(opts: {
  * Sends a periodic "people you may know" in-app notification + push.
  * Call this when the app comes to the foreground after a long gap.
  */
-export async function sendFollowSuggestionNotif(userId: string, suggestions: { id: string; username: string }[]) {
+export async function sendFollowSuggestionNotif(userId: string, suggestions: { id: string; username: string; avatar_url?: string }[]) {
   if (!suggestions.length) return;
 
   const top = suggestions.slice(0, 3);
-  const names = top.map(u => `@${u.username}`).join(', ');
+  const title = top.length === 1 ? 'New follow suggestion' : 'New follow suggestions';
   const text = top.length === 1
-    ? `${names} is someone you might want to follow`
-    : `${names} and others are people you may know`;
+    ? top[0].username
+    : top.length === 2 
+      ? `${top[0].username} and ${top[1].username}`
+      : `${top[0].username}, ${top[1].username} and ${top[2].username}`;
 
-  await supabase.from('notifications').insert({
-    user_id: userId,
-    actor_id: top[0].id,   // first suggestion drives the avatar
-    type: 'follow_suggestion',
+  try {
+    await supabase.from('notifications').insert({
+      user_id: userId,
+      actor_id: top[0].id,   // first suggestion drives the avatar
+      type: 'follow_suggestion',
+      text,
+      is_read: false,
+      // Store extra suggestion IDs as metadata so the UI can render them
+      metadata: { suggestion_ids: top.map(u => u.id) },
+    });
+  } catch (err) {}
+
+  sendPushToUser(
+    userId,
+    title,
     text,
-    is_read: false,
-    // Store extra suggestion IDs as metadata so the UI can render them
-    metadata: { suggestion_ids: top.map(u => u.id) },
-  }).catch(() => {});
-
-  sendPushToUser(userId, '👥 People you may know', text, { type: 'follow_suggestion' }).catch(() => {});
+    { type: 'follow_suggestion' },
+    undefined, // imageUrl
+    top[0].avatar_url, // senderAvatarUrl
+    'follow_suggestion', // categoryId
+  ).catch(() => {});
 }
 
 export async function getNotifications(userId: string) {

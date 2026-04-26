@@ -94,7 +94,7 @@ export async function createPost(
     mentionProfiles?.forEach(p => { if (p.id !== userId) notifyUserIds.add(p.id); });
   }
 
-  // Send notifications
+  // Send mention/tag notifications
   notifyUserIds.forEach(async (tid) => {
     try {
       const notifText = `tagged you in a post: "${caption.substring(0, 30)}..."`;
@@ -110,6 +110,50 @@ export async function createPost(
       }, uploadedUrls[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     } catch (e) {}
   });
+
+  // Notify followers that someone they follow posted (fire-and-forget, capped at 500)
+  (async () => {
+    try {
+      const { data: followers } = await supabase
+        .from('follows')
+        .select('follower_id')
+        .eq('following_id', userId)
+        .limit(500);
+
+      if (!followers?.length) return;
+
+      const username = actor?.username || 'Someone';
+      const pushBody = caption.trim()
+        ? `${username} posted: "${caption.substring(0, 60)}"`
+        : `${username} shared a new post`;
+
+      const notifRows = followers.map((f: any) => ({
+        user_id: f.follower_id,
+        actor_id: userId,
+        type: 'new_post',
+        post_id: data.id,
+        text: pushBody,
+        is_read: false,
+      }));
+
+      // Batch insert in-app notifications
+      for (let i = 0; i < notifRows.length; i += 500) {
+        await supabase.from('notifications').insert(notifRows.slice(i, i + 500)).catch(() => {});
+      }
+
+      // Push devices — fire-and-forget per follower
+      followers.forEach((f: any) => {
+        sendPushToUser(
+          f.follower_id,
+          username,
+          pushBody,
+          { type: 'new_post', postId: data.id, userId },
+          uploadedUrls[0] ?? undefined,
+          actor?.avatar_url ?? undefined,
+        ).catch(() => {});
+      });
+    } catch (_) {}
+  })();
 
   return data;
 }

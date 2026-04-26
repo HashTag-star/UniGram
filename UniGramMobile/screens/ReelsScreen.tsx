@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +13,7 @@ import { CachedImage } from '../components/CachedImage';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
+import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
@@ -55,6 +56,10 @@ const ReelVideo: React.FC<{
     if (isActive && !isPaused) p.play();
   });
 
+  // Stable ref so progress never causes listener teardown/rebuild
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+
   useEffect(() => {
     player.muted = muted;
     player.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
@@ -72,14 +77,24 @@ const ReelVideo: React.FC<{
     onPlayerReady(player);
   }, [player]);
 
-  // Progress tracking via timeUpdate event
+  // timeUpdate listener — only re-subscribes when the player instance changes
   useEffect(() => {
     const sub = player.addListener('timeUpdate', (event: any) => {
       const dur = player.duration > 0 ? player.duration : (event.duration ?? 0);
-      if (dur > 0) onProgress(event.currentTime / dur);
+      if (dur > 0) onProgressRef.current(event.currentTime / dur);
     });
     return () => sub.remove();
-  }, [player, onProgress]);
+  }, [player]);
+
+  // Interval polling at 10 fps — reliable fallback when timeUpdate doesn't fire
+  useEffect(() => {
+    if (!isActive || isPaused) return;
+    const id = setInterval(() => {
+      const dur = player.duration;
+      if (dur > 0) onProgressRef.current(player.currentTime / dur);
+    }, 100);
+    return () => clearInterval(id);
+  }, [isActive, isPaused, player]);
 
   return (
     <VideoView
@@ -341,6 +356,7 @@ const ReelItem: React.FC<{
     showPopup({
       title: 'Options',
       buttons: [
+        ...(!isMe ? [{ text: 'Not interested', onPress: handleNotInterested }] : []),
         { text: 'Report', onPress: handleReport },
         ...(isMe ? [{ text: 'Delete', style: 'destructive', onPress: handleDelete } as const] : []),
         { text: 'Cancel', style: 'cancel', onPress: () => {} }
@@ -438,28 +454,47 @@ const ReelItem: React.FC<{
     }
   };
 
-  // Seek bar — absolute currentTime assignment for accurate, lag-free seeking
-  const handleSeekBarPress = (e: any) => {
-    const player = playerRef.current;
-    if (!player) return;
-    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekContainerWidth.current));
-    player.currentTime = ratio * (player.duration ?? 0);
-    setProgress(ratio);
-    setIsSeeking(true);
-    isSeekingRef.current = true;
-  };
+  // Seek bar — PanResponder for reliable cross-component gesture handling
+  const seekPanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (evt) => {
+      const player = playerRef.current;
+      if (!player || !(player.duration > 0)) return;
+      isSeekingRef.current = true;
+      setIsSeeking(true);
+      const ratio = Math.max(0, Math.min(1, evt.nativeEvent.locationX / seekContainerWidth.current));
+      player.currentTime = ratio * player.duration;
+      setProgress(ratio);
+    },
+    onPanResponderMove: (evt) => {
+      const player = playerRef.current;
+      if (!player || !(player.duration > 0)) return;
+      const ratio = Math.max(0, Math.min(1, evt.nativeEvent.locationX / seekContainerWidth.current));
+      player.currentTime = ratio * player.duration;
+      setProgress(ratio);
+    },
+    onPanResponderRelease: () => {
+      isSeekingRef.current = false;
+      setIsSeeking(false);
+    },
+    onPanResponderTerminate: () => {
+      isSeekingRef.current = false;
+      setIsSeeking(false);
+    },
+  }), []);
 
-  const handleSeekBarMove = (e: any) => {
-    const player = playerRef.current;
-    if (!player) return;
-    const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekContainerWidth.current));
-    player.currentTime = ratio * (player.duration ?? 0);
-    setProgress(ratio);
-  };
-
-  const handleSeekBarRelease = () => {
-    isSeekingRef.current = false;
-    setIsSeeking(false);
+  const handleNotInterested = async () => {
+    try {
+      await recordContentFeedback(currentUserId, reel.id, 'reel', 'not_interested', reel.user_id);
+      showPopup({
+        title: 'Got it',
+        message: "We'll show you fewer reels like this.",
+        icon: 'thumbs-down-outline',
+        iconColor: '#6366f1',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
+    } catch {}
   };
 
   return (
@@ -615,16 +650,11 @@ const ReelItem: React.FC<{
         </View>
       )}
 
-      {/* Seek bar — 44 px touch target, sits right at top of tab bar */}
+      {/* Seek bar — 44 px touch target, PanResponder for reliable cross-gesture handling */}
       <View
         style={[styles.seekBarContainer, { bottom: 0 }]}
         onLayout={(e) => { seekContainerWidth.current = e.nativeEvent.layout.width; }}
-        onStartShouldSetResponder={() => true}
-        onMoveShouldSetResponder={() => true}
-        onResponderGrant={handleSeekBarPress}
-        onResponderMove={handleSeekBarMove}
-        onResponderRelease={handleSeekBarRelease}
-        onResponderTerminate={handleSeekBarRelease}
+        {...seekPanResponder.panHandlers}
       >
         {isBuffering && !netError ? (
           /* Pulsating shimmer during buffering */
@@ -728,16 +758,31 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-export const ReelsScreen: React.FC<{ 
+export const ReelsScreen: React.FC<{
   onBack?: () => void;
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
-}> = ({ onBack, isMuted, setIsMuted }) => {
-  const [reels, setReels] = useState<any[]>([]);
+  initialReelId?: string;
+  initialReels?: any[];
+}> = ({ onBack, isMuted, setIsMuted, initialReelId, initialReels }) => {
+  // Pre-populate with the tapped reel at index 0 for instant display — full list
+  // loads in the background and is merged in without disrupting playback.
+  const [reels, setReels] = useState<any[]>(() => {
+    if (initialReelId && initialReels?.length) {
+      const idx = initialReels.findIndex(r => r.id === initialReelId);
+      if (idx > 0) {
+        const copy = [...initialReels];
+        const [clicked] = copy.splice(idx, 1);
+        return [clicked, ...copy];
+      }
+      return initialReels;
+    }
+    return [];
+  });
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialReels?.length);
   const [activeIndex, setActiveIndex] = useState(0);
   // Using global muting props instead of local state
   const [containerHeight, setContainerHeight] = useState(height); // measured on layout
@@ -752,23 +797,43 @@ export const ReelsScreen: React.FC<{
   const load = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentUserId(user.id);
-        const [reelsData, likedData, followingData] = await Promise.all([
-          getReels(),
-          getLikedReelIds(user.id),
-          getFollowing(user.id),
-        ]);
-        setReels(reelsData);
-        setLikedIds(new Set(likedData));
-        setFollowingIds(new Set(followingData.map((p: any) => p.id)));
-      }
+      if (!user) return;
+      setCurrentUserId(user.id);
+      const [reelsData, likedData, followingData] = await Promise.all([
+        getPersonalizedReels(user.id),
+        getLikedReelIds(user.id),
+        getFollowing(user.id),
+      ]);
+      setLikedIds(new Set(likedData));
+      setFollowingIds(new Set(followingData.map((p: any) => p.id)));
+      setReels(prev => {
+        if (!prev.length) {
+          // Fresh load — place initialReelId first if provided
+          if (initialReelId) {
+            const idx = reelsData.findIndex((r: any) => r.id === initialReelId);
+            if (idx > 0) {
+              const copy = [...reelsData];
+              const [clicked] = copy.splice(idx, 1);
+              return [clicked, ...copy];
+            }
+            if (idx === -1 && initialReels?.length) {
+              const fallback = initialReels.find(r => r.id === initialReelId);
+              if (fallback) return [fallback, ...reelsData];
+            }
+          }
+          return reelsData;
+        }
+        // Already showing initial reels — append personalized ones that aren't displayed yet
+        const existingIds = new Set(prev.map((r: any) => r.id));
+        const newOnes = reelsData.filter((r: any) => !existingIds.has(r.id));
+        return [...prev, ...newOnes];
+      });
     } catch (e) {
       console.error('Reels load error', e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [initialReelId, initialReels]);
 
   useEffect(() => { load(); }, [load]);
 

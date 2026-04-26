@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
+import { sendPushToUser } from './pushNotifications';
 
 export async function getActiveStories() {
   const { data, error } = await supabase
@@ -40,9 +41,50 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
   const { data, error } = await supabase
     .from('stories')
     .insert({ user_id: userId, media_url, caption })
-    .select()
+    .select(`*, profiles!stories_user_id_fkey(*)`)
     .single();
   if (error) throw error;
+
+  // Notify followers that someone they follow posted a story (fire-and-forget, capped at 500)
+  (async () => {
+    try {
+      const { data: followers } = await supabase
+        .from('follows')
+        .select('follower_id')
+        .eq('following_id', userId)
+        .limit(500);
+
+      if (!followers?.length) return;
+
+      const actor = data.profiles;
+      const username = actor?.username || 'Someone';
+      const pushBody = `${username} added a new story`;
+
+      const notifRows = followers.map((f: any) => ({
+        user_id: f.follower_id,
+        actor_id: userId,
+        type: 'new_story',
+        text: pushBody,
+        is_read: false,
+      }));
+
+      for (let i = 0; i < notifRows.length; i += 500) {
+        await supabase.from('notifications').insert(notifRows.slice(i, 500)).catch(() => {});
+      }
+
+      followers.forEach((f: any) => {
+        sendPushToUser(
+          f.follower_id,
+          username,
+          pushBody,
+          { type: 'new_story', storyId: data.id, userId },
+          media_url,
+          actor?.avatar_url ?? undefined,
+        ).catch(() => {});
+      });
+    } catch (_) {}
+  })();
+
   return data;
 }
 

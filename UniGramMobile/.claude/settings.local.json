@@ -35,7 +35,11 @@
       "Bash(head -20 app.config.js)",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); plugins=d.get\\('expo',{}\\).get\\('plugins',[]\\); print\\('plugins:', plugins\\)\")",
       "Bash(npx supabase *)",
-      "Bash(npm list *)"
+      "Bash(npm list *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git update-index *)"
     ]
   }
 }
