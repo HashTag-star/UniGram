@@ -70,40 +70,77 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     }),
   });
 
-  // Register notification categories for rich actions (like Snapchat/Instagram)
+  // Notification categories for rich action buttons
+  await Notifications.setNotificationCategoryAsync('post_like', [
+    { identifier: 'VIEW_POST', buttonTitle: '❤️ View Post', options: { opensAppToForeground: true } },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync('post_comment', [
+    {
+      identifier: 'REPLY_COMMENT',
+      buttonTitle: 'Reply',
+      textInput: { submitButtonTitle: 'Post', placeholder: 'Add a comment…' },
+      options: { opensAppToForeground: false },
+    },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync('follow', [
+    { identifier: 'FOLLOW_BACK', buttonTitle: 'Follow Back', options: { opensAppToForeground: true } },
+    { identifier: 'VIEW_PROFILE', buttonTitle: 'View Profile', options: { opensAppToForeground: true } },
+  ]);
+
   await Notifications.setNotificationCategoryAsync('follow_suggestion', [
-    {
-      identifier: 'VIEW',
-      buttonTitle: 'View',
-      options: { opensAppToForeground: true },
-    },
-    {
-      identifier: 'NOT_INTERESTED',
-      buttonTitle: 'Not Interested',
-      options: { isDestructive: true, opensAppToForeground: false },
-    },
+    { identifier: 'VIEW', buttonTitle: 'View', options: { opensAppToForeground: true } },
+    { identifier: 'NOT_INTERESTED', buttonTitle: 'Not Interested', options: { isDestructive: true, opensAppToForeground: false } },
   ]);
 
   await Notifications.setNotificationCategoryAsync('chat_message', [
     {
       identifier: 'REPLY',
       buttonTitle: 'Reply',
-      textInput: {
-        submitButtonTitle: 'Send',
-        placeholder: 'Type a message...',
-      },
+      textInput: { submitButtonTitle: 'Send', placeholder: 'Type a message…' },
       options: { opensAppToForeground: false },
     },
   ]);
 
   if (Platform.OS === 'android') {
-    Notifications.setNotificationChannelAsync('default', {
-      name: 'UniGram',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#4f46e5',
-      sound: 'notification_alert.wav', // Resource name must be simple lowercase/underscore
-    });
+    await Promise.all([
+      Notifications.setNotificationChannelAsync('social', {
+        name: 'Likes & Comments',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 200, 0, 200],
+        lightColor: '#4f46e5',
+        sound: 'notification_alert.wav',
+      }),
+      Notifications.setNotificationChannelAsync('messages', {
+        name: 'Direct Messages',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#4f46e5',
+        sound: 'notification_alert.wav',
+      }),
+      Notifications.setNotificationChannelAsync('follows', {
+        name: 'Followers',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        vibrationPattern: [0, 150],
+        lightColor: '#4f46e5',
+        sound: 'notification_alert.wav',
+      }),
+      Notifications.setNotificationChannelAsync('stories', {
+        name: 'Stories',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        vibrationPattern: [0, 150],
+        lightColor: '#4f46e5',
+        sound: 'notification_alert.wav',
+      }),
+      Notifications.setNotificationChannelAsync('default', {
+        name: 'UniGram',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#4f46e5',
+        sound: 'notification_alert.wav',
+      }),
+    ]);
   }
 
   return deviceTokenData?.data || expoTokenData?.data || null;
@@ -137,6 +174,7 @@ export async function sendPushToUser(
   if (edgeError) {
     console.warn('Edge function notification failed, falling back to Expo proxy:', edgeError);
 
+    const channelId = (data as any)?.channelId ?? 'default';
     const expoMessages = rows
       .filter((r: any) => (r.token as string).startsWith('ExponentPushToken'))
       .map((r: any) => ({
@@ -146,10 +184,9 @@ export async function sendPushToUser(
         data: { ...(data ?? {}), imageUrl, senderAvatarUrl, categoryId, groupId },
         sound: 'default',
         priority: 'high',
-        channelId: 'default',
-        categoryId, // For interactive buttons
-        // Expo supports mutableContent for iOS notification service extensions
-        mutableContent: !!imageUrl,
+        channelId,
+        categoryId,
+        mutableContent: !!(imageUrl || senderAvatarUrl),
       }));
 
     if (expoMessages.length > 0) {

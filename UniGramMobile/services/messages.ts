@@ -139,9 +139,10 @@ export async function sendMessage(
         p.user_id,
         sender?.username || 'Someone',
         pushBody,
-        { type: 'message', conversationId },
+        { type: 'message', conversationId, channelId: 'messages' },
         type === 'image' ? (mediaUrl ?? undefined) : undefined,
         sender?.avatar_url ?? undefined,
+        'chat_message',
       ).catch(() => {});
     });
   } catch { /* non-fatal */ }

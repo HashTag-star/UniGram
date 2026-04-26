@@ -176,7 +176,7 @@ export async function followUser(followerId: string, followingId: string) {
   // Notify target user
   try {
     const { data: follower } = await supabase.from('profiles').select('username, avatar_url').eq('id', followerId).single();
-    const text = 'started following you.';
+    const text = 'started following you 👋';
     await createNotification({
       user_id: followingId,
       actor_id: followerId,
@@ -187,9 +187,10 @@ export async function followUser(followerId: string, followingId: string) {
       followingId,
       follower?.username || 'Someone',
       text,
-      { type: 'follow', userId: followerId },
+      { type: 'follow', userId: followerId, channelId: 'follows' },
       undefined,
       follower?.avatar_url ?? undefined,
+      'follow',
     ).catch(() => {});
   } catch (e) {}
 }

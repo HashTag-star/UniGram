@@ -42,14 +42,23 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Fetch native tokens for this user
-    const { data: tokens, error: tokensError } = await supabaseClient
-      .from("push_tokens")
-      .select("token")
-      .eq("user_id", userId)
-      .eq("type", "native");
+    // Fetch native tokens and recipient profile in parallel
+    const [tokensResult, recipientResult] = await Promise.all([
+      supabaseClient
+        .from("push_tokens")
+        .select("token")
+        .eq("user_id", userId)
+        .eq("type", "native"),
+      supabaseClient
+        .from("profiles")
+        .select("username, avatar_url")
+        .eq("id", userId)
+        .single(),
+    ]);
 
-    if (tokensError) throw tokensError;
+    if (tokensResult.error) throw tokensResult.error;
+    const tokens = tokensResult.data;
+    const recipientUsername: string = recipientResult.data?.username ?? '';
 
     if (!tokens || tokens.length === 0) {
       return new Response(JSON.stringify({ success: true, message: "No native tokens found for user", sentCount: 0 }), {
@@ -60,22 +69,28 @@ Deno.serve(async (req) => {
     const results = [];
     let sentCount = 0;
 
+    // Use post/story image if available, fall back to sender's avatar so profile
+    // pics always appear in the notification when there's no content image.
+    const effectiveImageUrl = imageUrl || senderAvatarUrl || null;
+    const channelId: string = (data as any)?.channelId ?? 'default';
+
     for (const t of tokens) {
       try {
         const message: any = {
           token: t.token,
-          notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
+          notification: {
+            title,
+            body,
+            ...(effectiveImageUrl ? { imageUrl: effectiveImageUrl } : {}),
+          },
           android: {
-            // Android OS displays this when app is in background
             notification: {
               sound: 'notification_alert',
-              channelId: 'default',
-              // icon: 'ic_notification', // MUST be a local drawable resource name, not a URL
-              ...(imageUrl ? { imageUrl } : {}),
+              channelId,
+              ...(effectiveImageUrl ? { imageUrl: effectiveImageUrl } : {}),
               ...(groupId ? { tag: groupId } : {}),
               ...(categoryId ? { clickAction: categoryId } : {}),
             },
-            // If we want grouping (collapseKey)
             ...(groupId ? { collapseKey: groupId } : {}),
           },
           apns: {
@@ -84,12 +99,10 @@ Deno.serve(async (req) => {
                 sound: 'notification_alert.wav',
                 ...(categoryId ? { category: categoryId } : {}),
                 ...(groupId ? { 'thread-id': groupId } : {}),
-                // mutable-content lets a Notification Service Extension
-                // download and attach the image/avatar before display
-                ...(imageUrl || senderAvatarUrl ? { 'mutable-content': 1 } : {}),
+                ...(effectiveImageUrl ? { 'mutable-content': 1 } : {}),
               },
             },
-            ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
+            ...(effectiveImageUrl ? { fcmOptions: { imageUrl: effectiveImageUrl } } : {}),
           },
           data: {
             ...(data || {}),
@@ -97,6 +110,9 @@ Deno.serve(async (req) => {
             ...(senderAvatarUrl ? { senderAvatarUrl } : {}),
             ...(categoryId ? { categoryId } : {}),
             ...(groupId ? { groupId } : {}),
+            // Recipient context — used by the app to identify which account
+            // received this notification (mirrors Instagram's "• @username" header)
+            recipientUsername,
           },
         };
         const response = await admin.messaging().send(message);

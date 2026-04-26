@@ -58,7 +58,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
 
       const actor = data.profiles;
       const username = actor?.username || 'Someone';
-      const pushBody = `${username} added a new story`;
+      const pushBody = '✨ added a new story';
 
       const notifRows = followers.map((f: any) => ({
         user_id: f.follower_id,
@@ -69,7 +69,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
       }));
 
       for (let i = 0; i < notifRows.length; i += 500) {
-        await supabase.from('notifications').insert(notifRows.slice(i, 500)).catch(() => {});
+        await supabase.from('notifications').insert(notifRows.slice(i, i + 500)).catch(() => {});
       }
 
       followers.forEach((f: any) => {
@@ -77,7 +77,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
           f.follower_id,
           username,
           pushBody,
-          { type: 'new_story', storyId: data.id, userId },
+          { type: 'new_story', storyId: data.id, userId, channelId: 'stories' },
           media_url,
           actor?.avatar_url ?? undefined,
         ).catch(() => {});

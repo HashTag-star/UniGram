@@ -50,12 +50,13 @@ export async function sendFollowSuggestionNotif(userId: string, suggestions: { i
   if (!suggestions.length) return;
 
   const top = suggestions.slice(0, 3);
-  const title = top.length === 1 ? 'New follow suggestion' : 'New follow suggestions';
-  const text = top.length === 1
-    ? top[0].username
-    : top.length === 2 
-      ? `${top[0].username} and ${top[1].username}`
-      : `${top[0].username}, ${top[1].username} and ${top[2].username}`;
+  const title = '👥 People you may know';
+  const names = top.length === 1
+    ? `@${top[0].username}`
+    : top.length === 2
+      ? `@${top[0].username} and @${top[1].username}`
+      : `@${top[0].username}, @${top[1].username} and @${top[2].username}`;
+  const text = `${names} — follow them to stay connected`;
 
   try {
     await supabase.from('notifications').insert({
@@ -73,10 +74,10 @@ export async function sendFollowSuggestionNotif(userId: string, suggestions: { i
     userId,
     title,
     text,
-    { type: 'follow_suggestion' },
-    undefined, // imageUrl
-    top[0].avatar_url, // senderAvatarUrl
-    'follow_suggestion', // categoryId
+    { type: 'follow_suggestion', channelId: 'follows' },
+    undefined,
+    top[0].avatar_url,
+    'follow_suggestion',
   ).catch(() => {});
 }
 

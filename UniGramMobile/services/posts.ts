@@ -97,7 +97,10 @@ export async function createPost(
   // Send mention/tag notifications
   notifyUserIds.forEach(async (tid) => {
     try {
-      const notifText = `tagged you in a post: "${caption.substring(0, 30)}..."`;
+      const preview = caption.substring(0, 30);
+      const notifText = caption.trim()
+        ? `📸 tagged you: "${preview}${caption.length > 30 ? '…' : ''}"`
+        : '📸 tagged you in a post';
       await createNotification({
         user_id: tid,
         actor_id: userId,
@@ -106,7 +109,7 @@ export async function createPost(
         text: notifText
       });
       sendPushToUser(tid, actor?.username || 'Someone', notifText, {
-        type: 'post', postId: data.id, userId,
+        type: 'post', postId: data.id, userId, channelId: 'social',
       }, uploadedUrls[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     } catch (e) {}
   });
@@ -124,8 +127,8 @@ export async function createPost(
 
       const username = actor?.username || 'Someone';
       const pushBody = caption.trim()
-        ? `${username} posted: "${caption.substring(0, 60)}"`
-        : `${username} shared a new post`;
+        ? `📸 posted: "${caption.substring(0, 60)}${caption.length > 60 ? '…' : ''}"`
+        : '📸 shared a new post';
 
       const notifRows = followers.map((f: any) => ({
         user_id: f.follower_id,
@@ -147,7 +150,7 @@ export async function createPost(
           f.follower_id,
           username,
           pushBody,
-          { type: 'new_post', postId: data.id, userId },
+          { type: 'new_post', postId: data.id, userId, channelId: 'social' },
           uploadedUrls[0] ?? undefined,
           actor?.avatar_url ?? undefined,
         ).catch(() => {});
@@ -194,9 +197,8 @@ export async function likePost(postId: string, userId: string) {
     const { data: post } = await supabase.from('posts').select('user_id, caption, media_urls').eq('id', postId).single();
     if (post && post.user_id !== userId) {
       const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
-      const text = post.caption?.trim()
-        ? `liked your post: "${post.caption.substring(0, 40)}${post.caption.length > 40 ? '…' : ''}"`
-        : 'liked your post.';
+      const hasMedia = !!(post.media_urls?.[0]);
+      const text = hasMedia ? '❤️ liked your photo' : '❤️ liked your post';
       await createNotification({
         user_id: post.user_id,
         actor_id: userId,
@@ -205,8 +207,8 @@ export async function likePost(postId: string, userId: string) {
         text
       });
       sendPushToUser(post.user_id, actor?.username || 'Someone', text, {
-        type: 'like', postId, userId,
-      }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
+        type: 'like', postId, userId, channelId: 'social',
+      }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined, 'post_like').catch(() => {});
     }
   } catch (e) {}
 }
@@ -383,9 +385,10 @@ export async function addPostComment(postId: string, userId: string, text: strin
   try {
     const { data: post } = await supabase.from('posts').select('user_id, media_urls').eq('id', postId).single();
     if (post && post.user_id !== userId) {
+      const preview = text.substring(0, 40) + (text.length > 40 ? '…' : '');
       const notifText = parentId
-        ? `replied to a comment: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`
-        : `commented: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`;
+        ? `💬 replied: "${preview}"`
+        : `💬 commented: "${preview}"`;
       await createNotification({
         user_id: post.user_id,
         actor_id: userId,
@@ -394,8 +397,8 @@ export async function addPostComment(postId: string, userId: string, text: strin
         text: notifText
       });
       sendPushToUser(post.user_id, actorName, notifText, {
-        type: 'comment', postId, userId,
-      }, post.media_urls?.[0] ?? undefined, actorAvatar).catch(() => {});
+        type: 'comment', postId, userId, channelId: 'social',
+      }, post.media_urls?.[0] ?? undefined, actorAvatar, 'post_comment').catch(() => {});
     }
   } catch (e) {}
 
@@ -407,7 +410,8 @@ export async function addPostComment(postId: string, userId: string, text: strin
       try {
         const { data: targetProfile } = await supabase.from('profiles').select('id').eq('username', uname).single();
         if (targetProfile && targetProfile.id !== userId) {
-          const mentionText = `mentioned you in a comment: "${text.substring(0, 40)}${text.length > 40 ? '…' : ''}"`;
+          const preview = text.substring(0, 40) + (text.length > 40 ? '…' : '');
+          const mentionText = `💬 mentioned you: "${preview}"`;
           await createNotification({
             user_id: targetProfile.id,
             actor_id: userId,
@@ -416,8 +420,8 @@ export async function addPostComment(postId: string, userId: string, text: strin
             text: mentionText
           });
           sendPushToUser(targetProfile.id, actorName, mentionText, {
-            type: 'mention', postId, userId,
-          }, undefined, actorAvatar).catch(() => {});
+            type: 'mention', postId, userId, channelId: 'social',
+          }, undefined, actorAvatar, 'post_comment').catch(() => {});
         }
       } catch (e) {}
     });
