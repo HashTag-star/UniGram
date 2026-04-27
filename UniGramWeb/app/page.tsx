@@ -66,7 +66,7 @@ export default function Home() {
       supabase.from('verification_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('live_sessions').select('*', { count: 'exact', head: true }).eq('status', 'live'),
-      supabase.from('posts').select('*', { count: 'exact', head: true }).gte('created_at', oneDayAgo).catch(() => ({ count: 0 })),
+      supabase.from('posts').select('*', { count: 'exact', head: true }).gte('created_at', oneDayAgo).then(res => res).catch(() => ({ count: 0 })),
     ]);
 
     setStats({
