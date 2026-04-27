@@ -168,8 +168,11 @@ CREATE TRIGGER trg_connection_moment_on_like
 -- ── 6. get_trending_post_for_university RPC ───────────────────────────────────
 -- Used by send-reengagement-notifications to find the hottest post at a campus
 -- within the last 48 hours. Ranks by engagement velocity score.
+-- DROP first: CREATE OR REPLACE cannot change OUT parameter names/types.
 
-CREATE OR REPLACE FUNCTION public.get_trending_post_for_university(p_university text)
+DROP FUNCTION IF EXISTS public.get_trending_post_for_university(text);
+
+CREATE FUNCTION public.get_trending_post_for_university(p_university text)
 RETURNS TABLE(id uuid, caption text, likes_count int, comments_count int)
 LANGUAGE sql
 STABLE
@@ -198,11 +201,12 @@ GRANT EXECUTE ON FUNCTION public.get_trending_post_for_university(text) TO servi
 -- ── 7. Cleanup job: purge old processed interactions ─────────────────────────
 -- Keeps the table lean. Processed rows older than 30 days have no further use.
 
-DO $$
+DO $outer$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    PERFORM cron.unschedule('interactions-cleanup')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'interactions-cleanup');
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'interactions-cleanup') THEN
+      PERFORM cron.unschedule('interactions-cleanup');
+    END IF;
 
     PERFORM cron.schedule(
       'interactions-cleanup',
@@ -214,32 +218,33 @@ BEGIN
       $cron$
     );
   END IF;
-END $$;
+END $outer$;
 
 
 -- ── 8. Cron: send-reengagement-notifications ─────────────────────────────────
--- Fires every 4 hours. The edge function itself enforces a 12-hour per-user
--- cooldown so no user is nudged more than twice a day regardless of schedule.
+-- Fires every 4 hours. The edge function enforces a 12-hour per-user cooldown.
+-- Replace YOUR_SERVICE_ROLE_KEY with the value from Supabase dashboard → Settings → API.
 
-DO $$
+DO $outer2$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    PERFORM cron.unschedule('reengagement-notifications')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'reengagement-notifications');
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'reengagement-notifications') THEN
+      PERFORM cron.unschedule('reengagement-notifications');
+    END IF;
 
     PERFORM cron.schedule(
       'reengagement-notifications',
       '0 */4 * * *',  -- 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
       $body$
       SELECT net.http_post(
-        url     := current_setting('app.supabase_url',    true) || '/functions/v1/send-reengagement-notifications',
+        url     := 'https://rcvzcbfmstgwzrolnhvy.supabase.co/functions/v1/send-reengagement-notifications',
         headers := jsonb_build_object(
           'Content-Type',  'application/json',
-          'Authorization', 'Bearer ' || current_setting('app.service_role_key', true)
+          'Authorization', 'Bearer YOUR_SERVICE_ROLE_KEY'
         ),
         body    := '{}'::jsonb
       );
       $body$
     );
   END IF;
-END $$;
+END $outer2$;

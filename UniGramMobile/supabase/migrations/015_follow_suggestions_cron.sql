@@ -44,47 +44,45 @@ GRANT EXECUTE ON FUNCTION public.get_users_for_follow_suggestions() TO service_r
 -- The SUPABASE_URL and SERVICE_ROLE_KEY are stored as Vault secrets; reading
 -- them via current_setting() keeps credentials out of cron job text.
 
-DO $$
+-- Replace YOUR_SERVICE_ROLE_KEY with the value from Supabase dashboard → Settings → API.
+DO $outer$
 BEGIN
-  -- Only create the jobs if pg_cron is available (not present on free tier)
-  IF EXISTS (
-    SELECT 1 FROM pg_extension WHERE extname = 'pg_cron'
-  ) THEN
-    -- Remove any existing jobs with the same name before re-creating
-    PERFORM cron.unschedule('follow-suggestions-morning')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'follow-suggestions-morning');
-
-    PERFORM cron.unschedule('follow-suggestions-evening')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'follow-suggestions-evening');
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'follow-suggestions-morning') THEN
+      PERFORM cron.unschedule('follow-suggestions-morning');
+    END IF;
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'follow-suggestions-evening') THEN
+      PERFORM cron.unschedule('follow-suggestions-evening');
+    END IF;
 
     PERFORM cron.schedule(
       'follow-suggestions-morning',
       '0 8 * * *',   -- 08:00 UTC daily
-      $$
+      $follow_am$
       SELECT net.http_post(
-        url     := current_setting('app.supabase_url', true) || '/functions/v1/send-follow-suggestions',
+        url     := 'https://rcvzcbfmstgwzrolnhvy.supabase.co/functions/v1/send-follow-suggestions',
         headers := jsonb_build_object(
           'Content-Type',   'application/json',
-          'Authorization',  'Bearer ' || current_setting('app.service_role_key', true)
+          'Authorization',  'Bearer YOUR_SERVICE_ROLE_KEY'
         ),
         body    := '{}'::jsonb
       );
-      $$
+      $follow_am$
     );
 
     PERFORM cron.schedule(
       'follow-suggestions-evening',
       '0 18 * * *',  -- 18:00 UTC daily
-      $$
+      $follow_pm$
       SELECT net.http_post(
-        url     := current_setting('app.supabase_url', true) || '/functions/v1/send-follow-suggestions',
+        url     := 'https://rcvzcbfmstgwzrolnhvy.supabase.co/functions/v1/send-follow-suggestions',
         headers := jsonb_build_object(
           'Content-Type',   'application/json',
-          'Authorization',  'Bearer ' || current_setting('app.service_role_key', true)
+          'Authorization',  'Bearer YOUR_SERVICE_ROLE_KEY'
         ),
         body    := '{}'::jsonb
       );
-      $$
+      $follow_pm$
     );
   END IF;
-END $$;
+END $outer$;
