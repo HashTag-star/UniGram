@@ -230,7 +230,7 @@ BEGIN
     PERFORM cron.schedule(
       'reengagement-notifications',
       '0 */4 * * *',  -- 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
-      $$
+      $body$
       SELECT net.http_post(
         url     := current_setting('app.supabase_url',    true) || '/functions/v1/send-reengagement-notifications',
         headers := jsonb_build_object(
@@ -239,7 +239,7 @@ BEGIN
         ),
         body    := '{}'::jsonb
       );
-      $$
+      $body$
     );
   END IF;
 END $$;
