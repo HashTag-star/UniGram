@@ -63,4 +63,5 @@ export const TTL = {
   explore:   5 * 60 * 1000,   // 5 min — explore grid posts
   discover: 10 * 60 * 1000,   // 10 min — follow suggestions
   trending:  5 * 60 * 1000,   // 5 min — trending hashtags
+  moments:   2 * 60 * 1000,   // 2 min — community pulse moments
 };

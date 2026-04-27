@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { INTERESTS } from '../data/interests';
 
 export async function saveUserInterests(userId: string, interests: string[]) {
   // Delete old interests
@@ -23,6 +24,26 @@ export async function completeOnboarding(userId: string) {
     .update({ onboarding_completed: true })
     .eq('id', userId);
   if (error) throw error;
+
+  // Seed user_preferences.affinities with a head-start from selected interests
+  // so the feed has personalization signal on day one instead of starting cold.
+  const interests = await getUserInterests(userId);
+  if (interests.length > 0) {
+    const affinities: Record<string, number> = {};
+    interests.forEach(interestId => {
+      const interest = INTERESTS.find(i => i.id === interestId);
+      if (interest?.category) {
+        affinities[interest.category] = (affinities[interest.category] ?? 0) + 10;
+      }
+    });
+    await supabase
+      .from('user_preferences')
+      .upsert(
+        { user_id: userId, affinities, university_affinities: {}, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      )
+      .catch(() => {});
+  }
 }
 
 export async function isOnboardingComplete(userId: string): Promise<boolean> {

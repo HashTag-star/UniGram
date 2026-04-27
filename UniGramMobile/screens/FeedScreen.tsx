@@ -41,6 +41,9 @@ import { getReels } from '../services/reels';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
 import { CampusPulse } from '../components/CampusPulse';
+import { CommunityPulse } from '../components/CommunityPulse';
+import { enqueueInteraction, flushInteractions } from '../hooks/usePostTracker';
+import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -1815,8 +1818,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   }).current;
 
   const recordedImpressions = useRef(new Set<string>());
+  const dwellStartTimes = useRef(new Map<string, number>());
 
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+  const onViewableItemsChanged = useRef(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
       const topId = viewableItems[0].key;
       // Emit event instead of setting state — this avoids invalidating the
@@ -1832,6 +1836,27 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           recordedImpressions.current.add(id);
           const uid = currentUserIdRef.current;
           if (uid) recordImpression(id, uid);
+        }
+      });
+    }
+
+    // Dwell tracking — record time each post spends in viewport
+    const uid = currentUserIdRef.current;
+    if (uid && changed) {
+      changed.forEach((info: any) => {
+        const id: string = info.item?.id ?? info.key;
+        if (!id || id.startsWith('__')) return;
+        if (info.isViewable) {
+          dwellStartTimes.current.set(id, Date.now());
+        } else {
+          const start = dwellStartTimes.current.get(id);
+          if (start !== undefined) {
+            dwellStartTimes.current.delete(id);
+            const duration_ms = Date.now() - start;
+            if (duration_ms >= 1_000) {
+              enqueueInteraction({ user_id: uid, post_id: id, type: 'dwell', duration_ms });
+            }
+          }
         }
       });
     }
@@ -1880,7 +1905,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         getSavedPostIds(user.id),
         getViewedStoryIds(user.id),
         supabase.from('profiles')
-          .select('id, username, full_name, avatar_url, is_verified, verification_type')
+          .select('id, username, full_name, avatar_url, is_verified, verification_type, university')
           .eq('id', user.id).single().then(r => r.data),
         getPersonalizedReels(user.id, 6, 0).catch(() => []),
         getFollowSuggestions(user.id, 8).catch(() => []),
@@ -2014,6 +2039,14 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   // Refresh when app comes back to foreground (like IG does)
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
+      // Flush dwell interactions and update preference affinities on background
+      if (next.match(/inactive|background/)) {
+        const uid = currentUserIdRef.current;
+        flushInteractions()
+          .then(() => { if (uid) processUnprocessedInteractions(uid).catch(() => {}); })
+          .catch(() => {});
+      }
+
       if (appStateRef.current.match(/inactive|background/) && next === 'active') {
         const age = Date.now() - lastLoadedRef.current;
         if (age > FEED_TTL) load();
@@ -2225,6 +2258,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
                 userId={currentUserId}
                 onPostPress={() => {}}
               />
+            )}
+            {!loading && currentProfile?.university && (
+              <CommunityPulse university={currentProfile.university} />
             )}
             {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
           </>

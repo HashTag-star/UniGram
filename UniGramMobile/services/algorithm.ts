@@ -81,7 +81,7 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       report_count: reportCounts[post.id] || 0,
     }));
 
-  return filtered;
+  return assembleFeed(filtered);
 }
 
 
@@ -556,11 +556,203 @@ export async function getTrendingHashtags(limit = 10, userId?: string) {
     }));
 
     const sortedTags = allTags.sort((a, b) => b.score - a.score).slice(0, limit);
-    
+
     // If we have tags, return them. Otherwise return empty [] to let UI handle fallback.
     return sortedTags.length > 0 ? sortedTags : [];
   } catch (err) {
     console.warn('Trending tags error:', err);
     return [];
   }
+}
+
+// ─── Momentum & Feed Assembly ─────────────────────────────────────────────────
+
+const MOMENTUM_KEYWORDS = [
+  'internship', 'project', 'graduated', 'accepted',
+  'finished', 'launched', 'proud', 'achievement', 'offer',
+];
+
+/**
+ * Returns a boost score (0, 0.5, or 1.0) for posts about real progress.
+ * Both keyword AND high save-rate → 1.0 (strongest signal).
+ * Either alone → 0.5.
+ */
+function getMomentumBoost(post: any): number {
+  const caption = (post.caption ?? '').toLowerCase();
+  const hasMomentumSignal = MOMENTUM_KEYWORDS.some(w => caption.includes(w));
+  const saveLikeRatio =
+    (post.saves_count ?? 0) / Math.max(post.likes_count ?? 0, 1);
+  const highSaveRatio = saveLikeRatio > 0.3;
+
+  if (hasMomentumSignal && highSaveRatio) return 1.0;
+  if (hasMomentumSignal || highSaveRatio) return 0.5;
+  return 0;
+}
+
+/**
+ * Maps the first matching hashtag in a post's caption to an INTERESTS
+ * category (Academics, Tech, Sports, Arts, Lifestyle, Social).
+ * Falls back to the post's media type if no hashtag match.
+ */
+function derivePostTopic(post: any): string {
+  const caption = (post.caption ?? '').toLowerCase();
+  const tags = caption.match(/#\w+/g) ?? [];
+  for (const tag of tags) {
+    const interest = INTERESTS.find(
+      i => i.hashtag.toLowerCase() === tag.toLowerCase(),
+    );
+    if (interest) return interest.category;
+  }
+  return post.type ?? 'general';
+}
+
+/**
+ * Applies session arc rules on a pre-ranked post list:
+ * - No back-to-back posts from the same author
+ * - Max 2 posts per topic/category before rotating
+ * - Resets topic counters every 5 posts
+ * - Injects the top momentum posts at feed positions 2 and 7
+ */
+function assembleFeed(rankedPosts: any[]): any[] {
+  const feed: any[] = [];
+  const seenAuthors = new Set<string>();
+  const topicCount: Record<string, number> = {};
+
+  for (const post of rankedPosts) {
+    if (seenAuthors.has(post.user_id)) continue;
+
+    const topic = derivePostTopic(post);
+    if ((topicCount[topic] ?? 0) >= 2) continue;
+
+    feed.push(post);
+    seenAuthors.add(post.user_id);
+    topicCount[topic] = (topicCount[topic] ?? 0) + 1;
+
+    // Reset topic counters every 5 posts to allow variety to cycle back
+    if (feed.length % 5 === 0) {
+      Object.keys(topicCount).forEach(k => (topicCount[k] = 0));
+    }
+  }
+
+  // Find top momentum posts not already placed naturally
+  const feedIds = new Set(feed.map(p => p.id));
+  const momentumQueue = rankedPosts.filter(
+    p => !feedIds.has(p.id) && getMomentumBoost(p) > 0.5,
+  );
+
+  // Inject at positions 2 and 7 (0-indexed)
+  const injectSlots = [2, 7];
+  for (let i = 0; i < injectSlots.length && momentumQueue.length > 0; i++) {
+    const slot = injectSlots[i];
+    if (slot <= feed.length) {
+      feed.splice(slot, 0, momentumQueue.shift()!);
+    }
+  }
+
+  return feed;
+}
+
+// ─── University Trending Feed (cold-start & new-user default) ─────────────────
+
+/**
+ * Top posts from a university in the last 48 hours, ranked purely by
+ * engagement velocity (no personalization). Used as the default feed
+ * for new users before their preference signal builds up.
+ */
+export async function getUniversityTrendingFeed(
+  university: string,
+  limit = 20,
+  hoursWindow = 48,
+): Promise<any[]> {
+  const cacheKey = `trending_uni:${university}:${hoursWindow}`;
+
+  const memHit = Cache.getSync<any[]>(cacheKey, TTL.trending);
+  if (memHit) return memHit;
+  const asyncHit = await Cache.get<any[]>(cacheKey, TTL.trending);
+  if (asyncHit) return asyncHit;
+
+  const twoDaysAgo = new Date(Date.now() - hoursWindow * 60 * 60 * 1_000).toISOString();
+
+  const { data: posts } = await supabase
+    .from('posts')
+    .select(`
+      id, user_id, caption, type, media_url, media_urls,
+      likes_count, comments_count, saves_count, created_at,
+      profiles!posts_user_id_fkey(
+        id, username, full_name, avatar_url,
+        is_verified, verification_type, university
+      )
+    `)
+    .gte('created_at', twoDaysAgo)
+    .order('created_at', { ascending: false })
+    .limit(300);
+
+  if (!posts?.length) return [];
+
+  const now = Date.now();
+
+  const scored = posts
+    .map((p: any) => ({
+      ...p,
+      profiles: typeof p.profiles === 'string' ? JSON.parse(p.profiles) : p.profiles,
+    }))
+    .filter((p: any) => p.profiles?.university === university)
+    .map((p: any) => {
+      const hoursOld = Math.max(
+        (now - new Date(p.created_at).getTime()) / 3_600_000,
+        0.1,
+      );
+      const score =
+        ((p.comments_count ?? 0) * 3 +
+          (p.shares_count   ?? 0) * 5 +
+          (p.saves_count    ?? 0) * 4) /
+        hoursOld;
+      return { ...p, _score: score };
+    })
+    .sort((a: any, b: any) => b._score - a._score)
+    .slice(0, limit)
+    .map(({ _score, ...p }: any) => p);
+
+  Cache.set(cacheKey, scored);
+  return scored;
+}
+
+// ─── Community Pulse (belonging signal) ───────────────────────────────────────
+
+/**
+ * Returns formatted connection-moment strings for the CommunityPulse banner.
+ * e.g. "Ahmed and Kwame just connected over a post"
+ */
+export async function getCommunityMoments(
+  university: string,
+  limit = 5,
+): Promise<string[]> {
+  const cacheKey = `moments:${university}`;
+
+  const memHit = Cache.getSync<string[]>(cacheKey, TTL.moments);
+  if (memHit) return memHit;
+  const asyncHit = await Cache.get<string[]>(cacheKey, TTL.moments);
+  if (asyncHit) return asyncHit;
+
+  const { data } = await supabase
+    .from('connection_moments')
+    .select(`
+      id,
+      user_a:profiles!connection_moments_user_a_id_fkey(full_name),
+      user_b:profiles!connection_moments_user_b_id_fkey(full_name)
+    `)
+    .eq('university', university)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (!data?.length) return [];
+
+  const moments = data.map((m: any) => {
+    const nameA = (m.user_a?.full_name ?? 'Someone').split(' ')[0];
+    const nameB = (m.user_b?.full_name ?? 'Someone').split(' ')[0];
+    return `${nameA} and ${nameB} just connected over a post`;
+  });
+
+  Cache.set(cacheKey, moments);
+  return moments;
 }

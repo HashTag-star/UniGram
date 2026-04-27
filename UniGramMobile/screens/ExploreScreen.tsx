@@ -179,10 +179,11 @@ const FALLBACK_TRENDS = [
 interface Props {
   onUserPress?: (profile: any) => void;
   onDiscoverPress?: () => void;
+  onTrendingPress?: () => void;
   isVisible?: boolean;
 }
 
-export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, isVisible }) => {
+export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, onTrendingPress, isVisible }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { selection } = useHaptics();
@@ -559,7 +560,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, i
         >
           {/* Trending hashtags */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING ON CAMPUS</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING TOPICS</Text>
             {trendingTags.map(({ tag, posts: count }, i) => (
               <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
                 <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
@@ -574,6 +575,26 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, i
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Campus Trending entry point */}
+          {!!onTrendingPress && (
+            <TouchableOpacity
+              style={[styles.trendingBanner, { backgroundColor: colors.accent + '12', borderColor: colors.accent + '30' }]}
+              onPress={onTrendingPress}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.trendingBannerIcon, { backgroundColor: colors.accent + '20' }]}>
+                <Ionicons name="flame" size={20} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.trendingBannerTitle, { color: colors.text }]}>Campus Trending</Text>
+                <Text style={[styles.trendingBannerSub, { color: colors.textMuted }]}>
+                  Top posts from your university right now
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.accent} />
+            </TouchableOpacity>
+          )}
 
           {/* Suggested people */}
           {suggested.length > 0 && (
@@ -731,6 +752,24 @@ const styles = StyleSheet.create({
   tabBtnTextActive: { color: '#818cf8' },
   section: { marginBottom: 24, paddingHorizontal: 14 },
   sectionTitle: { fontSize: 10, fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 12 },
+
+  // Campus Trending banner
+  trendingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 14,
+    marginBottom: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  trendingBannerIcon: {
+    width: 40, height: 40, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  trendingBannerTitle: { fontSize: 15, fontWeight: '700' },
+  trendingBannerSub: { fontSize: 12, marginTop: 2 },
   
   // Suggested Card (Horizontal)
   suggestedCard: {

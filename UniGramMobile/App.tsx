@@ -21,6 +21,7 @@ import { ProfileScreen } from './screens/ProfileScreen';
 import { NotificationsScreen, NotificationsScreenProps } from './screens/NotificationsScreen';
 import { VerificationScreen } from './screens/VerificationScreen';
 import { DiscoverPeopleScreen } from './screens/DiscoverPeopleScreen';
+import { TrendingScreen } from './screens/TrendingScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
@@ -411,6 +412,7 @@ function AppShell() {
   const [prevTab, setPrevTab] = useState<Tab>('feed');
   const [showVerification, setShowVerification] = useState(false);
   const [showDiscoverPeople, setShowDiscoverPeople] = useState(false);
+  const [showTrending, setShowTrending] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
   const [feedMuted, setFeedMuted] = useState(true);   // feed videos always start muted
@@ -882,6 +884,7 @@ function AppShell() {
                   isVisible={activeTab === 'explore' && isMainVisible}
                   onUserPress={(profile: any) => { setViewedUserId(profile.id); setActiveTab('profile'); }}
                   onDiscoverPress={() => setShowDiscoverPeople(true)}
+                  onTrendingPress={() => setShowTrending(true)}
                 />
               </View>
             )}
@@ -1068,6 +1071,21 @@ function AppShell() {
               setViewedUserId(u.id);
               setActiveTab('profile');
               setShowDiscoverPeople(false);
+            }}
+          />
+        </View>
+      )}
+
+      {showTrending && (
+        <View style={[styles.notifOverlay, { backgroundColor: 'transparent' }]}>
+          <TrendingScreen
+            userId={session.user.id}
+            university={userProfile?.university ?? ''}
+            onBack={() => setShowTrending(false)}
+            onUserPress={(profile: any) => {
+              setShowTrending(false);
+              setViewedUserId(profile.id);
+              setActiveTab('profile');
             }}
           />
         </View>
