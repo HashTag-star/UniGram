@@ -11,7 +11,8 @@ import {
   BrainCircuit,
   LayoutDashboard,
   Search,
-  Filter
+  Filter,
+  Megaphone,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -44,6 +45,7 @@ export function Sidebar() {
           <span className="px-3 text-[10px] font-bold text-white/30 uppercase tracking-[2px]">Core AI</span>
           <NavItem href="/ai-regulator" icon={<BrainCircuit size={18} />} label="AI Regulator" color="text-purple-400" active={isLinkActive("/ai-regulator")} />
           <NavItem href="/keyword-manager" icon={<Filter size={18} />} label="Keyword Filters" color="text-yellow-400" active={isLinkActive("/keyword-manager")} />
+          <NavItem href="/campus-content" icon={<Megaphone size={18} />} label="Campus Content" color="text-green-400" active={isLinkActive("/campus-content")} />
         </div>
       </nav>
 

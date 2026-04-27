@@ -42,6 +42,9 @@ import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
 import { CampusPulse } from '../components/CampusPulse';
 import { CommunityPulse } from '../components/CommunityPulse';
+import { DiscoveryBanner } from '../components/DiscoveryBanner';
+import { CampusEventCard } from '../components/CampusEventCard';
+import { getCampusEvents, getUserFollowCount, type CampusEvent } from '../services/campusContent';
 import { enqueueInteraction, flushInteractions } from '../hooks/usePostTracker';
 import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
@@ -1809,6 +1812,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const [hasMore, setHasMore] = useState(true);
   const [previewReels, setPreviewReels] = useState<any[]>([]);
   const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+  const [followCount, setFollowCount] = useState(999);
+  const [campusEvents, setCampusEvents] = useState<CampusEvent[]>([]);
   const pageRef = useRef(0);
   const lastLoadedRef = useRef(0);
   const appStateRef = useRef(AppState.currentState);
@@ -1894,7 +1899,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       // Fetch first page + supporting data in parallel
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       
-      const [postsData, storiesData, lRes, likedData, savedData, viewedData, prof, reelsData, usersData] = await Promise.all([
+      const [postsData, storiesData, lRes, likedData, savedData, viewedData, prof, reelsData, usersData, fc] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
         supabase.from('live_sessions')
@@ -1909,12 +1914,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           .eq('id', user.id).single().then(r => r.data),
         getPersonalizedReels(user.id, 6, 0).catch(() => []),
         getFollowSuggestions(user.id, 8).catch(() => []),
+        getUserFollowCount(user.id).catch(() => 999),
       ]);
 
       setCurrentProfile(prof);
       setLiveSessions(lRes.data ?? []);
       setPreviewReels(reelsData ?? []);
       setSuggestedUsers(usersData ?? []);
+      setFollowCount(fc ?? 999);
+
+      // Fetch campus events for discovery mode if user has few follows
+      if ((fc ?? 999) < 5 && prof?.university) {
+        getCampusEvents(prof.university, 4).then(setCampusEvents).catch(() => {});
+      }
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
@@ -2127,6 +2139,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const feedItems = React.useMemo(() => {
     if (!posts.length) return posts;
     const items: any[] = [];
+    const eventSlots = followCount < 5 ? [1, 4, 8] : [];
+    let eventIdx = 0;
     posts.forEach((p, i) => {
       items.push(p);
       if (i === 2 && previewReels.length > 0) {
@@ -2135,9 +2149,13 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       if (i === 7 && suggestedUsers.length > 0) {
         items.push({ id: '__suggestions__', _type: 'suggestions', users: suggestedUsers });
       }
+      if (eventSlots.includes(i) && eventIdx < campusEvents.length) {
+        const ev = campusEvents[eventIdx++];
+        items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
+      }
     });
     return items;
-  }, [posts, previewReels, suggestedUsers]);
+  }, [posts, previewReels, suggestedUsers, campusEvents, followCount]);
 
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
@@ -2262,10 +2280,17 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
             {!loading && currentProfile?.university && (
               <CommunityPulse university={currentProfile.university} />
             )}
+            {!loading && followCount < 5 && currentProfile?.university && (
+              <DiscoveryBanner
+                university={currentProfile.university}
+                followCount={followCount}
+                onFindPeople={() => onUserPress?.({ _openDiscover: true })}
+              />
+            )}
             {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
           </>
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        ), [loading, storyGroups, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT])}
+        ), [loading, storyGroups, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT, followCount])}
         ListEmptyComponent={loading ? null : (
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
             <Ionicons name="image-outline" size={48} color={colors.textMuted} />
@@ -2292,6 +2317,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
                 colors={colors}
               />
             );
+          }
+          if (item._type === 'campus_event') {
+            return <CampusEventCard event={item.event} />;
           }
           return (
             <FeedPost

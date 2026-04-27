@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   Cpu,
-  Lock,
   RefreshCw,
   TrendingUp
 } from "lucide-react";
@@ -29,8 +28,6 @@ interface ScanStats {
 export default function AIRegulatorPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [apiKey, setApiKey] = useState("");
-  const [showKeyField, setShowKeyField] = useState(false);
   const [lastScanStats, setLastScanStats] = useState<ScanStats | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
   const [anomalies, setAnomalies] = useState<string[]>([]);
@@ -41,23 +38,11 @@ export default function AIRegulatorPage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Load saved API key from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem("unigram_gemini_key");
-    if (saved) setApiKey(saved);
-  }, []);
-
   const addLog = (msg: string, type: LogType = 'info') => {
     setLogs(prev => [...prev, { msg, type }]);
   };
 
   const startScan = async () => {
-    if (!apiKey) {
-      addLog("No Gemini API key configured. Click 'Configure API Key' first.", 'warn');
-      setShowKeyField(true);
-      return;
-    }
-
     setIsScanning(true);
     setLogs([]);
     setAnomalies([]);
@@ -69,7 +54,7 @@ export default function AIRegulatorPage() {
       addLog("Fetching pending reports and verifications from Supabase...", 'info');
 
       const { data, error } = await supabase.functions.invoke('ai-regulation-scan', {
-        body: { apiKey },
+        body: {},
       });
 
       if (error) throw new Error(error.message);
@@ -125,12 +110,6 @@ export default function AIRegulatorPage() {
 
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-  const saveKey = () => {
-    localStorage.setItem("unigram_gemini_key", apiKey);
-    setShowKeyField(false);
-    addLog("API key saved.", 'success');
-  };
-
   return (
     <div className="p-8 space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -140,38 +119,12 @@ export default function AIRegulatorPage() {
             AI Regulator
           </h1>
           <p className="text-white/50 mt-1">
-            Gemini-powered autonomous moderation and identity verification screening.
+            Groq-powered autonomous moderation and identity verification screening.
             {lastScanAt && <span className="text-white/30 ml-2 text-xs">Last scan: {lastScanAt}</span>}
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          {showKeyField ? (
-            <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-1">
-              <Lock size={14} className="text-white/30" />
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && saveKey()}
-                placeholder="Enter Gemini API Key..."
-                className="bg-transparent text-xs text-white focus:outline-none w-52"
-              />
-              <button
-                onClick={saveKey}
-                className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest px-2"
-              >
-                Save
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowKeyField(true)}
-              className={`glass px-4 py-2 rounded-xl text-xs font-medium hover:bg-white/10 transition-colors ${apiKey ? 'text-green-400' : 'text-white/50'}`}
-            >
-              {apiKey ? "✓ API Key Configured" : "Configure API Key"}
-            </button>
-          )}
+        <div className="glass px-4 py-2 rounded-xl text-xs font-medium text-green-400">
+          ✓ Groq / llama-3.3-70b configured
         </div>
       </div>
 
