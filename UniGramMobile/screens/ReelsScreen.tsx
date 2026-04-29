@@ -21,6 +21,7 @@ import { supabase } from '../lib/supabase';
 import { createReport } from '../services/reports';
 import { useHaptics } from '../hooks/useHaptics';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 
 const { width, height } = Dimensions.get('window');
 const ITEM_HEIGHT = height;
@@ -139,6 +140,7 @@ const ReelItem: React.FC<{
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
   const seekContainerWidth = useRef(width);
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   // Native-driver animated opacities — no re-render needed for feedback/overlay
@@ -828,8 +830,8 @@ export const ReelsScreen: React.FC<{
         const newOnes = reelsData.filter((r: any) => !existingIds.has(r.id));
         return [...prev, ...newOnes];
       });
-    } catch (e) {
-      console.error('Reels load error', e);
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to load reels.', 'error');
     } finally {
       setLoading(false);
     }

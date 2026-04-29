@@ -26,6 +26,7 @@ import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 import { UsersListSheet } from '../components/UsersListSheet';
 import { ProfilePicViewer } from '../components/ProfilePicViewer';
 
@@ -58,6 +59,7 @@ export const ProfileScreen: React.FC<Props> = ({
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const { selection, success, medium } = useHaptics();
 
   const [profile, setProfile] = useState<any>(null);
@@ -126,8 +128,8 @@ export const ProfileScreen: React.FC<Props> = ({
         setIsFollowingUser(following);
         recordProfileView(user.id, targetId).catch(() => {});
       }
-    } catch (e) {
-      console.error('Profile load error', e);
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to load profile.', 'error');
     } finally {
       setLoading(false);
     }

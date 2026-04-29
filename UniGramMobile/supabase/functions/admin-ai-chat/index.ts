@@ -28,16 +28,30 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
+    // ── Admin auth gate ───────────────────────────────────────────────────────
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Missing authorization' }), { status: 401, headers: CORS })
+    }
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(authHeader.slice(7))
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS })
+    }
+    const { data: adminProfile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+    if (!adminProfile?.is_admin) {
+      return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS })
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const groqKey = Deno.env.get('GROQ_API_KEY')
     if (!groqKey) throw new Error('GROQ_API_KEY not configured in edge function secrets.')
 
     const { query } = await req.json()
     if (!query?.trim()) throw new Error('No query provided.')
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    )
 
     // Fetch live platform context in parallel
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()

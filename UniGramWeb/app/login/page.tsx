@@ -1,8 +1,8 @@
 "use client";
-import React, { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import React, { useState, useEffect } from "react";
+import { createBrowserClient } from "@supabase/ssr";
 import { ShieldCheck, Lock, Mail, ArrowRight } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -10,6 +10,21 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const params = useSearchParams();
+  const next = params.get("next") || "/";
+
+  // Use SSR client so the session is stored in cookies (readable by middleware)
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  );
+
+  // Skip login if already authenticated
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) router.replace(next);
+    });
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,14 +32,10 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
       if (authError) throw authError;
 
-      // Check if user is actually an admin
+      // Check admin role
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('is_admin')
@@ -36,7 +47,8 @@ export default function LoginPage() {
         throw new Error("Access Denied: You do not have administrator privileges.");
       }
 
-      router.push("/");
+      router.push(next);
+      router.refresh();
     } catch (err: any) {
       setError(err.message);
     } finally {

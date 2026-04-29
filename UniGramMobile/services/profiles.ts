@@ -193,6 +193,17 @@ export async function followUser(followerId: string, followingId: string) {
       'follow',
     ).catch(() => {});
   } catch (e) {}
+
+  // After a follow, send fresh suggestions so the user discovers more people while engaged
+  try {
+    const { getFollowSuggestions } = require('./algorithm');
+    const { sendFollowSuggestionNotif } = require('./notifications');
+    // Small limit, bypass cache with a unique key via a direct call
+    const suggestions = await getFollowSuggestions(followerId, 5);
+    if (suggestions.length >= 2) {
+      sendFollowSuggestionNotif(followerId, suggestions.map((s: any) => ({ id: s.id, username: s.username, avatar_url: s.avatar_url }))).catch(() => {});
+    }
+  } catch (_) {}
 }
 
 export async function unfollowUser(followerId: string, followingId: string) {

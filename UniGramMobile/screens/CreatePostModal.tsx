@@ -22,6 +22,7 @@ import { getFollowing } from '../services/profiles';
 import { supabase } from '../lib/supabase';
 import { MusicPicker } from '../components/MusicPicker';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 import { useTheme } from '../context/ThemeContext';
 import { getCaptionSuggestions, checkKeywordFilter, CaptionSuggestion } from '../services/aiEngine';
 import { getTrendingHashtags } from '../services/algorithm';
@@ -70,6 +71,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const [step, setStep] = useState<'type' | 'compose'>('type');
   const [postType, setPostType] = useState<PostType>(initialType ?? 'post');
   const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
@@ -483,7 +485,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           console.log('User cancelled upload');
           return;
         }
-        console.error('Post error:', e);
+        showToast(e.message || 'Failed to post. Please try again.', 'error');
         emitStatus('error', { message: e.message });
       } finally {
         setUploading(false);

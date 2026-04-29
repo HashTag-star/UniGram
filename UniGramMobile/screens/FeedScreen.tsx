@@ -29,6 +29,7 @@ import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent, getPostLikers } from '../services/posts';
 import { UsersListSheet } from '../components/UsersListSheet';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
@@ -1789,6 +1790,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
@@ -1956,8 +1958,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       cachedLikedIds = new Set(likedData);
       cachedSavedIds = new Set(savedData);
       cachedCurrentProfile = prof;
-    } catch (e) {
-      console.error('Feed load error', e);
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1968,25 +1970,70 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     if (!currentUserId) return;
 
     const channel = supabase
-      .channel(`user-lives-${currentUserId}`)
+      .channel(`user-feed-realtime-${currentUserId}`)
+      // Live session notifications → show toast + add to status bar
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUserId}` },
         (payload: any) => {
           if (payload.new.type === 'live_started') {
-            const username = payload.new.content.split(' is ')[0];
-            setLiveToast({ id: payload.new.id, username, sessionId: payload.new.related_id });
-            
+            const notifText: string = payload.new.text || payload.new.content || '';
+            const username = notifText.split(' is ')[0] || 'Someone';
+            // target_id holds the live session UUID (set by DB trigger)
+            const sessionId = payload.new.target_id;
+            setLiveToast({ id: payload.new.id, username, sessionId });
+
             Animated.spring(toastAnim, {
               toValue: 60,
               useNativeDriver: true,
               tension: 40,
               friction: 7
             }).start();
-
             setTimeout(() => {
               Animated.timing(toastAnim, { toValue: -100, duration: 300, useNativeDriver: true }).start(() => setLiveToast(null));
             }, 6000);
+
+            // Fetch session and add to status bar immediately
+            if (sessionId) {
+              supabase.from('live_sessions')
+                .select('*, profiles(username, avatar_url)')
+                .eq('id', sessionId)
+                .single()
+                .then(({ data: ls }) => {
+                  if (ls) setLiveSessions((prev: any[]) => [ls, ...prev.filter((s: any) => s.id !== ls.id)]);
+                });
+            }
+          }
+
+          // post_id holds the post UUID for new_post notifications
+          if (payload.new.type === 'new_post' && payload.new.post_id) {
+            supabase.from('posts')
+              .select('*, profiles(id, username, avatar_url, is_verified, verification_type, university)')
+              .eq('id', payload.new.post_id)
+              .single()
+              .then(({ data: post }) => {
+                if (post) {
+                  setPosts((prev: any[]) => {
+                    if (prev.find((p: any) => p.id === post.id)) return prev;
+                    return [post, ...prev];
+                  });
+                }
+              });
+          }
+
+          if (payload.new.type === 'new_story') {
+            // Refresh story bar so new story appears instantly
+            getActiveStories().then(setStoryGroups).catch(() => {});
+          }
+        }
+      )
+      // Live sessions ending → remove from status bar
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'live_sessions' },
+        (payload: any) => {
+          if (payload.new.status !== 'live') {
+            setLiveSessions((prev: any[]) => prev.filter((ls: any) => ls.id !== payload.new.id));
           }
         }
       )
@@ -2012,8 +2059,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         const existing = new Set(prev.map((p: any) => p.id));
         return [...prev, ...morePosts.filter((p: any) => !existing.has(p.id))];
       });
-    } catch (e) {
-      console.error('loadMore error', e);
+    } catch (e: any) {
+      showToast('Could not load more posts.', 'error');
     } finally {
       setLoadingMore(false);
     }
@@ -2114,11 +2161,17 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         });
       }
     });
+    // Open live session from notification tap (JOIN_LIVE_SESSION emitted by App.tsx)
+    const joinLiveSub = DeviceEventEmitter.addListener('JOIN_LIVE_SESSION', (ls: any) => {
+      if (ls?.id) setActiveLiveSessionId(ls.id);
+    });
+
     return () => {
       postSub.remove();
       reelSub.remove();
       liveSub.remove();
       liveStartSub.remove();
+      joinLiveSub.remove();
     };
   }, [handlePostDeleted]);
 

@@ -341,23 +341,34 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
     });
   }
 
-  // Candidate pool: same-university + popular
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const oneDayAgo   = new Date(Date.now() - 86400000).toISOString();
+
+  // Candidate pool: popular global + same-university + recently active
   const pools = await Promise.all([
     supabase
       .from('profiles')
-      .select('id, username, full_name, avatar_url, is_verified, verification_type, university, followers_count')
+      .select('id, username, full_name, avatar_url, is_verified, verification_type, university, followers_count, last_seen')
       .order('followers_count', { ascending: false })
-      .limit(50)
+      .limit(60)
       .then(r => r.data ?? []),
     userUniversity
       ? supabase
           .from('profiles')
-          .select('id, username, full_name, avatar_url, is_verified, verification_type, university, followers_count')
+          .select('id, username, full_name, avatar_url, is_verified, verification_type, university, followers_count, last_seen')
           .eq('university', userUniversity)
           .order('followers_count', { ascending: false })
-          .limit(30)
+          .limit(40)
           .then(r => r.data ?? [])
       : Promise.resolve([]),
+    // Recently active users (last seen within 7 days)
+    supabase
+      .from('profiles')
+      .select('id, username, full_name, avatar_url, is_verified, verification_type, university, followers_count, last_seen')
+      .gte('last_seen', sevenDaysAgo)
+      .order('last_seen', { ascending: false })
+      .limit(30)
+      .then(r => r.data ?? []),
   ]);
 
   const seen = new Set<string>();
@@ -369,6 +380,15 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
         seen.add(u.id);
         const mutualFollows = fofMap.get(u.id) ?? 0;
         const sameUniversity = !!(userUniversity && u.university === userUniversity);
+
+        // Activity recency bonus
+        let activityBonus = 0;
+        if (u.last_seen) {
+          const diff = Date.now() - new Date(u.last_seen).getTime();
+          if (diff < 86400000) activityBonus = 12;        // active today
+          else if (diff < 7 * 86400000) activityBonus = 6; // active this week
+        }
+
         candidates.push({
           ...u,
           mutual_follows: mutualFollows,
@@ -377,6 +397,7 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
           _score:
             mutualFollows * 20 +
             (sameUniversity ? 15 : 0) +
+            activityBonus +
             Math.log1p(u.followers_count ?? 0),
         });
       }

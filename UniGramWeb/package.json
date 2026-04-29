@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@next/swc-win32-x64-msvc": "^14.2.3",
+    "@supabase/ssr": "^0.4.1",
     "@supabase/supabase-js": "^2.43.2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.378.0",

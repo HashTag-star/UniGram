@@ -47,6 +47,7 @@ import {
 import { createDirectConversation } from '../services/messages';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -874,6 +875,7 @@ interface MarketScreenProps {
 export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible, isSuspended }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
 
   // Auth
@@ -950,8 +952,8 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
           setSavedIds(savedSet);
           _cachedSavedIds = savedSet;
         }
-      } catch (e) {
-        console.error('loadBrowse', e);
+      } catch (e: any) {
+        showToast(e?.message || 'Failed to load market.', 'error');
       } finally {
         setBrowseLoading(false);
         setRefreshing(false);

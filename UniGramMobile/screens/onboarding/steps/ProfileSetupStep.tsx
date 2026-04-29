@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Animated, ActivityIndicator, Alert,
-  KeyboardAvoidingView, Platform, Modal, FlatList, SafeAreaView,
+  KeyboardAvoidingView, Platform, Modal, FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { updateProfileSetup } from '../../../services/onboarding';
 import { useHaptics } from '../../../hooks/useHaptics';

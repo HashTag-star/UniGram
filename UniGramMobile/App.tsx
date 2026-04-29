@@ -38,6 +38,7 @@ import { registerForPushNotifications, onNotificationResponseReceived } from './
 import { supabase } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { PopupProvider } from './context/PopupContext';
+import { ToastProvider } from './context/ToastContext';
 // Screens will be loaded dynamically if safe
 // import { LiveScreen } from './screens/LiveScreen';
 // import { MediaEditScreen } from './screens/MediaEditScreen';
@@ -46,6 +47,7 @@ import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
 import { runOnJS } from 'react-native-worklets';
 import { useHaptics as useAppHaptics } from './hooks/useHaptics';
+import { useLastSeen } from './hooks/useLastSeen';
 import { setAudioModeAsync } from 'expo-audio';
 
 type Tab = 'feed' | 'explore' | 'reels' | 'market' | 'messages' | 'profile';
@@ -470,6 +472,8 @@ function AppShell() {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [minSplashDone, setMinSplashDone] = useState(false);
 
+  useLastSeen(session?.user?.id ?? null);
+
   // Configure audio session once on startup so UniGram never interrupts
   // background music when its own sounds are muted or idle.
   useEffect(() => {
@@ -711,9 +715,55 @@ function AppShell() {
         }
         break;
 
+      case 'new_post':
+        // New post from someone you follow → open the post
+        if (postId) {
+          supabase
+            .from('posts')
+            .select('*, profiles(id, username, avatar_url, is_verified, verification_type)')
+            .eq('id', postId)
+            .single()
+            .then(({ data: post }) => {
+              if (post) {
+                setNotifPost(post);
+              } else {
+                setActiveTab('feed');
+              }
+            });
+        } else {
+          setActiveTab('feed');
+        }
+        break;
+
+      case 'new_story':
+        // Story from someone you follow → go to feed (story bar is at top)
+        setActiveTab('feed');
+        break;
+
+      case 'live_started': {
+        // Someone you follow started a live → navigate to feed and open the live
+        const sessionId = data.sessionId || postId;
+        if (sessionId) {
+          supabase
+            .from('live_sessions')
+            .select('*, profiles(id, username, avatar_url)')
+            .eq('id', sessionId)
+            .eq('status', 'live')
+            .single()
+            .then(({ data: ls }) => {
+              setActiveTab('feed');
+              if (ls) {
+                setTimeout(() => DeviceEventEmitter.emit('JOIN_LIVE_SESSION', ls), 400);
+              }
+            });
+        } else {
+          setActiveTab('feed');
+        }
+        break;
+      }
+
       case 'reel_like':
       case 'reel_comment':
-        // Navigate to Reels tab; can't deep-link to a specific reel yet
         setActiveTab('reels');
         break;
 
@@ -1119,14 +1169,16 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
-        <PopupProvider>
-          <BottomSheetModalProvider>
-            <SafeAreaProvider>
-              <AppShell />
-              <PremiumUploadToast />
-            </SafeAreaProvider>
-          </BottomSheetModalProvider>
-        </PopupProvider>
+        <SafeAreaProvider>
+          <PopupProvider>
+            <ToastProvider>
+              <BottomSheetModalProvider>
+                <AppShell />
+                <PremiumUploadToast />
+              </BottomSheetModalProvider>
+            </ToastProvider>
+          </PopupProvider>
+        </SafeAreaProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

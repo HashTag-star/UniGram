@@ -72,6 +72,7 @@ import { initiateCall, CallRecord, CallType } from '../services/calls';
 import { CallScreen } from './CallScreen';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
+import { useToast } from '../context/ToastContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -2207,6 +2208,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const [convs, setConvs] = useState<any[]>([]);
   const [filteredConvs, setFilteredConvs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2223,8 +2225,8 @@ const ConversationList: React.FC<ConversationListProps> = ({
       const data = await getConversations(currentUserId);
       setConvs(data);
       setFilteredConvs(data);
-    } catch (e) {
-      console.error('getConversations failed:', e);
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to load messages.', 'error');
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -2537,6 +2539,7 @@ interface MessagesScreenProps {
 export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onChatStateChange, initialConv, isVisible }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const [screenState, setScreenState] = useState<ScreenState>('list');
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUsername, setCurrentUsername] = useState('Messages');

@@ -88,17 +88,12 @@ export default function VerificationsPage() {
   };
 
   const runAiScan = async () => {
-    const geminiKey = localStorage.getItem("unigram_gemini_key") || "";
-    if (!geminiKey) {
-      setErrorMessage("No Gemini API key found. Configure it on the AI Regulator page first.");
-      return;
-    }
     setAiScanning(true);
     setAiFindings([]);
     setErrorMessage(null);
     try {
       const { data, error } = await supabase.functions.invoke('ai-regulation-scan', {
-        body: { apiKey: geminiKey },
+        body: {},
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
