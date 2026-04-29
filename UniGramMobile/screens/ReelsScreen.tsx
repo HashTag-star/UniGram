@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, Dimensions, StatusBar, Pressable, Animated,
-  ActivityIndicator, Alert, PanResponder,
+  ActivityIndicator, Alert, PanResponder, AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -806,6 +806,15 @@ export const ReelsScreen: React.FC<{
 }> = ({ onBack, isMuted, setIsMuted, initialReelId, initialReels }) => {
   // Pre-populate with the tapped reel at index 0 for instant display — full list
   // loads in the background and is merged in without disrupting playback.
+  const [isAppActive, setIsAppActive] = useState(true);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', nextAppState => {
+      setIsAppActive(nextAppState === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+
   const [reels, setReels] = useState<any[]>(() => {
     if (initialReelId && initialReels?.length) {
       const idx = initialReels.findIndex(r => r.id === initialReelId);
@@ -958,7 +967,7 @@ export const ReelsScreen: React.FC<{
               currentUserId={currentUserId}
               isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
               isFollowingUser={followingIds.has(item.profiles?.id)}
-              isActive={index === activeIndex}
+              isActive={index === activeIndex && isAppActive}
               isAdjacent={Math.abs(index - activeIndex) === 1}
               muted={isMuted}
               onMuteToggle={() => setIsMuted(!isMuted)}

@@ -483,7 +483,7 @@ function AppShell() {
       // Individual video players switch to 'duckOthers' only when the user unmutes.
       interruptionMode: 'mixWithOthers',
       // Android: same intent — don't steal focus from background music.
-      interruptionModeAndroid: 'duckOthers',
+      interruptionModeAndroid: 'mixWithOthers',
       shouldPlayInBackground: false,
     }).catch(() => {});
   }, []);

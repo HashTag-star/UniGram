@@ -141,7 +141,7 @@ export async function createPost(
 
       // Batch insert in-app notifications
       for (let i = 0; i < notifRows.length; i += 500) {
-        await supabase.from('notifications').insert(notifRows.slice(i, i + 500)).catch(() => {});
+        await supabase.from('notifications').insert(notifRows.slice(i, i + 500));
       }
 
       // Push devices — fire-and-forget per follower
@@ -178,6 +178,28 @@ export async function updatePost(postId: string, userId: string, updates: { capt
 export async function deletePost(postId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  // 1. Get post data to find media path
+  const { data: post } = await supabase
+    .from('posts')
+    .select('media_url')
+    .eq('id', postId)
+    .eq('user_id', userId)
+    .single();
+
+  // 2. Delete associated file from storage if it exists
+  if (post?.media_url) {
+    try {
+      // Extract path: "https://.../bucket/userId/timestamp.ext" -> "userId/timestamp.ext"
+      const pathParts = post.media_url.split('/');
+      const path = pathParts.slice(-2).join('/');
+      await supabase.storage.from('post-media').remove([path]);
+    } catch (err) {
+      console.warn('Failed to cleanup post media:', err);
+    }
+  }
+
+  // 3. Delete from database
   const { error } = await supabase.from('posts').delete().eq('id', postId).eq('user_id', userId);
   if (error) throw error;
 }
@@ -246,6 +268,116 @@ export async function unsavePost(postId: string, userId: string) {
 export async function getLikedPostIds(userId: string): Promise<string[]> {
   const { data } = await supabase.from('post_likes').select('post_id').eq('user_id', userId);
   return data?.map((r: any) => r.post_id) ?? [];
+}
+
+// ─── Reposts ──────────────────────────────────────────────────────────────────
+
+export async function repostPost(postId: string, userId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  const { error } = await supabase.from('post_reposts').insert({ post_id: postId, user_id: userId });
+  if (error && error.code !== '23505') throw error;
+
+  // Create a repost entry so it appears in the user's profile + followers' feeds
+  await supabase.from('posts').insert({
+    user_id: userId,
+    type: 'repost',
+    repost_of: postId,
+    caption: null,
+    media_urls: [],
+  });
+
+  try { await supabase.rpc('increment_post_reposts', { p_post_id: postId, delta: 1 }); } catch {}
+
+  // Notify original author
+  try {
+    const { data: orig } = await supabase.from('posts').select('user_id').eq('id', postId).single();
+    const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
+    if (orig && orig.user_id !== userId) {
+      await createNotification({
+        user_id: orig.user_id,
+        actor_id: userId,
+        type: 'repost',
+        post_id: postId,
+        text: `🔁 @${actor?.username || 'someone'} reposted your post`,
+      });
+    }
+  } catch {}
+}
+
+export async function unrepostPost(postId: string, userId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  await supabase.from('post_reposts').delete().eq('post_id', postId).eq('user_id', userId);
+  await supabase.from('posts').delete().eq('repost_of', postId).eq('user_id', userId);
+  try { await supabase.rpc('increment_post_reposts', { p_post_id: postId, delta: -1 }); } catch {}
+}
+
+export async function getRepostedPostIds(userId: string): Promise<string[]> {
+  const { data } = await supabase.from('post_reposts').select('post_id').eq('user_id', userId);
+  return data?.map((r: any) => r.post_id) ?? [];
+}
+
+export async function quotePost(postId: string, userId: string, caption: string): Promise<any> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  const { data, error } = await supabase
+    .from('posts')
+    .insert({
+      user_id: userId,
+      type: 'quote',
+      quote_of: postId,
+      caption,
+      media_urls: [],
+    })
+    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .single();
+  if (error) throw error;
+
+  // Notify original author
+  try {
+    const { data: orig } = await supabase.from('posts').select('user_id').eq('id', postId).single();
+    const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
+    if (orig && orig.user_id !== userId) {
+      const preview = caption.substring(0, 40) + (caption.length > 40 ? '…' : '');
+      await createNotification({
+        user_id: orig.user_id,
+        actor_id: userId,
+        type: 'quote',
+        post_id: postId,
+        text: `💬 @${actor?.username || 'someone'} quoted your post: "${preview}"`,
+      });
+    }
+  } catch {}
+
+  return data;
+}
+
+// Batch-enriches a post list with the original post data for reposts/quotes.
+// Avoids N+1 queries by collecting all IDs and doing one SELECT.
+export async function enrichWithOriginalPosts(posts: any[]): Promise<any[]> {
+  const ids = new Set<string>();
+  posts.forEach((p: any) => {
+    if (p.repost_of) ids.add(p.repost_of);
+    if (p.quote_of) ids.add(p.quote_of);
+  });
+  if (ids.size === 0) return posts;
+
+  const { data: originals } = await supabase
+    .from('posts')
+    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .in('id', Array.from(ids));
+
+  const map = new Map((originals ?? []).map((p: any) => [p.id, p]));
+
+  return posts.map((p: any) => ({
+    ...p,
+    repost_post: p.repost_of ? (map.get(p.repost_of) ?? null) : null,
+    quote_post: p.quote_of ? (map.get(p.quote_of) ?? null) : null,
+  }));
 }
 
 export async function getPostLikers(postId: string): Promise<any[]> {

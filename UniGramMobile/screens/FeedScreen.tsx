@@ -23,6 +23,8 @@ import { Ionicons, FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useAudioPlayer } from 'expo-audio';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
@@ -30,10 +32,12 @@ import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
-import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, deletePost, reportContent, getPostLikers } from '../services/posts';
+import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, getRepostedPostIds, repostPost, unrepostPost, quotePost, enrichWithOriginalPosts, deletePost, reportContent, getPostLikers } from '../services/posts';
 import { UsersListSheet } from '../components/UsersListSheet';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
-import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
+import { QuotePostCard } from '../components/QuotePostCard';
+import { RepostSheet } from '../components/RepostSheet';
+import { getActiveStories, markStoryViewed, getViewedStoryIds, createStory, createStoryFromPost, getStoryStats, likeStory, unlikeStory, getStoryViewers, deleteStory } from '../services/stories';
 import { createDirectConversation, sendMessage as sendDM } from '../services/messages';
 import { sendPushToUser } from '../services/pushNotifications';
 import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions, getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
@@ -89,6 +93,11 @@ interface Post {
   song?: string | null;
   likes_count?: number;
   comments_count?: number;
+  reposts_count?: number;
+  repost_of?: string | null;
+  quote_of?: string | null;
+  repost_post?: any | null;
+  quote_post?: any | null;
   created_at: string;
   profiles?: PostProfile | null;
   tagged_users?: string[];
@@ -100,6 +109,7 @@ interface FeedPostProps {
   currentUserId: string;
   isLiked?: boolean;
   isSaved?: boolean;
+  isReposted?: boolean;
   isMuted?: boolean;
   isActive?: boolean;
   setIsMuted?: (m: boolean) => void;
@@ -120,6 +130,7 @@ let cachedFeedPosts: any[] = [];
 let cachedStoryGroups: any[] = [];
 let cachedLikedIds: Set<string> | null = null;
 let cachedSavedIds: Set<string> | null = null;
+let cachedRepostedIds: Set<string> | null = null;
 let cachedCurrentProfile: any = null;
 
 function clearFeedCache() {
@@ -127,6 +138,7 @@ function clearFeedCache() {
   cachedStoryGroups = [];
   cachedLikedIds = null;
   cachedSavedIds = null;
+  cachedRepostedIds = null;
   cachedCurrentProfile = null;
 }
 
@@ -500,6 +512,14 @@ const StoryViewer: React.FC<{
 
   const isOwner = group.profile.id === currentUserId;
 
+  function onUserPress(profile: any) {
+    throw new Error('Function not implemented.');
+  }
+
+  function medium() {
+    throw new Error('Function not implemented.');
+  }
+
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={sv.bg}>
@@ -527,21 +547,33 @@ const StoryViewer: React.FC<{
         </View>
 
         <View style={[sv.header, { top: insets.top + 20 }]}>
-          <TouchableOpacity onPress={onClose} style={sv.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
           <View style={sv.headerLeft}>
-            {group.profile.avatar_url
-              ? <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
-              : <View style={[sv.avatar, { backgroundColor: '#333' }]} />}
-            <View style={{ marginLeft: 8 }}>
-              <Text style={sv.username}>{isOwner ? 'My status' : group.profile.username}</Text>
-              <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
+            <TouchableOpacity onPress={() => { setPaused(true); onUserPress?.(group.profile); }}>
+              {group.profile.avatar_url
+                ? <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
+                : <View style={[sv.avatar, { backgroundColor: '#333' }]} />}
+            </TouchableOpacity>
+            <View style={{ marginLeft: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={sv.username}>{isOwner ? 'Your story' : group.profile.username}</Text>
+                <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
+              </View>
+              {story.song && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                  <Ionicons name="musical-note" size={10} color="#fff" />
+                  <Text style={sv.songText} numberOfLines={1}>{story.song}</Text>
+                </View>
+              )}
             </View>
           </View>
-          <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={12}>
+              <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onClose} style={sv.iconBtn} hitSlop={12}>
+              <Ionicons name="close" size={26} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {story.caption ? (
@@ -560,71 +592,64 @@ const StoryViewer: React.FC<{
         </View>
 
         {isTyping && (
-          <View style={[sv.reactionOverlay, { bottom: insets.bottom + 80 }]}>
+          <View style={[sv.reactionOverlay, { bottom: insets.bottom + 84 }]}>
             {['😂', '😮', '😍', '😢', '🔥', '👏'].map(emoji => (
-              <TouchableOpacity 
-                key={emoji} 
-                style={sv.reactionItem} 
-                onPress={() => toggleLike(emoji)}
-              >
+              <TouchableOpacity key={emoji} style={sv.reactionItem} onPress={() => { medium(); toggleLike(emoji); }}>
                 <Text style={{ fontSize: 28 }}>{emoji}</Text>
               </TouchableOpacity>
             ))}
           </View>
         )}
 
-        <View style={[sv.replyRow, { paddingBottom: insets.bottom + 12 }]}>
-          {isOwner ? (
-            <>
+        <View style={[sv.replyRow, { paddingBottom: insets.bottom + 16 }]}>
+          {!isOwner ? (
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <BlurView intensity={25} tint="dark" style={sv.replyBlurPill}>
+                <TextInput
+                  style={sv.replyTextInput}
+                  placeholder="Send message"
+                  placeholderTextColor="rgba(255,255,255,0.7)"
+                  value={reply}
+                  onChangeText={setReply}
+                  onFocus={() => { setIsTyping(true); setPaused(true); }}
+                  onBlur={() => { if (!reply) { setIsTyping(false); setPaused(false); } }}
+                  onSubmitEditing={submitReply}
+                  returnKeyType="send"
+                />
+              </BlurView>
+              
+              {!isTyping && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                  <TouchableOpacity onPress={() => { medium(); toggleLike(); }}>
+                    <Ionicons 
+                      name={stats.isLiked ? 'heart' : 'heart-outline'} 
+                      size={26} 
+                      color={stats.isLiked ? '#ff2d55' : '#fff'} 
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => Share.share({ url: story.media_url })}>
+                    <Ionicons name="paper-plane-outline" size={24} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              )}
+              
+              {isTyping && reply.trim().length > 0 && (
+                <TouchableOpacity onPress={submitReply} style={{ paddingRight: 4 }}>
+                  <Text style={sv.sendBtnText}>Send</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
               <TouchableOpacity style={sv.viewersPill} onPress={() => setShowViewers(true)}>
                 <Ionicons name="eye-outline" size={18} color="#fff" />
                 <Text style={sv.viewersCount}>{stats.views}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1 }} />
-              <TouchableOpacity style={sv.shareIconBtn}>
-                <FontAwesome name="facebook" size={22} color="#fff" />
+              <TouchableOpacity style={sv.shareIconBtn} onPress={() => Share.share({ url: story.media_url })}>
+                <Ionicons name="share-outline" size={22} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity style={sv.shareIconBtn}>
-                <FontAwesome name="instagram" size={22} color="#fff" />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              {!isTyping ? (
-                <TouchableOpacity
-                  style={sv.replyInputTouchable}
-                  onPress={() => { setIsTyping(true); setPaused(true); }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={sv.replyPlaceholder}>Reply…</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={[sv.replyInput, sv.replyInputActive]}>
-                  <TextInput
-                    style={sv.replyTextInput}
-                    placeholder="Reply…"
-                    placeholderTextColor="rgba(255,255,255,0.5)"
-                    value={reply}
-                    onChangeText={setReply}
-                    onFocus={() => { setIsTyping(true); setPaused(true); }}
-                    onBlur={() => { if (!reply) { setIsTyping(false); setPaused(false); } }}
-                    onSubmitEditing={submitReply}
-                    returnKeyType="send"
-                    autoFocus
-                  />
-                  {reply.trim().length > 0 && (
-                    <TouchableOpacity onPress={submitReply} style={{ paddingLeft: 8 }}>
-                      <Text style={sv.sendBtnText}>Send</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-              {!isTyping && (
-                <TouchableOpacity style={sv.replyHeart} onPress={() => toggleLike()}>
-                  <Ionicons name={stats.isLiked ? 'heart' : 'heart-outline'} size={28} color={stats.isLiked ? '#ff3b30' : '#fff'} />
-                </TouchableOpacity>
-              )}
-            </>
+            </View>
           )}
         </View>
 
@@ -1128,7 +1153,7 @@ const ImageViewerModal: React.FC<{
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                   <Text style={ivStyles.authorName}>{profile?.username ?? 'user'}</Text>
                   {profile?.is_verified && (
-                    <VerifiedBadge type={profile.verification_type} size="sm" />
+                    <VerifiedBadge type={profile.verification_type as any} size="sm" />
                   )}
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -1305,9 +1330,10 @@ const ivStyles = StyleSheet.create({
 });
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
   const { medium, success, selection } = useHaptics();
 
   // Self-managed active state — driven by 'feedActivePost' events so the parent
@@ -1315,7 +1341,16 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   // Self-managed active state — driven by 'feedActivePost' events 
   // or explicitly passed via prop (e.g. from Detail modals)
   const [isActiveInternal, setIsActiveInternal] = useState(false);
-  const isActive = isActiveProp ?? isActiveInternal;
+  const [isAppActive, setIsAppActive] = useState(true);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', nextAppState => {
+      setIsAppActive(nextAppState === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+
+  const isActive = (isActiveProp ?? isActiveInternal) && isAppActive;
 
   useEffect(() => {
     if (isActiveProp !== undefined) return; // Prop takes priority, skip listener
@@ -1328,6 +1363,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [showOptions, setShowOptions] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showRepostSheet, setShowRepostSheet] = useState(false);
   const [showLikers, setShowLikers] = useState(false);
   // If a post has >= 5 pending reports it's soft-hidden; user can reveal it
   const [showFlagged, setShowFlagged] = useState(false);
@@ -1335,6 +1371,8 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [liked, setLiked] = useState(isLiked);
   const [likes, setLikes] = useState(post.likes_count ?? 0);
   const [saved, setSaved] = useState(isSaved);
+  const [reposted, setReposted] = useState(isReposted);
+  const [repostCount, setRepostCount] = useState(post.reposts_count ?? 0);
   const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
   const [fullVideoUri, setFullVideoUri] = useState<string | null>(null);
   const [showImageViewer, setShowImageViewer] = useState(false);
@@ -1368,6 +1406,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       lastIsSaved.current = isSaved;
     }
   }, [isSaved]);
+  const lastIsReposted = useRef(isReposted);
+  useEffect(() => {
+    if (lastIsReposted.current !== isReposted) {
+      setReposted(isReposted);
+      lastIsReposted.current = isReposted;
+    }
+  }, [isReposted]);
 
   // Cleanup overlay timer on unmount
   useEffect(() => () => { if (heartOverlayTimer.current) clearTimeout(heartOverlayTimer.current); }, []);
@@ -1584,6 +1629,41 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     } catch {}
   };
 
+  const doRepost = async () => {
+    const next = !reposted;
+    setReposted(next);
+    setRepostCount((c: number) => Math.max(0, c + (next ? 1 : -1)));
+    if (next) await selection();
+    try {
+      if (next) await repostPost(post.id, currentUserId);
+      else await unrepostPost(post.id, currentUserId);
+    } catch {
+      setReposted(!next);
+      setRepostCount((c: number) => Math.max(0, c + (next ? -1 : 1)));
+    }
+  };
+
+  const doQuote = async (caption: string) => {
+    try {
+      await quotePost(post.id, currentUserId, caption);
+      await success();
+      showToast('Quote post published!', 'success');
+    } catch (e: any) {
+      showToast(e?.message || 'Could not publish quote', 'error');
+    }
+  };
+
+  const doRepostToStory = async () => {
+    try {
+      await createStoryFromPost(currentUserId, post);
+      await success();
+      showToast('Added to your story!', 'success');
+    } catch (e: any) {
+      const msg = (e as any)?.message;
+      showToast(msg === 'no_media' ? 'Only image and video posts can be added to story.' : (msg || 'Could not add to story'), 'error');
+    }
+  };
+
   const profile = post.profiles;
 
   // Soft-hide: post has been reported but not yet removed
@@ -1688,7 +1768,10 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         post={post}
         currentUserId={currentUserId}
         isSaved={saved}
+        isReposted={reposted}
         onSave={toggleSave}
+        onRepost={() => { setShowOptions(false); setShowRepostSheet(true); }}
+        onQuote={() => { setShowOptions(false); setShowRepostSheet(true); }}
         onDelete={handleDeletePost}
         onReport={handleReport}
         onBlock={handleBlock}
@@ -1708,7 +1791,25 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         }}
       />
 
-      {post.type !== 'thread' && (post.media_url || (post.media_urls && post.media_urls.length > 0)) ? (
+      {/* Repost banner — shown when this post itself is a repost of another */}
+      {post.type === 'repost' && post.repost_post && (
+        <>
+          <View style={[styles.repostBanner, { borderColor: colors.border }]}>
+            <Ionicons name="repeat" size={13} color="#22c55e" />
+            <Text style={[styles.repostBannerText, { color: colors.textMuted }]}>
+              Repost of @{post.repost_post.profiles?.username ?? 'user'}
+            </Text>
+          </View>
+          <QuotePostCard post={post.repost_post} />
+        </>
+      )}
+
+      {/* Quote card — shown below caption when this post quotes another */}
+      {post.type === 'quote' && post.quote_post && (
+        <QuotePostCard post={post.quote_post} />
+      )}
+
+      {post.type !== 'thread' && post.type !== 'repost' && (post.media_url || (post.media_urls && post.media_urls.length > 0)) ? (
         <View>
           <MediaCarousel 
             mediaUrls={post.media_urls && post.media_urls.length > 0 ? post.media_urls : [post.media_url!]}
@@ -1749,10 +1850,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             <Ionicons name="heart" size={90} color="#fff" />
           </Animated.View>
         </View>
-      ) : post.type === 'thread' ? (
+      ) : post.type === 'thread' || post.type === 'quote' ? (
         <View style={styles.threadBadge}>
           <Ionicons name="chatbubbles-outline" size={12} color={colors.textMuted} />
-          <Text style={[styles.threadLabel, { color: colors.textMuted }]}>Thread</Text>
+          <Text style={[styles.threadLabel, { color: colors.textMuted }]}>
+            {post.type === 'quote' ? 'Quote' : 'Thread'}
+          </Text>
         </View>
       ) : null}
 
@@ -1763,10 +1866,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
             </Animated.View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => {
-            onOpenComments?.(post.id, post.user_id);
-          }}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => onOpenComments?.(post.id, post.user_id)}>
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowRepostSheet(true)}>
+            <Ionicons name="repeat" size={25} color={reposted ? '#22c55e' : colors.text} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={async () => {
             setShowShare(true);
@@ -1788,11 +1892,14 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             </TouchableOpacity>
           )}
           {commentCount > 0 && (
-            <TouchableOpacity onPress={() => {
-              onOpenComments?.(post.id, post.user_id);
-            }}>
+            <TouchableOpacity onPress={() => onOpenComments?.(post.id, post.user_id)}>
               <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>{fmtCount(commentCount)} comments</Text>
             </TouchableOpacity>
+          )}
+          {repostCount > 0 && (
+            <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>
+              {fmtCount(repostCount)} reposts
+            </Text>
           )}
         </View>
         {post.caption ? (
@@ -1808,6 +1915,17 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         visible={showShare}
         onClose={() => setShowShare(false)}
         content={{ type: 'post', id: post.id, thumbnail: post.media_url!, username: profile?.username }}
+      />
+
+      <RepostSheet
+        visible={showRepostSheet}
+        onClose={() => setShowRepostSheet(false)}
+        post={post}
+        isReposted={reposted}
+        hasMedia={!!(post.media_url || (post.media_urls && post.media_urls.length > 0))}
+        onRepost={doRepost}
+        onQuote={doQuote}
+        onRepostToStory={doRepostToStory}
       />
 
       <UsersListSheet
@@ -2016,6 +2134,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const toastAnim = useRef(new Animated.Value(-100)).current;
   const [likedIds, setLikedIds] = useState<Set<string>>(cachedLikedIds ?? new Set());
   const [savedIds, setSavedIds] = useState<Set<string>>(cachedSavedIds ?? new Set());
+  const [repostedIds, setRepostedIds] = useState<Set<string>>(cachedRepostedIds ?? new Set());
   const [viewedIds, setViewedIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState('');
   const currentUserIdRef = useRef('');
@@ -2115,7 +2234,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       // Fetch first page + supporting data in parallel
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       
-      const [postsData, storiesData, lRes, likedData, savedData, viewedData, prof, reelsData, usersData, fc] = await Promise.all([
+      const [postsData, storiesData, lRes, likedData, savedData, repostedData, viewedData, prof, reelsData, usersData, fc] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
         getActiveStories(),
         supabase.from('live_sessions')
@@ -2124,6 +2243,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           .gt('created_at', twelveHoursAgo),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
+        getRepostedPostIds(user.id).catch(() => [] as string[]),
         getViewedStoryIds(user.id),
         supabase.from('profiles')
           .select('id, username, full_name, avatar_url, is_verified, verification_type, university')
@@ -2132,6 +2252,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         getFollowSuggestions(user.id, 8).catch(() => []),
         getUserFollowCount(user.id).catch(() => 999),
       ]);
+
+      // Enrich posts that are reposts/quotes with their original post data
+      const enrichedPosts = await enrichWithOriginalPosts(postsData).catch(() => postsData);
 
       setCurrentProfile(prof);
       setLiveSessions(lRes.data ?? []);
@@ -2146,8 +2269,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
+      setRepostedIds(new Set(repostedData));
       setViewedIds(viewedData);
-      setHasMore(postsData.length === FEED_PAGE);
+      setHasMore(enrichedPosts.length === FEED_PAGE);
       pageRef.current = 0;
       lastLoadedRef.current = Date.now();
 
@@ -2155,22 +2279,22 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         // Stale-while-revalidate: merge without reordering visible posts
         setPosts(prev => {
           const map = new Map(prev.map((p: any) => [p.id, p]));
-          postsData.forEach((p: any) => {
+          enrichedPosts.forEach((p: any) => {
             if (map.has(p.id)) map.set(p.id, { ...map.get(p.id), ...p });
-            else map.set(p.id, p); // new post at top handled below
+            else map.set(p.id, p);
           });
-          // Prepend genuinely new posts
-          const newOnes = postsData.filter((p: any) => !prev.find((pp: any) => pp.id === p.id));
+          const newOnes = enrichedPosts.filter((p: any) => !prev.find((pp: any) => pp.id === p.id));
           return [...newOnes, ...Array.from(map.values()).filter((p: any) => !newOnes.find((n: any) => n.id === p.id))];
         });
       } else {
-        setPosts(postsData);
+        setPosts(enrichedPosts);
       }
 
-      cachedFeedPosts = postsData;
+      cachedFeedPosts = enrichedPosts;
       cachedStoryGroups = storiesData;
       cachedLikedIds = new Set(likedData);
       cachedSavedIds = new Set(savedData);
+      cachedRepostedIds = new Set(repostedData);
       cachedCurrentProfile = prof;
     } catch (e: any) {
       showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
@@ -2594,6 +2718,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               currentUserId={currentUserId}
               isLiked={likedIds.has(item.id)}
               isSaved={savedIds.has(item.id)}
+              isReposted={repostedIds.has(item.id)}
               isMuted={isMuted}
               setIsMuted={setIsMuted}
               onCommentCountChange={handleCommentCountChange}
@@ -2622,7 +2747,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               }}
             />
           );
-        }, [likedIds, savedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
+        }, [likedIds, savedIds, repostedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}
@@ -2784,6 +2909,8 @@ const styles = StyleSheet.create({
   songBannerHint: { fontSize: 10, color: 'rgba(244,63,94,0.5)' },
   threadBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingVertical: 6 },
   threadLabel: { fontSize: 10, color: 'rgba(255,255,255,0.3)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
+  repostBanner: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingTop: 4, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth },
+  repostBannerText: { fontSize: 12, fontWeight: '500' },
   postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 6 },
   actionBtn: { padding: 6 },
   postInfo: { paddingHorizontal: 14, paddingBottom: 14 },
@@ -2828,22 +2955,42 @@ const styles = StyleSheet.create({
 
 const sv = StyleSheet.create({
   bg: { flex: 1, backgroundColor: '#000' },
-  topGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 140, backgroundColor: 'rgba(0,0,0,0.5)' },
-  bottomGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 160, backgroundColor: 'rgba(0,0,0,0.55)' },
-  progressRow: { flexDirection: 'row', paddingHorizontal: 8, gap: 3, position: 'absolute', left: 0, right: 0, zIndex: 10 },
-  progressTrack: { flex: 1, height: 2, backgroundColor: 'rgba(255,255,255,0.35)', borderRadius: 1, overflow: 'hidden' },
+  topGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 160 },
+  bottomGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  progressRow: { flexDirection: 'row', paddingHorizontal: 6, gap: 4, position: 'absolute', left: 0, right: 0, zIndex: 10 },
+  progressTrack: { flex: 1, height: 2, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 1, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 1 },
   header: {
     position: 'absolute', left: 0, right: 0, zIndex: 10,
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 4, gap: 2,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 8,
   },
-  backBtn: { padding: 8 },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginLeft: 4 },
-  avatar: { width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)' },
-  username: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  time: { color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 1 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginLeft: 8 },
+  avatar: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  username: { color: '#fff', fontWeight: '700', fontSize: 13.5, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  time: { color: 'rgba(255,255,255,0.65)', fontSize: 13, marginLeft: 4 },
+  songText: { color: '#fff', fontSize: 11.5, fontWeight: '500', maxWidth: width * 0.5 },
   iconBtn: { padding: 8 },
+  replyRow: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, zIndex: 10,
+  },
+  replyBlurPill: {
+    flex: 1,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    overflow: 'hidden',
+    paddingHorizontal: 20,
+    justifyContent: 'center',
+  },
+  replyTextInput: {
+    color: '#fff',
+    fontSize: 15,
+    padding: 0,
+  },
   captionBox: {
     position: 'absolute', bottom: 130, left: 24, right: 24,
     alignItems: 'center',
@@ -2856,11 +3003,13 @@ const sv = StyleSheet.create({
     textShadowRadius: 6,
   },
   tapRow: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
-  replyRow: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 12, paddingTop: 10, zIndex: 10,
+  reactionOverlay: {
+    position: 'absolute', left: 20, right: 20, zIndex: 1000,
+    backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: 30,
+    flexDirection: 'row', padding: 10, justifyContent: 'space-between'
   },
+  reactionItem: { padding: 4 },
+  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
   // Own status bottom
   viewersPill: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -2873,27 +3022,6 @@ const sv = StyleSheet.create({
     backgroundColor: 'rgba(30,30,30,0.85)',
     alignItems: 'center', justifyContent: 'center',
   },
-  // Others' status bottom
-  replyInputTouchable: {
-    flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)',
-    borderRadius: 28, paddingHorizontal: 18, paddingVertical: 11,
-  },
-  replyPlaceholder: { color: 'rgba(255,255,255,0.55)', fontSize: 15 },
-  replyInput: {
-    flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
-    borderRadius: 28, paddingHorizontal: 16, paddingVertical: 8,
-    flexDirection: 'row', alignItems: 'center',
-  },
-  replyInputActive: { borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.08)' },
-  replyTextInput: { flex: 1, color: '#fff', fontSize: 15, padding: 0 },
-  replyHeart: { padding: 6 },
-  reactionOverlay: {
-    position: 'absolute', left: 20, right: 20, zIndex: 1000,
-    backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: 30,
-    flexDirection: 'row', padding: 10, justifyContent: 'space-between'
-  },
-  reactionItem: { padding: 4 },
-  sendBtnText: { color: '#6366f1', fontWeight: '800', fontSize: 14 },
 });
 
 const vv = StyleSheet.create({

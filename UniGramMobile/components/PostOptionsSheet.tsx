@@ -18,6 +18,9 @@ interface PostOptionsSheetProps {
   onCopyLink?: () => void;
   onSave?: () => void;
   isSaved?: boolean;
+  onRepost?: () => void;
+  isReposted?: boolean;
+  onQuote?: () => void;
   onReport?: () => void;
   onBlock?: () => void;
   onNotInterested?: () => void;
@@ -25,7 +28,7 @@ interface PostOptionsSheetProps {
 
 export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
   visible, onClose, post, currentUserId, onDelete, onShare, onCopyLink, onSave, isSaved,
-  onReport, onBlock, onNotInterested,
+  onRepost, isReposted, onQuote, onReport, onBlock, onNotInterested,
 }) => {
   const { colors } = useTheme();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -76,11 +79,22 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
           <View style={[styles.quickActions, { borderBottomColor: colors.border }]}>
             <ActionIcon name="paper-plane-outline" label="Share" onPress={onShare} />
             <ActionIcon name="link-outline" label="Link" onPress={onCopyLink} />
-            <ActionIcon 
-                name={isSaved ? "bookmark" : "bookmark-outline"} 
-                label={isSaved ? "Saved" : "Save"} 
-                onPress={onSave} 
-                color={isSaved ? "#fbbf24" : colors.text}
+            <ActionIcon
+              name={isSaved ? "bookmark" : "bookmark-outline"}
+              label={isSaved ? "Saved" : "Save"}
+              onPress={onSave}
+              color={isSaved ? "#fbbf24" : colors.text}
+            />
+            <ActionIcon
+              name="repeat"
+              label={isReposted ? "Reposted" : "Repost"}
+              onPress={() => { onClose(); onRepost?.(); }}
+              color={isReposted ? "#22c55e" : colors.text}
+            />
+            <ActionIcon
+              name="chatbubble-ellipses-outline"
+              label="Quote"
+              onPress={() => { onClose(); onQuote?.(); }}
             />
           </View>
 

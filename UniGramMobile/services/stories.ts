@@ -69,7 +69,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
       }));
 
       for (let i = 0; i < notifRows.length; i += 500) {
-        await supabase.from('notifications').insert(notifRows.slice(i, i + 500)).catch(() => {});
+        await supabase.from('notifications').insert(notifRows.slice(i, i + 500));
       }
 
       followers.forEach((f: any) => {
@@ -85,6 +85,28 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
     } catch (_) {}
   })();
 
+  return data;
+}
+
+export async function createStoryFromPost(userId: string, post: any): Promise<any> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  const mediaUrl = post.media_urls?.[0] || post.media_url;
+  if (!mediaUrl) throw new Error('no_media');
+
+  const originalUsername = post.profiles?.username || 'user';
+  const attribution = `Shared from @${originalUsername}`;
+  const caption = post.caption
+    ? `${attribution} · ${post.caption.substring(0, 120)}`
+    : attribution;
+
+  const { data, error } = await supabase
+    .from('stories')
+    .insert({ user_id: userId, media_url: mediaUrl, caption })
+    .select(`*, profiles!stories_user_id_fkey(*)`)
+    .single();
+  if (error) throw error;
   return data;
 }
 
@@ -166,6 +188,29 @@ export async function unlikeStory(storyId: string, userId: string) {
 }
 
 export async function deleteStory(storyId: string, userId: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) throw new Error('Unauthorized');
+
+  // 1. Get story data
+  const { data: story } = await supabase
+    .from('stories')
+    .select('media_url')
+    .eq('id', storyId)
+    .eq('user_id', userId)
+    .single();
+
+  // 2. Cleanup storage
+  if (story?.media_url) {
+    try {
+      const pathParts = story.media_url.split('/');
+      const path = pathParts.slice(-2).join('/');
+      await supabase.storage.from('post-media').remove([path]);
+    } catch (err) {
+      console.warn('Failed to cleanup story media:', err);
+    }
+  }
+
+  // 3. Delete from DB
   const { error } = await supabase.from('stories').delete().eq('id', storyId).eq('user_id', userId);
   if (error) throw error;
 }
