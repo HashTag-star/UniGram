@@ -98,13 +98,13 @@ export const LiveScreen: React.FC<{
   }, []);
 
   const handleStartLive = async () => {
-    haptics.selection(); // Immediate feedback
-    console.log('[Live] Button tapped');
-    
+    if (isStarting) return;
+    setIsStarting(true);
+    haptics.selection();
+
     // Ensure we have a user, try one last check if null
     let uid = currentUserId;
     if (!uid) {
-      console.log('[Live] currentUserId null, retrying auth.getUser()...');
       const { data } = await supabase.auth.getUser();
       if (data.user) {
         uid = data.user.id;
@@ -113,7 +113,7 @@ export const LiveScreen: React.FC<{
     }
 
     if (!uid) {
-      console.warn('[Live] Cannot start: currentUserId is null');
+      setIsStarting(false);
       showPopup({
         title: 'Session Error',
         message: 'Please log in again to start a live stream.',
@@ -122,8 +122,6 @@ export const LiveScreen: React.FC<{
       });
       return;
     }
-    if (isStarting) return;
-    setIsStarting(true);
     console.log('[Live] Starting live session for user:', uid);
     try {
       const id = await LiveService.startLive(uid);

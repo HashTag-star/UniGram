@@ -23,7 +23,10 @@ export function useSocialFollow(targetUserId: string, initialValue: boolean) {
 
   // Synchronize with prop changes (e.g. if parent re-fetches)
   useEffect(() => {
-    setFollowing(initialValue);
+    setFollowing(prev => {
+      if (prev !== initialValue) return initialValue;
+      return prev;
+    });
   }, [initialValue]);
 
   return [following, setFollowing] as const;
@@ -59,13 +62,19 @@ export function useSocialLike(
     };
   }, [targetId, eventType]);
 
-  // Synchronize with prop changes
+  const lastInitialRef = useRef(initialLiked);
   useEffect(() => {
-    setLiked(initialLiked);
+    if (lastInitialRef.current !== initialLiked) {
+      setLiked(initialLiked);
+      lastInitialRef.current = initialLiked;
+    }
   }, [initialLiked]);
 
   useEffect(() => {
-    setCount(initialCount);
+    setCount(prev => {
+      if (prev !== initialCount) return initialCount;
+      return prev;
+    });
   }, [initialCount]);
 
   return { liked, setLiked, count, setCount };

@@ -31,11 +31,17 @@ export const CachedImage: React.FC<Props> = ({
   }
 
   if (ExpoImage) {
+    // Map React Native resizeMode to expo-image contentFit
+    const contentFit = 
+      resizeMode === 'stretch' ? 'fill' :
+      resizeMode === 'center' ? 'scale-down' : 
+      resizeMode;
+
     return (
       <ExpoImage
         source={{ uri }}
         style={style}
-        contentFit={resizeMode}
+        contentFit={contentFit}
         cachePolicy="memory-disk"   // memory LRU + persistent disk cache
         placeholder={placeholder}
         transition={200}            // 200ms fade-in on first load only

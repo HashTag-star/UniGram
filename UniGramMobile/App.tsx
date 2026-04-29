@@ -862,7 +862,7 @@ function AppShell() {
   // Reels is full-screen video — unmount when not active to free GPU/memory.
   // Other tabs use lazy-mount + display:none: mount on first visit, keep alive after.
   const isReels = activeTab === 'reels';
-  const showTabBar = !hideTabBar;
+  const showTabBar = !hideTabBar && !isReels;
   const TAB_BAR_HEIGHT = 58;
   const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
   // Returns true if a screen should be rendered (first visit or already visited)

@@ -13,6 +13,7 @@ import { CachedImage } from '../components/CachedImage';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
+import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -26,6 +27,7 @@ import { useToast } from '../context/ToastContext';
 const { width, height } = Dimensions.get('window');
 const ITEM_HEIGHT = height;
 const TAB_BAR_HEIGHT = 58;
+const COMMENT_BAR_HEIGHT = 56;
 
 function fmtCount(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -47,33 +49,20 @@ const ReelVideo: React.FC<{
   isActive: boolean;
   isPaused: boolean;
   muted: boolean;
+  playbackRate?: number;
   onProgress: (p: number) => void;
   onPlayerReady: (player: any) => void;
-}> = ({ videoUrl, isActive, isPaused, muted, onProgress, onPlayerReady }) => {
+}> = ({ videoUrl, isActive, isPaused, muted, playbackRate = 1.0, onProgress, onPlayerReady }) => {
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
     p.muted = muted;
+    p.playbackRate = playbackRate;
     p.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
     if (isActive && !isPaused) p.play();
   });
 
-  // Stable ref so progress never causes listener teardown/rebuild
+  // Use a ref for onProgress to avoid interval re-creation when progress updates
   const onProgressRef = useRef(onProgress);
-  onProgressRef.current = onProgress;
-
-  useEffect(() => {
-    player.muted = muted;
-    player.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
-  }, [muted, player]);
-
-  useEffect(() => {
-    if (isActive && !isPaused) {
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [isActive, isPaused, player]);
-
   useEffect(() => {
     onPlayerReady(player);
   }, [player]);
@@ -121,7 +110,7 @@ const ReelItem: React.FC<{
   itemHeight: number;
   onBack?: () => void;
 }> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight, onBack }) => {
-  const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', initLiked, reel.likes_count ?? 0);
+  const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
   const viewedRef = useRef(false);
@@ -131,6 +120,8 @@ const ReelItem: React.FC<{
   const [showShare, setShowShare] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isFastForwarding, setIsFastForwarding] = useState(false);
+  const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const playerRef = useRef<any>(null);
@@ -148,6 +139,7 @@ const ReelItem: React.FC<{
   const seekFeedbackFwdOpacity = useRef(new Animated.Value(0)).current;
   const pauseOverlayOpacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const commentBarH = COMMENT_BAR_HEIGHT + insets.bottom;
   const profile = reel.profiles;
 
   // Buffering / network error state
@@ -220,10 +212,12 @@ const ReelItem: React.FC<{
   useEffect(() => {
     if (!isActive) {
       setIsPaused(false);
+      setIsFastForwarding(false);
       if (pendingPauseRef.current) {
         clearTimeout(pendingPauseRef.current);
         pendingPauseRef.current = null;
       }
+      setIsAutoPaused(false);
     }
   }, [isActive]);
 
@@ -254,11 +248,16 @@ const ReelItem: React.FC<{
     setLikes(newCount);
     SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reel.id, isActive: next, newCount });
     try {
-      if (next) await likeReel(reel.id, currentUserId);
-      else await unlikeReel(reel.id, currentUserId);
+      if (reel._isPost) {
+        if (next) await likePost(reel.id, currentUserId);
+        else await unlikePost(reel.id, currentUserId);
+      } else {
+        if (next) await likeReel(reel.id, currentUserId);
+        else await unlikeReel(reel.id, currentUserId);
+      }
     } catch (e: any) {
-      const isSchemaError = e.message?.includes('relation') || 
-                          e.message?.includes('not found') || 
+      const isSchemaError = e.message?.includes('relation') ||
+                          e.message?.includes('not found') ||
                           e.message?.includes('schema cache') ||
                           e.code === 'PGRST205';
       if (isSchemaError) return;
@@ -501,13 +500,25 @@ const ReelItem: React.FC<{
 
   return (
     <View style={[styles.reelContainer, { height: itemHeight }]}>
-      <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
+      <Pressable 
+        onPress={handleTap} 
+        onLongPress={() => {
+          if (isActive && !isPaused && !isSeeking) {
+            setIsFastForwarding(true);
+            hapticMedium();
+          }
+        }}
+        onPressOut={() => setIsFastForwarding(false)}
+        delayLongPress={250}
+        style={StyleSheet.absoluteFill}
+      >
         {(isActive || isAdjacent) && reel.video_url ? (
           <ReelVideo
             videoUrl={reel.video_url}
             isActive={isActive}
             isPaused={isPaused}
             muted={muted}
+            playbackRate={isFastForwarding ? 2.0 : 1.0}
             onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
             onPlayerReady={(p) => { playerRef.current = p; }}
           />
@@ -575,10 +586,18 @@ const ReelItem: React.FC<{
           <Ionicons name="play-forward" size={40} color="#fff" />
           <Text style={styles.seekFeedbackText}>10s</Text>
         </Animated.View>
+
+        {/* 2x Speed overlay */}
+        {isFastForwarding && (
+          <View style={styles.fastForwardBadge}>
+            <Text style={styles.fastForwardText}>2x speed</Text>
+            <Ionicons name="play-forward" size={12} color="#fff" />
+          </View>
+        )}
       </View>
 
       {/* Right actions */}
-      <View style={[styles.rightActions, { bottom: 80 }]}>
+      <View style={[styles.rightActions, { bottom: commentBarH + 80 }]}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
           <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
@@ -601,7 +620,7 @@ const ReelItem: React.FC<{
       </View>
 
       {/* Bottom info */}
-      <View style={[styles.bottomInfo, { bottom: 14 }]}>
+      <View style={[styles.bottomInfo, { bottom: commentBarH + 14 }]}>
         <View style={styles.userRow}>
           {profile?.avatar_url
             ? <CachedImage uri={profile.avatar_url} style={styles.reelAvatar} />
@@ -654,7 +673,7 @@ const ReelItem: React.FC<{
 
       {/* Seek bar — 44 px touch target, PanResponder for reliable cross-gesture handling */}
       <View
-        style={[styles.seekBarContainer, { bottom: 0 }]}
+        style={[styles.seekBarContainer, { bottom: commentBarH }]}
         onLayout={(e) => { seekContainerWidth.current = e.nativeEvent.layout.width; }}
         {...seekPanResponder.panHandlers}
       >
@@ -673,10 +692,28 @@ const ReelItem: React.FC<{
         )}
       </View>
 
+      {/* Inline comment bar — replaces navigation bar at bottom */}
+      <TouchableOpacity
+        style={[styles.commentBar, { paddingBottom: insets.bottom }]}
+        onPress={() => setShowComments(true)}
+        activeOpacity={0.85}
+      >
+        <View style={styles.commentBarPill}>
+          <Text style={styles.commentBarPlaceholder}>Add a comment…</Text>
+          <View style={styles.commentBarRight}>
+            <Text style={styles.commentBarAt}>@</Text>
+            <Ionicons name="happy-outline" size={20} color="rgba(255,255,255,0.55)" />
+            <View style={styles.gifPill}>
+              <Text style={styles.gifText}>GIF</Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+
       <CommentSheet
         visible={showComments}
         targetId={reel.id}
-        targetType="reel"
+        targetType={reel._isPost ? 'post' : 'reel'}
         currentUserId={currentUserId}
         authorId={reel.user_id}
         onClose={() => setShowComments(false)}
@@ -782,17 +819,30 @@ export const ReelsScreen: React.FC<{
     return [];
   });
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set());
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
-  const [loading, setLoading] = useState(!initialReels?.length);
+  const [containerHeight, setContainerHeight] = useState(height);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
-  // Using global muting props instead of local state
-  const [containerHeight, setContainerHeight] = useState(height); // measured on layout
+  const { showToast } = useToast();
+
+  const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
-  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+  const onViewableItemsChanged = useCallback(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
-      setActiveIndex(viewableItems[0].index ?? 0);
+      const newIndex = viewableItems[0].index ?? 0;
+      setActiveIndex(prev => {
+        if (prev !== newIndex) {
+          impactLight(); // Subtle haptic click when snapping
+          return newIndex;
+        }
+        return prev;
+      });
     }
   }, []);
 
@@ -801,43 +851,60 @@ export const ReelsScreen: React.FC<{
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
-      const [reelsData, likedData, followingData] = await Promise.all([
-        getPersonalizedReels(user.id),
+      const [reelsData, likedData, likedPostData, followingData] = await Promise.all([
+        getPersonalizedReels(user.id, 10, 0),
         getLikedReelIds(user.id),
+        getLikedPostIds(user.id),
         getFollowing(user.id),
       ]);
       setLikedIds(new Set(likedData));
+      setLikedPostIds(new Set(likedPostData));
       setFollowingIds(new Set(followingData.map((p: any) => p.id)));
       setReels(prev => {
-        if (!prev.length) {
-          // Fresh load — place initialReelId first if provided
-          if (initialReelId) {
-            const idx = reelsData.findIndex((r: any) => r.id === initialReelId);
-            if (idx > 0) {
-              const copy = [...reelsData];
-              const [clicked] = copy.splice(idx, 1);
-              return [clicked, ...copy];
-            }
-            if (idx === -1 && initialReels?.length) {
-              const fallback = initialReels.find(r => r.id === initialReelId);
-              if (fallback) return [fallback, ...reelsData];
-            }
-          }
-          return reelsData;
-        }
-        // Already showing initial reels — append personalized ones that aren't displayed yet
-        const existingIds = new Set(prev.map((r: any) => r.id));
-        const newOnes = reelsData.filter((r: any) => !existingIds.has(r.id));
-        return [...prev, ...newOnes];
+        const combined = prev.length ? [...prev, ...reelsData.filter((r: any) => !prev.some(p => p.id === r.id))] : reelsData;
+        setOffset(reelsData.length);
+        setHasMore(reelsData.length === 10);
+        return combined;
       });
-    } catch (e: any) {
-      showToast(e?.message || 'Failed to load reels.', 'error');
+    } catch (err) {
+      console.error('Reels load error:', err);
     } finally {
       setLoading(false);
     }
   }, [initialReelId, initialReels]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !currentUserId) return;
+    setLoadingMore(true);
+    try {
+      const more = await getPersonalizedReels(currentUserId, 10, offset);
+      if (more.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      setReels(prev => {
+        const next = [...prev];
+        more.forEach(m => {
+          if (!next.some(r => r.id === m.id)) next.push(m);
+        });
+        return next;
+      });
+      setOffset(prev => prev + more.length);
+      setHasMore(more.length === 10);
+    } catch (err) {
+      console.warn('Reels loadMore error:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, currentUserId, offset]);
+
+  const initialLoadRef = useRef(false);
+  useEffect(() => {
+    if (!initialLoadRef.current) {
+      load();
+      initialLoadRef.current = true;
+    }
+  }, [load]);
 
   useEffect(() => {
     const sub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
@@ -889,7 +956,7 @@ export const ReelsScreen: React.FC<{
             <ReelItem
               reel={item}
               currentUserId={currentUserId}
-              isLiked={likedIds.has(item.id)}
+              isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
               isFollowingUser={followingIds.has(item.profiles?.id)}
               isActive={index === activeIndex}
               isAdjacent={Math.abs(index - activeIndex) === 1}
@@ -908,6 +975,9 @@ export const ReelsScreen: React.FC<{
           getItemLayout={getItemLayout}
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color="#fff" style={{ marginVertical: 20 }} /> : null}
         />
       </View>
     </View>
@@ -1028,5 +1098,70 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
   },
   retryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-});
+  fastForwardBadge: {
+    position: 'absolute',
+    top: 60,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    zIndex: 10,
+  },
+  fastForwardText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 
+  // ── Inline comment bar (replaces nav bar) ─────────────────────────────────
+  commentBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  commentBarPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 24,
+    paddingLeft: 16,
+    paddingRight: 10,
+    height: 40,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  commentBarPlaceholder: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.38)',
+    fontSize: 14,
+  },
+  commentBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  commentBarAt: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  gifPill: {
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.4)',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  gifText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+});

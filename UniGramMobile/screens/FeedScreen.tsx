@@ -107,6 +107,7 @@ interface FeedPostProps {
   onOpenComments?: (id: string, authorId: string) => void;
   onDeleted?: (id: string) => void;
   onUserPress?: (profile: any) => void;
+  onVideoPress?: (post: Post, isLiked: boolean) => void;
 }
 
 function fmtCount(n: number) {
@@ -963,10 +964,17 @@ const ImageViewerModal: React.FC<{
   visible: boolean;
   uris: string[];
   initialIndex: number;
+  post: Post;
+  currentUserId: string;
+  isLiked: boolean;
+  likeCount: number;
+  commentCount: number;
   onClose: () => void;
-}> = ({ visible, uris, initialIndex, onClose }) => {
-  const [currentIdx, setCurrentIdx] = useState(initialIndex);
-  const [isZoomed, setIsZoomed] = useState(false);
+  onLike: () => void;
+  onComment: () => void;
+  onShare: () => void;
+}> = ({ visible, uris, initialIndex, post, currentUserId, isLiked, likeCount, commentCount, onClose, onLike, onComment, onShare }) => {
+  const [captionExpanded, setCaptionExpanded] = useState(false);
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -974,13 +982,16 @@ const ImageViewerModal: React.FC<{
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
+  const [isZoomed, setIsZoomed] = useState(false);
 
   useEffect(() => {
     if (visible) {
-      setCurrentIdx(initialIndex);
       setIsZoomed(false);
+      scale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
     }
-  }, [visible, initialIndex]);
+  }, [visible]);
 
   const resetZoom = () => {
     scale.value = withSpring(1);
@@ -1032,90 +1043,269 @@ const ImageViewerModal: React.FC<{
     ],
   }));
 
+  const profile = post.profiles;
+  const caption = post.caption ?? '';
+
+  const [currentIdx, setCurrentIdx] = useState(initialIndex);
+
+  useEffect(() => {
+    if (visible) setCurrentIdx(initialIndex);
+  }, [visible, initialIndex]);
+
   if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <StatusBar hidden />
-        <FlatList
-          data={uris}
-          horizontal
-          pagingEnabled
-          scrollEnabled={!isZoomed}
-          showsHorizontalScrollIndicator={false}
-          initialScrollIndex={initialIndex}
-          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-          keyExtractor={(_, i) => String(i)}
-          onScrollBeginDrag={() => resetZoom()}
-          onMomentumScrollEnd={e => {
-            setCurrentIdx(Math.round(e.nativeEvent.contentOffset.x / width));
-          }}
-          renderItem={({ item }) => (
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <StatusBar hidden />
+
+          {/* ── Image area — flex:1 so it owns all space above the bottom bar ── */}
+          {uris.length === 1 ? (
             <GestureDetector gesture={composedGesture}>
-              <View style={{ width, height: screenHeight, justifyContent: 'center', alignItems: 'center' }}>
-                <Reanimated.View style={[{ width, height: screenHeight }, animatedStyle]}>
-                  <Image
-                    source={{ uri: item }}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode="contain"
-                  />
-                </Reanimated.View>
-              </View>
+              <Reanimated.View style={[{ flex: 1 }, animatedStyle]}>
+                <Image
+                  source={{ uri: uris[0] }}
+                  style={{ flex: 1 }}
+                  resizeMode="contain"
+                />
+              </Reanimated.View>
             </GestureDetector>
+          ) : (
+            <FlatList
+              data={uris}
+              horizontal
+              pagingEnabled
+              scrollEnabled={!isZoomed}
+              showsHorizontalScrollIndicator={false}
+              initialScrollIndex={initialIndex}
+              getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+              keyExtractor={(_, i) => String(i)}
+              style={{ flex: 1 }}
+              onScrollBeginDrag={resetZoom}
+              onMomentumScrollEnd={(e) => {
+                resetZoom();
+                setCurrentIdx(Math.round(e.nativeEvent.contentOffset.x / width));
+              }}
+              renderItem={({ item }) => (
+                <GestureDetector gesture={composedGesture}>
+                  <Reanimated.View style={[{ width, flex: 1 }, animatedStyle]}>
+                    <Image
+                      source={{ uri: item }}
+                      style={{ flex: 1 }}
+                      resizeMode="contain"
+                    />
+                  </Reanimated.View>
+                </GestureDetector>
+              )}
+            />
           )}
-        />
 
-        {/* Header bar */}
-        <View style={{
-          position: 'absolute', top: 0, left: 0, right: 0,
-          paddingTop: 50, paddingBottom: 14, paddingHorizontal: 16,
-          flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-          backgroundColor: 'rgba(0,0,0,0.35)',
-        }}>
-          <TouchableOpacity
-            onPress={onClose}
-            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Ionicons name="close" size={22} color="#fff" />
-          </TouchableOpacity>
+          {/* ── Compact bottom bar ─────────────────────────────────────────── */}
+          <View style={ivStyles.bottomBar}>
+            {/* Multi-image page dots */}
+            {uris.length > 1 && (
+              <View style={ivStyles.dotsRow}>
+                {uris.map((_, i) => (
+                  <View
+                    key={i}
+                    style={[ivStyles.dot, i === currentIdx && ivStyles.dotActive]}
+                  />
+                ))}
+              </View>
+            )}
 
-          {uris.length > 1 && (
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
-              {currentIdx + 1} / {uris.length}
-            </Text>
-          )}
+            {/* Author row */}
+            <View style={ivStyles.authorRow}>
+              {profile?.avatar_url ? (
+                <CachedImage uri={profile.avatar_url} style={ivStyles.avatar} />
+              ) : (
+                <View style={[ivStyles.avatar, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={18} color="#555" />
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <Text style={ivStyles.authorName}>{profile?.username ?? 'user'}</Text>
+                  {profile?.is_verified && (
+                    <VerifiedBadge type={profile.verification_type} size="sm" />
+                  )}
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <Text style={ivStyles.timeText}>{timeAgo(post.created_at)}</Text>
+                  <Ionicons name="globe-outline" size={11} color="rgba(255,255,255,0.3)" />
+                </View>
+              </View>
+            </View>
 
-          <TouchableOpacity
-            onPress={() => Share.share({ url: uris[currentIdx], message: 'Check out this photo on UniGram' })}
-            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Ionicons name="share-outline" size={22} color="#fff" />
-          </TouchableOpacity>
-        </View>
+            {/* Caption — capped at 2 lines; "see more" expands it */}
+            {caption.length > 0 && (
+              <TouchableOpacity
+                style={ivStyles.captionWrap}
+                activeOpacity={captionExpanded ? 1 : 0.7}
+                onPress={() => !captionExpanded && setCaptionExpanded(true)}
+              >
+                <Text style={ivStyles.captionText} numberOfLines={captionExpanded ? undefined : 2}>
+                  {caption}
+                </Text>
+                {!captionExpanded && caption.length > 80 && (
+                  <Text style={ivStyles.seeMore}>See more</Text>
+                )}
+              </TouchableOpacity>
+            )}
 
-        {/* Dot indicator for multi-image */}
-        {uris.length > 1 && (
-          <View style={{ position: 'absolute', bottom: 40, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-            {uris.map((_, i) => (
-              <View key={i} style={{
-                width: i === currentIdx ? 20 : 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: i === currentIdx ? '#fff' : 'rgba(255,255,255,0.45)',
-              }} />
-            ))}
+            {/* Engagement bar */}
+            <View style={ivStyles.engagementBar}>
+              <TouchableOpacity style={ivStyles.engBtn} onPress={onLike} activeOpacity={0.7}>
+                <Ionicons
+                  name={isLiked ? 'thumbs-up' : 'thumbs-up-outline'}
+                  size={19}
+                  color={isLiked ? '#6366f1' : 'rgba(255,255,255,0.65)'}
+                />
+                <Text style={[ivStyles.engCount, isLiked && { color: '#6366f1' }]}>
+                  {likeCount > 0 ? fmtCount(likeCount) : 'Like'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={ivStyles.engDivider} />
+
+              <TouchableOpacity style={ivStyles.engBtn} onPress={onComment} activeOpacity={0.7}>
+                <Ionicons name="chatbubble-outline" size={17} color="rgba(255,255,255,0.65)" />
+                <Text style={ivStyles.engCount}>
+                  {commentCount > 0 ? fmtCount(commentCount) : 'Comment'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={ivStyles.engDivider} />
+
+              <TouchableOpacity style={ivStyles.engBtn} onPress={onShare} activeOpacity={0.7}>
+                <Ionicons name="arrow-redo-outline" size={19} color="rgba(255,255,255,0.65)" />
+                <Text style={ivStyles.engCount}>Share</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        )}
-      </View>
+
+          {/* ── Floating top bar (renders last → highest z-order) ─────────── */}
+          <View style={ivStyles.topBar}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Ionicons name="close" size={26} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => Share.share({ message: `Check this out on UniGram${caption ? ': ' + caption : ''}` })}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
       </GestureHandlerRootView>
     </Modal>
   );
 };
 
+const ivStyles = StyleSheet.create({
+  topBar: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 52,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+    zIndex: 100,
+  },
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    overflow: 'hidden',
+  },
+  authorName: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  timeText: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 12,
+  },
+  captionWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  captionText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  seeMore: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    marginTop: 2,
+  },
+  engagementBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 4,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
+  },
+  engBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 13,
+  },
+  engCount: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  engDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  dotActive: {
+    width: 18,
+    backgroundColor: '#fff',
+  },
+  bottomBar: {
+    backgroundColor: 'rgba(0,0,0,0.88)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    paddingBottom: 20,
+  },
+});
+
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { medium, success, selection } = useHaptics();
@@ -1164,8 +1354,20 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const heartOverlayOpacity = useRef(new Animated.Value(0)).current;
 
   // Sync if parent updates (e.g. feed refresh)
-  useEffect(() => { setLiked(isLiked); }, [isLiked]);
-  useEffect(() => { setSaved(isSaved); }, [isSaved]);
+  const lastIsLiked = useRef(isLiked);
+  useEffect(() => {
+    if (lastIsLiked.current !== isLiked) {
+      setLiked(isLiked);
+      lastIsLiked.current = isLiked;
+    }
+  }, [isLiked]);
+  const lastIsSaved = useRef(isSaved);
+  useEffect(() => {
+    if (lastIsSaved.current !== isSaved) {
+      setSaved(isSaved);
+      lastIsSaved.current = isSaved;
+    }
+  }, [isSaved]);
 
   // Cleanup overlay timer on unmount
   useEffect(() => () => { if (heartOverlayTimer.current) clearTimeout(heartOverlayTimer.current); }, []);
@@ -1225,11 +1427,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const showHeartOverlay = () => {
     heartOverlayOpacity.setValue(1);
     heartOverlayScale.setValue(0.5);
-    Animated.spring(heartOverlayScale, { toValue: 1, useNativeDriver: true, tension: 80, friction: 6 }).start();
+    Animated.spring(heartOverlayScale, { toValue: 1, useNativeDriver: true, tension: 100, friction: 6 }).start();
     if (heartOverlayTimer.current) clearTimeout(heartOverlayTimer.current);
     heartOverlayTimer.current = setTimeout(() => {
-      Animated.timing(heartOverlayOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
-    }, 600);
+      Animated.timing(heartOverlayOpacity, { toValue: 0, duration: 250, useNativeDriver: true }).start();
+    }, 400);
   };
 
   const doLike = async (forceLike?: boolean) => {
@@ -1417,7 +1619,15 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           visible={showImageViewer}
           uris={imageViewerUris}
           initialIndex={imageViewerIndex}
+          post={post}
+          currentUserId={currentUserId}
+          isLiked={liked}
+          likeCount={likes}
+          commentCount={commentCount}
           onClose={() => setShowImageViewer(false)}
+          onLike={() => doLike()}
+          onComment={() => { setShowImageViewer(false); setShowComments(true); }}
+          onShare={() => Share.share({ message: `Check this out on UniGram${post.caption ? ': ' + post.caption : ''}` })}
         />
       )}
 
@@ -1512,7 +1722,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
                 ? post.media_urls
                 : [post.media_url!];
               if (post.type === 'video') {
-                setFullVideoUri(mediaUris[index] ?? mediaUris[0]);
+                if (onVideoPress) {
+                  onVideoPress(post, liked);
+                } else {
+                  setFullVideoUri(mediaUris[index] ?? mediaUris[0]);
+                }
               } else {
                 setImageViewerUris(mediaUris);
                 setImageViewerIndex(index);
@@ -2303,10 +2517,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           { useNativeDriver: true, listener: handleScroll }
         )}
         scrollEventThrottle={16}
-        windowSize={5}
+        windowSize={7}
         maxToRenderPerBatch={5}
         updateCellsBatchingPeriod={30}
-        initialNumToRender={4}
+        initialNumToRender={2}
         removeClippedSubviews={Platform.OS === 'android'}
         ListHeaderComponent={useMemo(() => (
           <>
@@ -2386,6 +2600,26 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               onOpenComments={handleOpenComments}
               onDeleted={handlePostDeleted}
               onUserPress={onUserPress}
+              onVideoPress={(post, isLiked) => {
+                const postAsReel = {
+                  id: post.id,
+                  video_url: (post.media_urls && post.media_urls.length > 0)
+                    ? post.media_urls[0]
+                    : post.media_url,
+                  thumbnail_url: null,
+                  caption: post.caption,
+                  user_id: post.user_id,
+                  profiles: post.profiles,
+                  likes_count: post.likes_count ?? 0,
+                  comments_count: post.comments_count ?? 0,
+                  views_count: 0,
+                  created_at: post.created_at,
+                  song: post.song,
+                  _isPost: true,
+                  _initiallyLiked: isLiked,
+                };
+                onReelPress?.(post.id, [postAsReel]);
+              }}
             />
           );
         }, [likedIds, savedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}

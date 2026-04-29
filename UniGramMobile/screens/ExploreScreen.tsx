@@ -324,7 +324,8 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
   }, []);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const isSearching = query.length > 0;
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const isSearching = isSearchFocused || query.length > 0;
   const mediaGridPosts = useMemo(() => gridPosts.filter(p => p.media_url), [gridPosts]);
 
   // ── Search result tabs ────────────────────────────────────────────────────
@@ -460,6 +461,8 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
           placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={setQuery}
+          onFocus={() => setIsSearchFocused(true)}
+          onBlur={() => setIsSearchFocused(false)}
           returnKeyType="search"
           autoCorrect={false}
           autoCapitalize="none"
@@ -554,111 +557,118 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
         </View>
       ) : (
         // ─── Discovery home ──────────────────────────────────────────────
-        <ScrollView
+        <FlatList
+          data={mediaGridPosts}
+          keyExtractor={post => post.id}
+          numColumns={3}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 80 }}
-        >
-          {/* Trending hashtags */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING TOPICS</Text>
-            {trendingTags.map(({ tag, posts: count }, i) => (
-              <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
-                <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
-                <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
-                  <Ionicons name="pricetag-outline" size={16} color={colors.accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
-                  <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Campus Trending entry point */}
-          {!!onTrendingPress && (
-            <TouchableOpacity
-              style={[styles.trendingBanner, { backgroundColor: colors.accent + '12', borderColor: colors.accent + '30' }]}
-              onPress={onTrendingPress}
-              activeOpacity={0.75}
-            >
-              <View style={[styles.trendingBannerIcon, { backgroundColor: colors.accent + '20' }]}>
-                <Ionicons name="flame" size={20} color={colors.accent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.trendingBannerTitle, { color: colors.text }]}>Campus Trending</Text>
-                <Text style={[styles.trendingBannerSub, { color: colors.textMuted }]}>
-                  Top posts from your university right now
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.accent} />
-            </TouchableOpacity>
-          )}
-
-          {/* Suggested people */}
-          {suggested.length > 0 && (
-            <View style={styles.section}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>SUGGESTED FOR YOU</Text>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 12, paddingRight: 20 }}
-              >
-                {suggested.map(user => (
-                  <UserCard
-                    key={user.id}
-                    user={user}
-                    currentUserId={currentUserId}
-                    isFollowing={followingIds.has(user.id)}
-                    onPress={onUserPress}
-                    onDismiss={handleDismiss}
-                    onFollowToggle={handleFollowToggle}
-                  />
+          contentContainerStyle={{ paddingBottom: 80, gap: 1 }}
+          columnWrapperStyle={{ gap: 1 }}
+          windowSize={5}
+          maxToRenderPerBatch={9}
+          initialNumToRender={12}
+          removeClippedSubviews={true}
+          ListHeaderComponent={
+            <>
+              {/* Trending hashtags */}
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING TOPICS</Text>
+                {trendingTags.map(({ tag, posts: count }, i) => (
+                  <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
+                    <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
+                    <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
+                      <Ionicons name="pricetag-outline" size={16} color={colors.accent} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
+                      <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                  </TouchableOpacity>
                 ))}
-              </ScrollView>
-            </View>
-          )}
+              </View>
 
-          {/* Explore photo grid — plain View grid (all items visible, no virtualization needed) */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>EXPLORE</Text>
-          </View>
-          {mediaGridPosts.length === 0 ? (
+              {/* Campus Trending entry point */}
+              {!!onTrendingPress && (
+                <TouchableOpacity
+                  style={[styles.trendingBanner, { backgroundColor: colors.accent + '12', borderColor: colors.accent + '30' }]}
+                  onPress={onTrendingPress}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.trendingBannerIcon, { backgroundColor: colors.accent + '20' }]}>
+                    <Ionicons name="flame" size={20} color={colors.accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.trendingBannerTitle, { color: colors.text }]}>Campus Trending</Text>
+                    <Text style={[styles.trendingBannerSub, { color: colors.textMuted }]}>
+                      Top posts from your university right now
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.accent} />
+                </TouchableOpacity>
+              )}
+
+              {/* Suggested people */}
+              {suggested.length > 0 && (
+                <View style={styles.section}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>SUGGESTED FOR YOU</Text>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 12, paddingRight: 20 }}
+                  >
+                    {suggested.map(user => (
+                      <UserCard
+                        key={user.id}
+                        user={user}
+                        currentUserId={currentUserId}
+                        isFollowing={followingIds.has(user.id)}
+                        onPress={onUserPress}
+                        onDismiss={handleDismiss}
+                        onFollowToggle={handleFollowToggle}
+                      />
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Explore photo grid — plain View grid (all items visible, no virtualization needed) */}
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>EXPLORE</Text>
+              </View>
+            </>
+          }
+          ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 20 }}>
               <Text style={{ color: colors.textMuted, fontSize: 13 }}>No photos yet</Text>
             </View>
-          ) : (
-            <View style={styles.grid}>
-              {mediaGridPosts.map(post => (
-                <TouchableOpacity
-                  key={post.id}
-                  style={[styles.gridItem, { width: COL, height: COL }]}
-                  onPress={() => setDetailPost(post)}
-                  activeOpacity={0.85}
-                  accessibilityLabel="View post"
-                >
-                  <CachedImage uri={post.media_url} style={{ width: '100%', height: '100%' }} />
-                  {post.type === 'video' && (
-                    <View style={styles.videoIndicator}>
-                      <Ionicons name="play" size={12} color="#fff" />
-                    </View>
-                  )}
-                  {(post.likes_count > 0 || post.comments_count > 0) && (
-                    <View style={styles.gridOverlay}>
-                      <View style={styles.gridStat}>
-                        <Ionicons name="heart" size={11} color="#fff" />
-                        <Text style={styles.gridStatText}>{post.likes_count ?? 0}</Text>
-                      </View>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ))}
-            </View>
+          }
+          renderItem={({ item: post }) => (
+            <TouchableOpacity
+              style={[styles.gridItem, { width: COL, height: COL }]}
+              onPress={() => setDetailPost(post)}
+              activeOpacity={0.85}
+              accessibilityLabel="View post"
+            >
+              <CachedImage uri={post.media_url} style={{ width: '100%', height: '100%' }} />
+              {post.type === 'video' && (
+                <View style={styles.videoIndicator}>
+                  <Ionicons name="play" size={12} color="#fff" />
+                </View>
+              )}
+              {(post.likes_count > 0 || post.comments_count > 0) && (
+                <View style={styles.gridOverlay}>
+                  <View style={styles.gridStat}>
+                    <Ionicons name="heart" size={11} color="#fff" />
+                    <Text style={styles.gridStatText}>{post.likes_count ?? 0}</Text>
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
           )}
-        </ScrollView>
+        />
       )}
 
       {/* Post detail modal */}
