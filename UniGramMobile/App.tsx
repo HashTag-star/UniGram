@@ -357,8 +357,9 @@ const NotifPostModal: React.FC<{
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
   openComments: boolean;
+  initialCommentId?: string;
   onClose: () => void;
-}> = ({ post, currentUserId, isMuted, setIsMuted, openComments, onClose }) => {
+}> = ({ post, currentUserId, isMuted, setIsMuted, openComments, initialCommentId, onClose }) => {
   const { colors } = useTheme();
   const [showComments, setShowComments] = useState(openComments);
   const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
@@ -394,6 +395,7 @@ const NotifPostModal: React.FC<{
         targetType="post"
         currentUserId={currentUserId}
         authorId={post.user_id}
+        initialCommentId={initialCommentId}
         onClose={() => setShowComments(false)}
         onCountChange={delta => setCommentCount(c => Math.max(0, c + delta))}
         onCountSync={count => setCommentCount(count)}
@@ -460,6 +462,7 @@ function AppShell() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifPost, setNotifPost] = useState<any>(null);
   const [notifPostComments, setNotifPostComments] = useState(false);
+  const [notifCommentId, setNotifCommentId] = useState<string | undefined>(undefined);
   // Lazy-mount tabs: a screen only mounts on first visit, then stays alive (display:none)
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
@@ -679,7 +682,7 @@ function AppShell() {
 
   const handleNotificationAction = (data: any) => {
     if (!data) return;
-    const { type, userId, postId, conversationId, otherProfile } = data;
+    const { type, userId, postId, commentId, conversationId, otherProfile } = data;
 
     setShowNotifications(false);
     setShowVerification(false);
@@ -695,7 +698,6 @@ function AppShell() {
       case 'like':
       case 'comment':
       case 'mention':
-        // Open the specific post in a modal
         if (postId) {
           supabase
             .from('posts')
@@ -706,6 +708,7 @@ function AppShell() {
               if (post) {
                 setNotifPost(post);
                 setNotifPostComments(type === 'comment' || type === 'mention');
+                setNotifCommentId(commentId ?? undefined);
               } else if (userId) {
                 setViewedUserId(userId); setActiveTab('profile');
               }
@@ -716,7 +719,6 @@ function AppShell() {
         break;
 
       case 'new_post':
-        // New post from someone you follow → open the post
         if (postId) {
           supabase
             .from('posts')
@@ -724,11 +726,8 @@ function AppShell() {
             .eq('id', postId)
             .single()
             .then(({ data: post }) => {
-              if (post) {
-                setNotifPost(post);
-              } else {
-                setActiveTab('feed');
-              }
+              if (post) { setNotifPost(post); }
+              else { setActiveTab('feed'); }
             });
         } else {
           setActiveTab('feed');
@@ -736,12 +735,14 @@ function AppShell() {
         break;
 
       case 'new_story':
-        // Story from someone you follow → go to feed (story bar is at top)
         setActiveTab('feed');
         break;
 
+      case 'follow_suggestion':
+        setShowDiscoverPeople(true);
+        break;
+
       case 'live_started': {
-        // Someone you follow started a live → navigate to feed and open the live
         const sessionId = data.sessionId || postId;
         if (sessionId) {
           supabase
@@ -752,9 +753,7 @@ function AppShell() {
             .single()
             .then(({ data: ls }) => {
               setActiveTab('feed');
-              if (ls) {
-                setTimeout(() => DeviceEventEmitter.emit('JOIN_LIVE_SESSION', ls), 400);
-              }
+              if (ls) setTimeout(() => DeviceEventEmitter.emit('JOIN_LIVE_SESSION', ls), 400);
             });
         } else {
           setActiveTab('feed');
@@ -763,12 +762,18 @@ function AppShell() {
       }
 
       case 'live_ended':
-        // Stream ended notification → just go to feed (stream is over)
         setActiveTab('feed');
         break;
 
       case 'reel_like':
       case 'reel_comment':
+        // postId holds the reel ID for these notification types
+        if (postId) {
+          setInitialReelId(postId);
+          setInitialReels(undefined);
+        }
+        setPrevTab(activeTab);
+        setActiveTabVisual('reels');
         setActiveTab('reels');
         break;
 
@@ -799,7 +804,15 @@ function AppShell() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    
+
+    // Handle cold-launch: if the app was killed and user tapped a push notification
+    const { default: Notifications } = require('expo-notifications');
+    Notifications.getLastNotificationResponseAsync().then((response: any) => {
+      if (response?.notification?.request?.content?.data) {
+        handleNotificationAction(response.notification.request.content.data);
+      }
+    }).catch(() => {});
+
     let sub: any;
     onNotificationResponseReceived((response: any) => {
       const data = response.notification.request.content.data;
@@ -807,6 +820,7 @@ function AppShell() {
     }).then(s => sub = s);
 
     return () => sub?.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id]);
 
   if (!minSplashDone || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
@@ -1053,8 +1067,11 @@ function AppShell() {
             onBadgeClear={() => setNotifBadge(0)}
             onBack={() => setShowNotifications(false)}
             onUserPress={(uid: string) => handleNotificationAction({ type: 'follow', userId: uid })}
-            onPostPress={(pid: string, uid: string, notifType: string) => handleNotificationAction({ type: notifType, postId: pid, userId: uid })}
+            onPostPress={(pid: string, uid: string, notifType: string, cid?: string) =>
+              handleNotificationAction({ type: notifType, postId: pid, userId: uid, commentId: cid })
+            }
             onMessagePress={navigateToMessages}
+            onDiscoverPress={() => { setShowNotifications(false); setShowDiscoverPeople(true); }}
           />
         </View>
       )}
@@ -1154,7 +1171,8 @@ function AppShell() {
           isMuted={feedMuted}
           setIsMuted={setFeedMuted}
           openComments={notifPostComments}
-          onClose={() => { setNotifPost(null); setNotifPostComments(false); }}
+          initialCommentId={notifCommentId}
+          onClose={() => { setNotifPost(null); setNotifPostComments(false); setNotifCommentId(undefined); }}
         />
       )}
     </View>

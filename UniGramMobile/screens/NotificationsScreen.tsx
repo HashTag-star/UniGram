@@ -30,6 +30,7 @@ interface Notif {
   is_read: boolean;
   created_at: string;
   post_id: string | null;
+  comment_id: string | null;
   actor_id: string | null;
   profiles: NotifActor | null;
   posts: { media_url: string | null } | null;
@@ -53,6 +54,7 @@ function notifIcon(type: string): { name: string; color: string; bg: string } {
     case 'comment':
       return { name: 'chatbubble', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' };
     case 'follow':
+    case 'follow_suggestion':
       return { name: 'person-add', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
     case 'mention':
       return { name: 'at', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' };
@@ -152,13 +154,14 @@ export interface NotificationsScreenProps {
   onBadgeClear?: () => void;
   onBack?: () => void;
   onUserPress?: (uid: string) => void;
-  onPostPress?: (pid: string, uid: string, notifType: string) => void;
+  onPostPress?: (pid: string, uid: string, notifType: string, commentId?: string) => void;
   onMessagePress?: (convId: string, otherProfile: any) => void;
+  onDiscoverPress?: () => void;
 }
 
-export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ 
+export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   userId, onBadgeClear, onBack,
-  onUserPress, onPostPress, onMessagePress
+  onUserPress, onPostPress, onMessagePress, onDiscoverPress,
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -278,14 +281,13 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       setNotifs(prev => prev.map(n => n.id === item.id ? { ...n, is_read: true } : n));
     }
 
-    const navigationTypes = ['follow', 'like', 'comment', 'mention', 'reel_like', 'reel_comment', 'message', 'verification_approved'];
+    const navigationTypes = ['follow', 'like', 'comment', 'mention', 'reel_like', 'reel_comment', 'message', 'verification_approved', 'follow_suggestion'];
 
     if (!navigationTypes.includes(item.type) || item.type === 'announcement') {
       setExpandedId(prev => (prev === item.id ? null : item.id));
-      if (item.type === 'announcement') return; // Announcements only expand
+      if (item.type === 'announcement') return;
     }
 
-    // Navigation logic
     switch (item.type) {
       case 'follow':
       case 'verification_approved':
@@ -297,8 +299,11 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'reel_like':
       case 'reel_comment':
         if (item.post_id && item.actor_id) {
-          onPostPress?.(item.post_id, item.actor_id, item.type);
+          onPostPress?.(item.post_id, item.actor_id, item.type, item.comment_id ?? undefined);
         }
+        break;
+      case 'follow_suggestion':
+        onDiscoverPress?.();
         break;
       case 'message':
         if (item.actor_id && item.profiles) {
@@ -306,10 +311,9 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         }
         break;
       default:
-        // Already handled expansion for unknowns
         break;
     }
-  }, [onUserPress, onPostPress, onMessagePress]);
+  }, [onUserPress, onPostPress, onMessagePress, onDiscoverPress]);
 
   const sections = React.useMemo(() => {
     const today: Notif[] = [];

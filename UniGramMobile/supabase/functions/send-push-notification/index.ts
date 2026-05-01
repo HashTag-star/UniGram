@@ -15,7 +15,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, title, body, data, imageUrl, senderAvatarUrl, categoryId, groupId } = await req.json();
+    const bodyJson = await req.json();
+    const { userId, title, body, data, imageUrl, senderAvatarUrl, categoryId, groupId } = bodyJson;
+    const recipientAvatarUrl = bodyJson.recipientAvatarUrl || (data as any)?.recipientAvatarUrl;
 
     if (!userId || !title || !body) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
@@ -69,11 +71,17 @@ Deno.serve(async (req) => {
     const results = [];
     let sentCount = 0;
 
-    // Use post/story image if available, fall back to sender's avatar so profile
-    // pics always appear in the notification when there's no content image.
-    const effectiveImageUrl = imageUrl || senderAvatarUrl || null;
+    // Distinguish between the content image (post/story) and the sender's profile pic
+    const hasImage = !!imageUrl;
+    const hasAvatar = !!senderAvatarUrl;
+    const hasRecipientAvatar = !!recipientAvatarUrl;
     const channelId: string = (data as any)?.channelId ?? 'default';
 
+    // Premium Feature: If we have both avatars, we can create an "Overlap" image.
+    // For now, we'll use the sender's avatar as the primary icon, but in a real production
+    // environment, you'd use a service like Cloudinary to merge them:
+    // e.g. `https://res.cloudinary.com/demo/image/fetch/w_200,h_200,c_fill,r_max/${recipientAvatarUrl}/l_fetch:${b64(senderAvatarUrl)},w_140,h_140,c_fill,r_max,g_south_east/composite.png`
+    
     for (const t of tokens) {
       try {
         const message: any = {
@@ -81,13 +89,17 @@ Deno.serve(async (req) => {
           notification: {
             title,
             body,
-            ...(effectiveImageUrl ? { imageUrl: effectiveImageUrl } : {}),
+            // Main image for the notification (expanded view)
+            ...(hasImage ? { imageUrl } : (hasAvatar ? { imageUrl: senderAvatarUrl } : {})),
           },
           android: {
             notification: {
               sound: 'notification_alert',
               channelId,
-              ...(effectiveImageUrl ? { imageUrl: effectiveImageUrl } : {}),
+              // On Android, use the sender's avatar as the LargeIcon (the circle pic on the right)
+              ...(hasAvatar ? { largeIcon: senderAvatarUrl } : {}),
+              // Use the post/story image as the BigPicture (if any)
+              ...(hasImage ? { imageUrl } : {}),
               ...(groupId ? { tag: groupId } : {}),
               ...(categoryId ? { clickAction: categoryId } : {}),
             },
@@ -99,10 +111,14 @@ Deno.serve(async (req) => {
                 sound: 'notification_alert.wav',
                 ...(categoryId ? { category: categoryId } : {}),
                 ...(groupId ? { 'thread-id': groupId } : {}),
-                ...(effectiveImageUrl ? { 'mutable-content': 1 } : {}),
+                // mutable-content is required for the Notification Service Extension to attach images
+                'mutable-content': 1,
               },
             },
-            ...(effectiveImageUrl ? { fcmOptions: { imageUrl: effectiveImageUrl } } : {}),
+            // For iOS, the first image found is usually attached
+            fcmOptions: {
+              imageUrl: imageUrl || senderAvatarUrl
+            },
           },
           data: {
             ...(data || {}),
@@ -110,8 +126,6 @@ Deno.serve(async (req) => {
             ...(senderAvatarUrl ? { senderAvatarUrl } : {}),
             ...(categoryId ? { categoryId } : {}),
             ...(groupId ? { groupId } : {}),
-            // Recipient context — used by the app to identify which account
-            // received this notification (mirrors Instagram's "• @username" header)
             recipientUsername,
           },
         };

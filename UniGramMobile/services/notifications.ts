@@ -105,6 +105,8 @@ export async function createNotification(notification: {
   actor_id: string;
   type: string;
   post_id?: string;
+  comment_id?: string;
+  metadata?: Record<string, any>;
   text: string;
 }) {
   await supabase.from('notifications').insert(notification);

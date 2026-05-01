@@ -19,11 +19,12 @@ interface QuickCaptureScreenProps {
   onClose?: () => void;
   onCapture: (items: Array<{ uri: string; type: 'image' | 'video'; mode: Mode }>) => void;
   onLiveStart?: () => void;
+  onThreadStart?: () => void;
 }
 
-type Mode = 'POST' | 'STORY' | 'REEL' | 'LIVE';
+type Mode = 'POST' | 'STORY' | 'REEL' | 'LIVE' | 'THREAD';
 
-export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisible, onClose, onCapture, onLiveStart }) => {
+export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisible, onClose, onCapture, onLiveStart, onThreadStart }) => {
   const isFocused = isVisible; // Could be refined to check if editor is open
   const [permission, requestPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
@@ -210,10 +211,14 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
 
         <View style={styles.bottomControls}>
           <View style={styles.modeSelector}>
-            {['POST', 'STORY', 'REEL', 'LIVE'].map((m) => (
-              <TouchableOpacity 
-                key={m} 
-                onPress={() => { setMode(m as Mode); haptics.selection(); }}
+            {(['POST', 'STORY', 'REEL', 'LIVE', 'THREAD'] as Mode[]).map((m) => (
+              <TouchableOpacity
+                key={m}
+                onPress={() => {
+                  haptics.selection();
+                  if (m === 'THREAD') { onThreadStart?.(); return; }
+                  setMode(m);
+                }}
                 style={styles.modeBtn}
               >
                 <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m}</Text>

@@ -526,10 +526,11 @@ export async function addPostComment(postId: string, userId: string, text: strin
         actor_id: userId,
         type: 'comment',
         post_id: postId,
+        comment_id: res.id,
         text: notifText
       });
       sendPushToUser(post.user_id, actorName, notifText, {
-        type: 'comment', postId, userId, channelId: 'social',
+        type: 'comment', postId, commentId: res.id, userId, channelId: 'social',
       }, post.media_urls?.[0] ?? undefined, actorAvatar, 'post_comment').catch(() => {});
     }
   } catch (e) {}
@@ -549,10 +550,11 @@ export async function addPostComment(postId: string, userId: string, text: strin
             actor_id: userId,
             type: 'mention',
             post_id: postId,
+            comment_id: res.id,
             text: mentionText
           });
           sendPushToUser(targetProfile.id, actorName, mentionText, {
-            type: 'mention', postId, userId, channelId: 'social',
+            type: 'mention', postId, commentId: res.id, userId, channelId: 'social',
           }, undefined, actorAvatar, 'post_comment').catch(() => {});
         }
       } catch (e) {}

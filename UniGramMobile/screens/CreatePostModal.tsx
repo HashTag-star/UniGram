@@ -111,21 +111,24 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           if (data?.university) setUniversity(data.university);
         });
 
-      if (preCapturedMedia && preCapturedMedia.length > 0) {
+      if (initialType === 'thread' && !preCapturedMedia?.length) {
+        // Opened directly as thread composer — skip media picker and go straight to compose
+        setPostType('thread');
+        setStep('compose');
+      } else if (preCapturedMedia && preCapturedMedia.length > 0) {
         setPostType(preCapturedMedia[0].mode);
         setMediaAssets(preCapturedMedia.map(m => ({
           uri: m.uri,
           type: m.type === 'video' ? 'video' : 'image'
         } as any)));
-        
-        // Use music from first item if present
+
         if (preCapturedMedia[0].song) setSong(preCapturedMedia[0].song);
         if (preCapturedMedia[0].songPreviewUrl) setSongPreviewUrl(preCapturedMedia[0].songPreviewUrl);
-        
+
         setStep('compose');
       }
     }
-  }, [visible, userId, preCapturedMedia]);
+  }, [visible, userId, preCapturedMedia, initialType]);
 
   useEffect(() => {
     const mentionMatch = caption.match(/@(\w+)$/);

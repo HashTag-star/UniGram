@@ -4,7 +4,7 @@ import React, {
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
   StyleSheet, ActivityIndicator, Alert, ActionSheetIOS, Platform,
-  FlatList,
+  FlatList, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -69,6 +69,8 @@ interface Props {
   onCountSync?: (count: number) => void;
   /** IDs of users the current user follows — used for mention priority sorting */
   followingIds?: Set<string>;
+  /** If set, scroll to and briefly highlight this comment after loading */
+  initialCommentId?: string;
 }
 
 interface CommentRowProps {
@@ -83,6 +85,7 @@ interface CommentRowProps {
   onReply: (comment: any) => void;
   onLongPress: (comment: any) => void;
   onToggleExpand: (parentId: string) => void;
+  highlightedId?: string;
 }
 
 // ─── CommentRow ──────────────────────────────────────────────────────────────
@@ -90,16 +93,26 @@ interface CommentRowProps {
 const CommentRow = React.memo(function CommentRow({
   item, depth, currentUserId, authorId, colors,
   expandedParents, childrenMap,
-  onLike, onReply, onLongPress, onToggleExpand,
+  onLike, onReply, onLongPress, onToggleExpand, highlightedId,
 }: CommentRowProps) {
   const profile = item.profiles;
   const isAuthor = item.user_id === authorId;
   const replies = childrenMap[item.id] || [];
   const isExpanded = expandedParents.has(item.id);
   const avatarSize = depth > 0 ? 28 : 36;
+  const isHighlighted = item.id === highlightedId;
+  const highlightBg = useRef(new Animated.Value(isHighlighted ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (!isHighlighted) return;
+    highlightBg.setValue(1);
+    Animated.timing(highlightBg, { toValue: 0, duration: 2200, useNativeDriver: false }).start();
+  }, [isHighlighted]);
+
+  const bgColor = highlightBg.interpolate({ inputRange: [0, 1], outputRange: ['transparent', 'rgba(99,102,241,0.18)'] });
 
   return (
-    <View style={[styles.commentGroup, depth > 0 && { marginLeft: depth * 24, marginBottom: 12 }]}>
+    <Animated.View style={[styles.commentGroup, depth > 0 && { marginLeft: depth * 24, marginBottom: 12 }, { backgroundColor: bgColor, borderRadius: 10 }]}>
       <TouchableWithoutFeedback onLongPress={() => onLongPress(item)}>
         <View style={styles.commentRow}>
           {profile?.avatar_url ? (
@@ -199,12 +212,13 @@ const CommentRow = React.memo(function CommentRow({
                 onReply={onReply}
                 onLongPress={onLongPress}
                 onToggleExpand={onToggleExpand}
+                highlightedId={highlightedId}
               />
             ))}
           </View>
         </View>
       </TouchableWithoutFeedback>
-    </View>
+    </Animated.View>
   );
 });
 
@@ -461,7 +475,7 @@ const FooterInput = React.memo(function FooterInput({
 
 export const CommentSheet: React.FC<Props> = ({
   visible, targetId, targetType, currentUserId, authorId, onClose, onCountChange, onCountSync,
-  followingIds: followingIdsProp,
+  followingIds: followingIdsProp, initialCommentId,
 }) => {
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const flatListRef = useRef<any>(null);
@@ -478,6 +492,7 @@ export const CommentSheet: React.FC<Props> = ({
   const [totalCount, setTotalCount] = useState(0);
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | undefined>(undefined);
   // Cached following IDs for mention autocomplete — prop takes priority (already loaded by parent)
   const [followingIds, setFollowingIds] = useState<Set<string>>(followingIdsProp ?? new Set());
 
@@ -768,6 +783,38 @@ export const CommentSheet: React.FC<Props> = ({
     return { roots, childrenMap: map };
   }, [comments]);
 
+  // Scroll to and highlight a specific comment once the tree is built and loading is done
+  useEffect(() => {
+    if (!initialCommentId || loading || !visible) return;
+    const { roots, childrenMap: cmap } = commentTree;
+
+    const rootIdx = roots.findIndex((c: any) => c.id === initialCommentId);
+    if (rootIdx >= 0) {
+      setHighlightedCommentId(initialCommentId);
+      setTimeout(() => {
+        try { flatListRef.current?.scrollToIndex({ index: rootIdx, animated: true, viewOffset: 60 }); }
+        catch { /* list not yet laid out */ }
+      }, 450);
+      return;
+    }
+
+    // It's a reply — expand its parent root and scroll to that
+    for (const [parentId, children] of Object.entries(cmap)) {
+      if ((children as any[]).some((c: any) => c.id === initialCommentId)) {
+        const parentIdx = roots.findIndex((c: any) => c.id === parentId);
+        if (parentIdx >= 0) {
+          setExpandedParents(prev => new Set([...prev, parentId]));
+          setHighlightedCommentId(initialCommentId);
+          setTimeout(() => {
+            try { flatListRef.current?.scrollToIndex({ index: parentIdx, animated: true, viewOffset: 60 }); }
+            catch { /* list not yet laid out */ }
+          }, 450);
+        }
+        return;
+      }
+    }
+  }, [initialCommentId, loading, visible, commentTree]);
+
   const renderItem = useCallback(({ item }: { item: any }) => (
     <CommentRow
       item={item}
@@ -781,9 +828,10 @@ export const CommentSheet: React.FC<Props> = ({
       onReply={handleReply}
       onLongPress={handleLongPress}
       onToggleExpand={toggleExpand}
+      highlightedId={highlightedCommentId}
     />
   ), [currentUserId, authorId, colors, expandedParents, commentTree.childrenMap,
-    handleLike, handleReply, handleLongPress, toggleExpand]);
+    handleLike, handleReply, handleLongPress, toggleExpand, highlightedCommentId]);
 
   // renderFooter ONLY depends on stable values — never re-creates on keystrokes
   const renderFooter = useCallback(
