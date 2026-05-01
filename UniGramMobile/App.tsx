@@ -451,6 +451,7 @@ function AppShell() {
     }
   };
   const [showCreate, setShowCreate] = useState(false);
+  const [createInitialType, setCreateInitialType] = useState<'thread' | undefined>(undefined);
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [hideTabBar, setHideTabBar] = useState(false); // for messages chat & full-screen
@@ -807,11 +808,13 @@ function AppShell() {
 
     // Handle cold-launch: if the app was killed and user tapped a push notification
     const { default: Notifications } = require('expo-notifications');
-    Notifications.getLastNotificationResponseAsync().then((response: any) => {
-      if (response?.notification?.request?.content?.data) {
-        handleNotificationAction(response.notification.request.content.data);
-      }
-    }).catch(() => {});
+    if (Notifications?.getLastNotificationResponseAsync) {
+      Notifications.getLastNotificationResponseAsync().then((response: any) => {
+        if (response?.notification?.request?.content?.data) {
+          handleNotificationAction(response.notification.request.content.data);
+        }
+      }).catch(() => {});
+    }
 
     let sub: any;
     onNotificationResponseReceived((response: any) => {
@@ -907,11 +910,16 @@ function AppShell() {
       >
         {/* Page 0: Side-Swipe Camera (IG Style) */}
         <View key="0" style={{ flex: 1 }}>
-          <QuickCaptureScreen 
-            isVisible={pagerPage === 0 && !activeMedia && !isLive} 
+          <QuickCaptureScreen
+            isVisible={pagerPage === 0 && !activeMedia && !isLive}
             onClose={() => pagerRef.current?.setPage(1)}
             onCapture={handleCapture}
             onLiveStart={() => setIsLive(true)}
+            onThreadStart={() => {
+              pagerRef.current?.setPage(1);
+              setCreateInitialType('thread');
+              setShowCreate(true);
+            }}
           />
         </View>
 
@@ -1108,11 +1116,12 @@ function AppShell() {
       <CreatePostModal
         visible={showCreate}
         userId={session.user.id}
-        onClose={() => { setShowCreate(false); setActiveMedia(null); }}
-        onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); }}
-        preCapturedMedia={activeMedia ? activeMedia.map((m: any) => ({ 
-          uri: m.uri, 
-          type: m.type, 
+        initialType={createInitialType}
+        onClose={() => { setShowCreate(false); setActiveMedia(null); setCreateInitialType(undefined); }}
+        onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); setCreateInitialType(undefined); }}
+        preCapturedMedia={activeMedia ? activeMedia.map((m: any) => ({
+          uri: m.uri,
+          type: m.type,
           mode: (m.mode === 'POST' ? 'post' : m.mode === 'REEL' ? 'reel' : 'story'),
           song: m.music ? `${m.music.trackName} — ${m.music.artistName}` : undefined,
           songPreviewUrl: m.music?.previewUrl
