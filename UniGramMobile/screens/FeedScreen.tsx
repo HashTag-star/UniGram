@@ -142,6 +142,33 @@ function clearFeedCache() {
   cachedCurrentProfile = null;
 }
 
+// ─── Thread Text Card ─────────────────────────────────────────────────────────
+const ThreadTextCard: React.FC<{ caption?: string | null }> = ({ caption }) => {
+  const { colors, isDark } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const MAX = 220;
+  const isLong = (caption?.length ?? 0) > MAX;
+  if (!caption) return null;
+  const displayText = expanded || !isLong ? caption : caption.substring(0, MAX).trimEnd();
+  return (
+    <TouchableOpacity
+      onPress={() => isLong && setExpanded(e => !e)}
+      activeOpacity={isLong ? 0.88 : 1}
+    >
+      <LinearGradient
+        colors={isDark ? ['#0e0e1c', '#13132a'] : ['#f0f0fa', '#e8e8f8']}
+        style={styles.threadCard}
+      >
+        <Text style={styles.threadQuoteMark}>"</Text>
+        <Text style={[styles.threadCardText, { color: colors.text }]}>{displayText}</Text>
+        {isLong && (
+          <Text style={styles.threadCardMore}>{expanded ? ' less' : '...more'}</Text>
+        )}
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+};
+
 // ─── Live Story Bubble (animated) ─────────────────────────────────────────────
 const LiveStoryBubble: React.FC<{ ls: any; onPress: () => void }> = ({ ls, onPress }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -548,14 +575,33 @@ const StoryViewer: React.FC<{
   if (!visible || !group || !story) return null;
 
   const isOwner = group.profile.id === currentUserId;
+  const isReshared = story.caption?.startsWith('Shared from @') ?? false;
+  const originalUsername = story.caption?.match(/^Shared from @([\w.]+)/)?.[1] ?? null;
+  const isVideoStory = !!(story.media_url?.match(/\.(mp4|mov|m3u8)/i));
 
   const { medium } = useHaptics();
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <View style={sv.bg}>
+      <View style={[sv.bg, isReshared && { backgroundColor: '#0f0f0f' }]}>
         <StatusBar hidden />
-        <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        {!isReshared && (
+          <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        )}
+        {isReshared && (
+          <View style={sv.reshareCardWrap} pointerEvents="none">
+            <View style={sv.reshareCard}>
+              <Image source={{ uri: story.media_url }} style={sv.reshareCardMedia} resizeMode="cover" />
+              <View style={sv.reshareCreatorBar}>
+                <Ionicons name="person-circle-outline" size={20} color="rgba(255,255,255,0.55)" />
+                <Text style={sv.reshareCreatorText} numberOfLines={1}>@{originalUsername ?? 'user'}</Text>
+                <View style={sv.reshareTypeBadge}>
+                  <Text style={sv.reshareTypeText}>{isVideoStory ? 'REEL' : 'POST'}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
         <View style={sv.topGrad} />
         <View style={sv.bottomGrad} />
 
@@ -589,7 +635,10 @@ const StoryViewer: React.FC<{
                 <Text style={sv.username}>{isOwner ? 'Your story' : group.profile.username}</Text>
                 <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
               </View>
-              {story.song && (
+              {isReshared && (
+                <Text style={sv.reshareSubtitle}>Watch full {isVideoStory ? 'reel' : 'post'}</Text>
+              )}
+              {!isReshared && story.song && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
                   <Ionicons name="musical-note" size={10} color="#fff" />
                   <Text style={sv.songText} numberOfLines={1}>{story.song}</Text>
@@ -607,7 +656,7 @@ const StoryViewer: React.FC<{
           </View>
         </View>
 
-        {story.caption ? (
+        {story.caption && !isReshared ? (
           <View style={sv.captionBox}>
             <Text style={sv.captionText}>{story.caption}</Text>
           </View>
@@ -1881,12 +1930,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             <Ionicons name="heart" size={90} color="#fff" />
           </Animated.View>
         </View>
-      ) : post.type === 'thread' || post.type === 'quote' ? (
+      ) : post.type === 'thread' ? (
+        <ThreadTextCard caption={post.caption} />
+      ) : post.type === 'quote' ? (
         <View style={styles.threadBadge}>
           <Ionicons name="chatbubbles-outline" size={12} color={colors.textMuted} />
-          <Text style={[styles.threadLabel, { color: colors.textMuted }]}>
-            {post.type === 'quote' ? 'Quote' : 'Thread'}
-          </Text>
+          <Text style={[styles.threadLabel, { color: colors.textMuted }]}>Quote</Text>
         </View>
       ) : null}
 
@@ -1933,7 +1982,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             </Text>
           )}
         </View>
-        {post.caption ? (
+        {post.caption && post.type !== 'thread' ? (
           <Text style={[styles.captionText, { color: colors.text }]} numberOfLines={3}>
             <Text style={[styles.postUsername, { color: colors.text }]} onPress={() => onUserPress?.(profile)}>{profile?.username ?? 'user'} </Text>
             {post.caption}
@@ -2944,6 +2993,16 @@ const styles = StyleSheet.create({
   songBannerHint: { fontSize: 10, color: 'rgba(244,63,94,0.5)' },
   threadBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingVertical: 6 },
   threadLabel: { fontSize: 10, color: 'rgba(255,255,255,0.3)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
+  threadCard: {
+    marginHorizontal: 14, marginVertical: 6,
+    borderRadius: 16, padding: 20, paddingTop: 14, overflow: 'hidden',
+  },
+  threadQuoteMark: {
+    fontSize: 56, lineHeight: 56, color: 'rgba(99,102,241,0.3)',
+    fontWeight: '900', marginBottom: -10,
+  },
+  threadCardText: { fontSize: 17, lineHeight: 26, fontWeight: '500', letterSpacing: -0.2 },
+  threadCardMore: { fontSize: 14, color: '#6366f1', fontWeight: '600', marginTop: 4 },
   repostBanner: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingTop: 4, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth },
   repostBannerText: { fontSize: 12, fontWeight: '500' },
   postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 6 },
@@ -3056,6 +3115,60 @@ const sv = StyleSheet.create({
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: 'rgba(30,30,30,0.85)',
     alignItems: 'center', justifyContent: 'center',
+  },
+  // Reshared story card
+  reshareCardWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  reshareCard: {
+    width: width - 48,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  reshareCardMedia: {
+    width: '100%',
+    aspectRatio: 1,
+  },
+  reshareCreatorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  reshareCreatorText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  reshareTypeBadge: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  reshareTypeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  reshareSubtitle: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11.5,
+    fontWeight: '500',
+    marginTop: 2,
   },
 });
 
