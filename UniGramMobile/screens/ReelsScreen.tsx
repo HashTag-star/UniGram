@@ -96,6 +96,162 @@ const ReelVideo: React.FC<{
   );
 };
 
+// ─── Live Preview Card (YouTube Shorts-style) ─────────────────────────────────
+
+const LivePreviewCard: React.FC<{
+  session: any;
+  itemHeight: number;
+  onJoin: (sessionId: string) => void;
+}> = ({ session, itemHeight, onJoin }) => {
+  const insets = useSafeAreaInsets();
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(1)).current;
+  const joinScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.22, duration: 900, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(pulseOpacity, { toValue: 0.2, duration: 900, useNativeDriver: true }),
+          Animated.timing(pulseOpacity, { toValue: 0.9, duration: 900, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  const handleJoinPress = () => {
+    Animated.sequence([
+      Animated.timing(joinScale, { toValue: 0.93, duration: 80, useNativeDriver: true }),
+      Animated.spring(joinScale, { toValue: 1, tension: 200, friction: 8, useNativeDriver: true }),
+    ]).start(() => onJoin(session.id));
+  };
+
+  const profile = session.profiles;
+  const viewers = session.viewer_count ?? 0;
+
+  const fmtViewers = (n: number) => {
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+    return String(n);
+  };
+
+  return (
+    <View style={{ width, height: itemHeight, backgroundColor: '#000' }}>
+      {/* Background: blurred avatar */}
+      {profile?.avatar_url ? (
+        <Image
+          source={{ uri: profile.avatar_url }}
+          style={[StyleSheet.absoluteFill, { opacity: 0.18 }]}
+          blurRadius={28}
+        />
+      ) : null}
+      <LinearGradient
+        colors={['#12001e', '#080010', '#000']}
+        style={StyleSheet.absoluteFill}
+      />
+      {/* Subtle red glow at center */}
+      <View style={{
+        position: 'absolute', width: 340, height: 340, borderRadius: 170,
+        backgroundColor: '#ff3b30', opacity: 0.06, alignSelf: 'center', top: itemHeight * 0.18,
+      }} />
+
+      {/* Top LIVE badge */}
+      <View style={[liveCardStyles.topBadge, { top: insets.top + 12 }]}>
+        <View style={liveCardStyles.liveDot} />
+        <Text style={liveCardStyles.liveBadgeText}>LIVE</Text>
+      </View>
+
+      {/* Center content */}
+      <View style={liveCardStyles.center}>
+        {/* Pulsing avatar ring */}
+        <View style={liveCardStyles.avatarWrap}>
+          <Animated.View style={[liveCardStyles.pulseRing, { transform: [{ scale: pulseAnim }], opacity: pulseOpacity }]} />
+          <View style={liveCardStyles.pulseRing2} />
+          {profile?.avatar_url ? (
+            <Image source={{ uri: profile.avatar_url }} style={liveCardStyles.avatar} />
+          ) : (
+            <View style={[liveCardStyles.avatar, { backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="person" size={52} color="#555" />
+            </View>
+          )}
+        </View>
+
+        {/* Name + uni */}
+        <Text style={liveCardStyles.username}>@{profile?.username ?? 'someone'}</Text>
+        {profile?.university ? (
+          <Text style={liveCardStyles.university}>{profile.university}</Text>
+        ) : null}
+        <Text style={liveCardStyles.subtitle}>is live now</Text>
+
+        {/* Viewer count */}
+        <View style={liveCardStyles.viewerRow}>
+          <Ionicons name="eye" size={14} color="rgba(255,255,255,0.6)" />
+          <Text style={liveCardStyles.viewerText}>{fmtViewers(viewers)} watching</Text>
+        </View>
+
+        {/* Join button */}
+        <Animated.View style={{ transform: [{ scale: joinScale }], marginTop: 28 }}>
+          <TouchableOpacity onPress={handleJoinPress} activeOpacity={0.9}>
+            <LinearGradient
+              colors={['#ff3b30', '#c0392b']}
+              style={liveCardStyles.joinBtn}
+            >
+              <Ionicons name="radio" size={18} color="#fff" />
+              <Text style={liveCardStyles.joinBtnText}>Join Live</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+
+      {/* Bottom: swipe hint */}
+      <View style={[liveCardStyles.swipeHint, { bottom: insets.bottom + 24 }]}>
+        <Ionicons name="chevron-up" size={16} color="rgba(255,255,255,0.3)" />
+        <Text style={liveCardStyles.swipeHintText}>Swipe to continue</Text>
+        <Ionicons name="chevron-up" size={16} color="rgba(255,255,255,0.3)" />
+      </View>
+    </View>
+  );
+};
+
+const liveCardStyles = StyleSheet.create({
+  topBadge: {
+    position: 'absolute', left: 16, flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#ff3b30', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7,
+    shadowColor: '#ff3b30', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 6, elevation: 6,
+  },
+  liveDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#fff' },
+  liveBadgeText: { color: '#fff', fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 60 },
+  avatarWrap: { width: 140, height: 140, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  pulseRing: {
+    position: 'absolute', width: 140, height: 140, borderRadius: 70,
+    borderWidth: 3, borderColor: '#ff3b30',
+  },
+  pulseRing2: {
+    position: 'absolute', width: 118, height: 118, borderRadius: 59,
+    borderWidth: 2, borderColor: 'rgba(255,59,48,0.35)',
+  },
+  avatar: { width: 100, height: 100, borderRadius: 50 },
+  username: { color: '#fff', fontSize: 22, fontWeight: '900', marginBottom: 4 },
+  university: { color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 4 },
+  subtitle: { color: 'rgba(255,255,255,0.5)', fontSize: 15, marginBottom: 14 },
+  viewerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14 },
+  viewerText: { color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: '600' },
+  joinBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 40, paddingVertical: 16, borderRadius: 30,
+    shadowColor: '#ff3b30', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 10,
+  },
+  joinBtnText: { color: '#fff', fontSize: 17, fontWeight: '900', letterSpacing: 0.5 },
+  swipeHint: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  swipeHintText: { color: 'rgba(255,255,255,0.25)', fontSize: 12 },
+});
+
 // ─── Reel item ────────────────────────────────────────────────────────────────
 
 const ReelItem: React.FC<{
@@ -815,7 +971,7 @@ export const ReelsScreen: React.FC<{
     return () => sub.remove();
   }, []);
 
-  const [reels, setReels] = useState<any[]>(() => {
+  const [rawReels, setRawReels] = useState<any[]>(() => {
     if (initialReelId && initialReels?.length) {
       const idx = initialReels.findIndex(r => r.id === initialReelId);
       if (idx > 0) {
@@ -827,6 +983,8 @@ export const ReelsScreen: React.FC<{
     }
     return [];
   });
+  const [liveSessions, setLiveSessions] = useState<any[]>([]);
+  const [activeLiveSessionId, setActiveLiveSessionId] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set());
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
@@ -838,6 +996,22 @@ export const ReelsScreen: React.FC<{
   const [hasMore, setHasMore] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
   const { showToast } = useToast();
+
+  // Build mixed feed: inject live cards every LIVE_INTERVAL reels
+  const LIVE_INTERVAL = 5;
+  const reels = React.useMemo(() => {
+    if (!liveSessions.length) return rawReels;
+    const result: any[] = [];
+    let liveIdx = 0;
+    rawReels.forEach((reel, i) => {
+      result.push(reel);
+      // Insert a live card after every LIVE_INTERVAL reels (if sessions remain)
+      if ((i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
+        result.push({ ...liveSessions[liveIdx++], _type: 'live' });
+      }
+    });
+    return result;
+  }, [rawReels, liveSessions]);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
 
@@ -860,16 +1034,24 @@ export const ReelsScreen: React.FC<{
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
-      const [reelsData, likedData, likedPostData, followingData] = await Promise.all([
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const [reelsData, likedData, likedPostData, followingData, liveData] = await Promise.all([
         getPersonalizedReels(user.id, 10, 0),
         getLikedReelIds(user.id),
         getLikedPostIds(user.id),
         getFollowing(user.id),
+        supabase
+          .from('live_sessions')
+          .select('*, profiles(id, username, avatar_url, university)')
+          .eq('status', 'live')
+          .gt('created_at', twelveHoursAgo)
+          .neq('creator_id', user.id), // don't show your own live in reels
       ]);
       setLikedIds(new Set(likedData));
       setLikedPostIds(new Set(likedPostData));
       setFollowingIds(new Set(followingData.map((p: any) => p.id)));
-      setReels(prev => {
+      setLiveSessions(liveData.data ?? []);
+      setRawReels(prev => {
         const combined = prev.length ? [...prev, ...reelsData.filter((r: any) => !prev.some(p => p.id === r.id))] : reelsData;
         setOffset(reelsData.length);
         setHasMore(reelsData.length === 10);
@@ -891,7 +1073,7 @@ export const ReelsScreen: React.FC<{
         setHasMore(false);
         return;
       }
-      setReels(prev => {
+      setRawReels(prev => {
         const next = [...prev];
         more.forEach(m => {
           if (!next.some(r => r.id === m.id)) next.push(m);
@@ -916,11 +1098,24 @@ export const ReelsScreen: React.FC<{
   }, [load]);
 
   useEffect(() => {
-    const sub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
-      setReels(prev => prev.filter(r => r.id !== targetId));
+    const reelSub = SocialSync.on('REEL_DELETE', ({ targetId }) => {
+      setRawReels(prev => prev.filter(r => r.id !== targetId));
     });
-    return () => sub.remove();
-  }, []);
+    const liveEndedSub = SocialSync.on('LIVE_ENDED', ({ id }) => {
+      setLiveSessions(prev => prev.filter(ls => ls.id !== id));
+    });
+    const liveStartedSub = SocialSync.on('LIVE_STARTED', async ({ id }) => {
+      if (!id || !currentUserId) return;
+      const { data } = await supabase
+        .from('live_sessions')
+        .select('*, profiles(id, username, avatar_url, university)')
+        .eq('id', id)
+        .neq('creator_id', currentUserId)
+        .single();
+      if (data) setLiveSessions(prev => prev.some(s => s.id === id) ? prev : [data, ...prev]);
+    });
+    return () => { reelSub.remove(); liveEndedSub.remove(); liveStartedSub.remove(); };
+  }, [currentUserId]);
 
   const getItemLayout = useCallback((_: any, index: number) => ({
     length: containerHeight,
@@ -960,21 +1155,32 @@ export const ReelsScreen: React.FC<{
       >
         <FlatList
           data={reels}
-          keyExtractor={r => r.id}
-          renderItem={({ item, index }) => (
-            <ReelItem
-              reel={item}
-              currentUserId={currentUserId}
-              isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
-              isFollowingUser={followingIds.has(item.profiles?.id)}
-              isActive={index === activeIndex && isAppActive}
-              isAdjacent={Math.abs(index - activeIndex) === 1}
-              muted={isMuted}
-              onMuteToggle={() => setIsMuted(!isMuted)}
-              itemHeight={containerHeight}
-              onBack={onBack}
-            />
-          )}
+          keyExtractor={r => `${r._type === 'live' ? 'live-' : ''}${r.id}`}
+          renderItem={({ item, index }) => {
+            if (item._type === 'live') {
+              return (
+                <LivePreviewCard
+                  session={item}
+                  itemHeight={containerHeight}
+                  onJoin={(sessionId) => setActiveLiveSessionId(sessionId)}
+                />
+              );
+            }
+            return (
+              <ReelItem
+                reel={item}
+                currentUserId={currentUserId}
+                isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
+                isFollowingUser={followingIds.has(item.profiles?.id)}
+                isActive={index === activeIndex && isAppActive}
+                isAdjacent={Math.abs(index - activeIndex) === 1}
+                muted={isMuted}
+                onMuteToggle={() => setIsMuted(!isMuted)}
+                itemHeight={containerHeight}
+                onBack={onBack}
+              />
+            );
+          }}
           pagingEnabled
           showsVerticalScrollIndicator={false}
           windowSize={3}
@@ -989,6 +1195,19 @@ export const ReelsScreen: React.FC<{
           ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color="#fff" style={{ marginVertical: 20 }} /> : null}
         />
       </View>
+
+      {/* Live viewer overlay — opens when user taps "Join Live" on a live card */}
+      {activeLiveSessionId && (() => {
+        const { LiveScreen } = require('./LiveScreen');
+        return (
+          <View style={StyleSheet.absoluteFill}>
+            <LiveScreen
+              viewerSessionId={activeLiveSessionId}
+              onClose={() => setActiveLiveSessionId(null)}
+            />
+          </View>
+        );
+      })()}
     </View>
   );
 };

@@ -142,6 +142,65 @@ function clearFeedCache() {
   cachedCurrentProfile = null;
 }
 
+// ─── Live Story Bubble (animated) ─────────────────────────────────────────────
+const LiveStoryBubble: React.FC<{ ls: any; onPress: () => void }> = ({ ls, onPress }) => {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.22, duration: 850, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 850, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(pulseOpacity, { toValue: 0.25, duration: 850, useNativeDriver: true }),
+          Animated.timing(pulseOpacity, { toValue: 1, duration: 850, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  return (
+    <TouchableOpacity style={styles.storyItem} onPress={onPress} activeOpacity={0.8}>
+      <View style={{ width: 72, height: 72, alignItems: 'center', justifyContent: 'center' }}>
+        {/* Pulsing outer ring */}
+        <Animated.View style={{
+          position: 'absolute', width: 72, height: 72, borderRadius: 36,
+          borderWidth: 2.5, borderColor: '#ff3b30',
+          transform: [{ scale: pulseAnim }], opacity: pulseOpacity,
+        }} />
+        {/* Static inner ring */}
+        <View style={{ width: 66, height: 66, borderRadius: 33, borderWidth: 2, borderColor: '#ff3b30', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={styles.storyAvatarClip}>
+            {ls.profiles?.avatar_url
+              ? <Image source={{ uri: ls.profiles.avatar_url }} style={styles.storyAvatar} />
+              : <View style={[styles.storyAvatar, { backgroundColor: '#2a0a0a', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={22} color="#ff3b30" />
+                </View>
+            }
+          </View>
+        </View>
+        {/* LIVE badge */}
+        <View style={{
+          position: 'absolute', bottom: 1, alignSelf: 'center',
+          backgroundColor: '#ff3b30', borderRadius: 4,
+          paddingHorizontal: 5, paddingVertical: 1.5,
+          borderWidth: 1.5, borderColor: '#000',
+        }}>
+          <Text style={{ color: '#fff', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 }}>LIVE</Text>
+        </View>
+      </View>
+      <Text style={[styles.storyUsername, { color: '#ff453a', fontWeight: '700' }]} numberOfLines={1}>
+        {ls.profiles?.username ?? 'user'}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 // ─── Story Bar ────────────────────────────────────────────────────────────────
 const StoryBarInternal: React.FC<{
   storyGroups: any[];
@@ -159,15 +218,6 @@ const StoryBarInternal: React.FC<{
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
   const thumbUri = hasOwnStories ? ownGroup.stories[0].media_url : currentProfile?.avatar_url;
 
-  const localStyles = {
-    liveBadgeMini: {
-      position: 'absolute' as const, bottom: -2, alignSelf: 'center' as const,
-      backgroundColor: '#ff3b30', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1,
-      borderWidth: 1, borderColor: '#000',
-    },
-    liveBadgeMiniText: { color: '#fff', fontSize: 8, fontWeight: '900' as const },
-  };
-
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}
       style={styles.storyScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 12 }}
@@ -175,23 +225,9 @@ const StoryBarInternal: React.FC<{
       onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
       onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
     >
-      {/* Live Sessions */}
+      {/* Live Sessions — animated bubbles, appear before "Your Story" */}
       {liveSessions.map((ls) => (
-        <TouchableOpacity key={ls.id} style={styles.storyItem} onPress={() => onLivePress(ls.id)}>
-          <View style={[styles.storyRing, { borderColor: '#ff3b30' }]}>
-            <View style={styles.storyAvatarClip}>
-              {ls.profiles?.avatar_url
-                ? <Image source={{ uri: ls.profiles.avatar_url }} style={styles.storyAvatar} />
-                : <View style={[styles.storyAvatar, { backgroundColor: '#222' }]} />}
-            </View>
-            <View style={localStyles.liveBadgeMini}>
-              <Text style={localStyles.liveBadgeMiniText}>LIVE</Text>
-            </View>
-          </View>
-          <Text style={[styles.storyUsername, { color: '#ff3b30', fontWeight: 'bold' }]} numberOfLines={1}>
-            {ls.profiles?.username ?? 'user'}
-          </Text>
-        </TouchableOpacity>
+        <LiveStoryBubble key={ls.id} ls={ls} onPress={() => onLivePress(ls.id)} />
       ))}
       
       <TouchableOpacity 
@@ -321,7 +357,8 @@ const StoryViewer: React.FC<{
   onClose: () => void;
   onViewed: (id: string) => void;
   onDeleted?: (id: string) => void;
-}> = ({ visible, groupIndex, storyGroups, currentUserId, onClose, onViewed, onDeleted }) => {
+  onUserPress?: (profile: any) => void;
+}> = ({ visible, groupIndex, storyGroups, currentUserId, onClose, onViewed, onDeleted, onUserPress }) => {
   const [gi, setGi] = useState(groupIndex);
   const [si, setSi] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -512,13 +549,7 @@ const StoryViewer: React.FC<{
 
   const isOwner = group.profile.id === currentUserId;
 
-  function onUserPress(profile: any) {
-    throw new Error('Function not implemented.');
-  }
-
-  function medium() {
-    throw new Error('Function not implemented.');
-  }
+  const { medium } = useHaptics();
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
@@ -2360,8 +2391,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           }
 
           if (payload.new.type === 'new_story') {
-            // Refresh story bar so new story appears instantly
             getActiveStories().then(setStoryGroups).catch(() => {});
+          }
+
+          if (payload.new.type === 'live_ended') {
+            const sessionId = payload.new.target_id;
+            if (sessionId) setLiveSessions(prev => prev.filter(ls => ls.id !== sessionId));
           }
         }
       )

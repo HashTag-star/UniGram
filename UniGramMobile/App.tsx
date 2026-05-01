@@ -762,6 +762,11 @@ function AppShell() {
         break;
       }
 
+      case 'live_ended':
+        // Stream ended notification → just go to feed (stream is over)
+        setActiveTab('feed');
+        break;
+
       case 'reel_like':
       case 'reel_comment':
         setActiveTab('reels');
@@ -862,7 +867,7 @@ function AppShell() {
   // Reels is full-screen video — unmount when not active to free GPU/memory.
   // Other tabs use lazy-mount + display:none: mount on first visit, keep alive after.
   const isReels = activeTab === 'reels';
-  const showTabBar = !hideTabBar && !isReels;
+  const showTabBar = !hideTabBar && !isReels && pagerPage === 1;
   const TAB_BAR_HEIGHT = 58;
   const hide = (tab: Tab) => activeTab !== tab ? styles.screenHidden : undefined;
   // Returns true if a screen should be rendered (first visit or already visited)
