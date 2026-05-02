@@ -535,10 +535,10 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         {/* Header */}
         <SafeBlur intensity={20} tint="dark" style={styles.header}>
           <TouchableOpacity
-            onPress={step === 'compose' ? () => { setStep('type'); setMediaAssets([]); } : handleClose}
+            onPress={step === 'compose' && postType !== 'thread' ? () => { setStep('type'); setMediaAssets([]); } : handleClose}
             style={styles.headerSide}
           >
-            <Ionicons name={step === 'compose' ? 'arrow-back' : 'close'} size={24} color="#fff" />
+            <Ionicons name={step === 'compose' && postType !== 'thread' ? 'arrow-back' : 'close'} size={24} color="#fff" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
             {step === 'type' ? 'Create'
