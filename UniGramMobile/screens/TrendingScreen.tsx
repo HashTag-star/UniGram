@@ -39,9 +39,11 @@ const RANK_COLORS: Record<number, string[]> = {
   3: ['#b45309', '#92400e'],
 };
 
-type TimeWindow = 24 | 48;
+type TimeWindow = 1 | 6 | 24 | 48;
 
 const TIME_PILLS: Array<{ label: string; value: TimeWindow }> = [
+  { label: 'Last 1h', value: 1 },
+  { label: 'Last 6h', value: 6 },
   { label: 'Last 24h', value: 24 },
   { label: 'Last 48h', value: 48 },
 ];
@@ -219,7 +221,7 @@ export const TrendingScreen: React.FC<Props> = ({
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [timeWindow, setTimeWindow] = useState<TimeWindow>(48);
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>(24);
   const [likedIds, setLikedIds] = useState(new Set<string>());
   const [savedIds, setSavedIds] = useState(new Set<string>());
   const [selectedPost, setSelectedPost] = useState<any | null>(null);

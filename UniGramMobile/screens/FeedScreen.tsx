@@ -58,6 +58,7 @@ import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 import { LiveScreen } from './LiveScreen';
+import { TrendingScreen } from './TrendingScreen';
 import { PopupButton } from '../components/PremiumPopup';
 
 const { width, height: screenHeight } = Dimensions.get('window');
@@ -2164,6 +2165,65 @@ const feedInjStyles = StyleSheet.create({
   liveBadgeMiniText: { color: '#fff', fontSize: 8, fontWeight: '800' },
 });
 
+// ─── Pulse Post Modal ─────────────────────────────────────────────────────────
+
+const PulsePostModal: React.FC<{
+  post: any;
+  currentUserId: string;
+  likedIds: Set<string>;
+  savedIds: Set<string>;
+  onClose: () => void;
+  onUserPress: (profile: any) => void;
+}> = ({ post, currentUserId, likedIds, savedIds, onClose, onUserPress }) => {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
+  const [showComments, setShowComments] = useState(false);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <View style={[{
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: 14, paddingBottom: 12, borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        paddingTop: insets.top > 0 ? insets.top : 14,
+      }]}>
+        <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="close" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+          @{post.profiles?.username ?? 'Post'}
+        </Text>
+        <View style={{ width: 32 }} />
+      </View>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <FeedPost
+          post={{ ...post, comments_count: commentCount }}
+          currentUserId={currentUserId}
+          isLiked={likedIds.has(post.id)}
+          isSaved={savedIds.has(post.id)}
+          isMuted
+          isActive
+          setIsMuted={() => {}}
+          onOpenComments={() => setShowComments(true)}
+          onCommentCountChange={(_, delta) => setCommentCount((c: number) => Math.max(0, c + delta))}
+          onUserPress={onUserPress}
+        />
+      </ScrollView>
+      <CommentSheet
+        visible={showComments}
+        targetId={post.id}
+        targetType="post"
+        currentUserId={currentUserId}
+        authorId={post.user_id}
+        onClose={() => setShowComments(false)}
+        onCountChange={delta => setCommentCount((c: number) => Math.max(0, c + delta))}
+        onCountSync={count => setCommentCount(count)}
+      />
+    </View>
+  );
+};
+
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
 const FEED_PAGE = 12; // posts per page
 const FEED_TTL = 2 * 60 * 1000; // 2 minutes before a background refresh
@@ -2210,6 +2270,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const [storyGroups, setStoryGroups] = useState<any[]>(cachedStoryGroups);
   const [liveSessions, setLiveSessions] = useState<any[]>([]);
   const [activeLiveSessionId, setActiveLiveSessionId] = useState<string | null>(null);
+  const [showTrending, setShowTrending] = useState(false);
+  const [pulsePost, setPulsePost] = useState<any | null>(null);
   const [liveToast, setLiveToast] = useState<{ id: string, username: string, sessionId: string } | null>(null);
   const toastAnim = useRef(new Animated.Value(-100)).current;
   const [likedIds, setLikedIds] = useState<Set<string>>(cachedLikedIds ?? new Set());
@@ -2750,7 +2812,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
             {!loading && currentUserId && (
               <CampusPulse
                 userId={currentUserId}
-                onPostPress={() => {}}
+                university={currentProfile?.university}
+                onPostPress={setPulsePost}
+                onSeeAll={() => setShowTrending(true)}
+                onLivePress={(id) => setActiveLiveSessionId(id)}
               />
             )}
             {!loading && currentProfile?.university && (
@@ -2890,9 +2955,33 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       )}
       {activeLiveSessionId && (
         <Modal animationType="slide" visible={true} onRequestClose={() => setActiveLiveSessionId(null)}>
-          <LiveScreen 
-            onClose={() => setActiveLiveSessionId(null)} 
-            viewerSessionId={activeLiveSessionId} 
+          <LiveScreen
+            onClose={() => setActiveLiveSessionId(null)}
+            viewerSessionId={activeLiveSessionId}
+          />
+        </Modal>
+      )}
+
+      {showTrending && (
+        <Modal animationType="slide" visible={true} onRequestClose={() => setShowTrending(false)}>
+          <TrendingScreen
+            userId={currentUserId}
+            university={currentProfile?.university ?? ''}
+            onBack={() => setShowTrending(false)}
+            onUserPress={(profile) => { setShowTrending(false); onUserPress?.(profile); }}
+          />
+        </Modal>
+      )}
+
+      {pulsePost && (
+        <Modal animationType="slide" visible={true} presentationStyle="pageSheet" onRequestClose={() => setPulsePost(null)}>
+          <PulsePostModal
+            post={pulsePost}
+            currentUserId={currentUserId}
+            likedIds={likedIds}
+            savedIds={savedIds}
+            onClose={() => setPulsePost(null)}
+            onUserPress={(profile) => { setPulsePost(null); onUserPress?.(profile); }}
           />
         </Modal>
       )}

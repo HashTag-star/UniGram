@@ -4,14 +4,6 @@ import {
   FlatList, Animated, KeyboardAvoidingView, Platform,
   TextInput, ActivityIndicator, BackHandler,
 } from 'react-native';
-import {
-  RTCPeerConnection,
-  RTCIceCandidate,
-  RTCSessionDescription,
-  MediaStream,
-  mediaDevices,
-  RTCView,
-} from 'react-native-webrtc';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,6 +13,26 @@ import { supabase } from '../lib/supabase';
 import { SocialSync } from '../services/social_sync';
 import { usePopup } from '../context/PopupContext';
 import { CachedImage } from '../components/CachedImage';
+
+// Lazy-load WebRTC — static import crashes in Expo Go where native module is absent
+let RTCPeerConnection: any;
+let RTCIceCandidate: any;
+let RTCSessionDescription: any;
+let mediaDevices: any;
+let RTCView: any;
+let webRTCAvailable = false;
+
+try {
+  const W = require('react-native-webrtc');
+  RTCPeerConnection = W.RTCPeerConnection;
+  RTCIceCandidate = W.RTCIceCandidate;
+  RTCSessionDescription = W.RTCSessionDescription;
+  mediaDevices = W.mediaDevices;
+  RTCView = W.RTCView;
+  webRTCAvailable = true;
+} catch {
+  webRTCAvailable = false;
+}
 
 const { width } = Dimensions.get('window');
 
@@ -108,8 +120,8 @@ export const LiveScreen: React.FC<{
   const [webrtcReady, setWebrtcReady] = useState(false);
 
   // ── WebRTC state
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<any>(null);
+  const [remoteStream, setRemoteStream] = useState<any>(null);
 
   // ── Refs
   const heartIdRef = useRef(0);
@@ -118,7 +130,7 @@ export const LiveScreen: React.FC<{
   const elapsedRef = useRef<any>(null);
   const sessionIdRef = useRef<string | null>(null);
   const currentUserIdRef = useRef<string | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<any>(null);
 
   // WebRTC refs
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map()); // broadcaster: viewerId → pc
@@ -183,7 +195,7 @@ export const LiveScreen: React.FC<{
   }, []);
 
   // Broadcaster: create a peer connection for one viewer
-  const createPeerForViewer = useCallback(async (viewerId: string, stream: MediaStream, signalChannel: any) => {
+  const createPeerForViewer = useCallback(async (viewerId: string, stream: any, signalChannel: any) => {
     if (peerConnectionsRef.current.has(viewerId)) return;
 
     const pc = new RTCPeerConnection(ICE_SERVERS as any);
@@ -272,7 +284,7 @@ export const LiveScreen: React.FC<{
 
   // ── Signaling channel (WebRTC) ────────────────────────────────────────────
 
-  const setupBroadcasterSignaling = useCallback((sessionId: string, stream: MediaStream) => {
+  const setupBroadcasterSignaling = useCallback((sessionId: string, stream: any) => {
     const channel = supabase.channel(`live-signal-${sessionId}`, {
       config: { broadcast: { self: false } },
     });
@@ -345,11 +357,11 @@ export const LiveScreen: React.FC<{
 
   // ── Get local camera stream (broadcaster) ────────────────────────────────
 
-  const getLocalStream = useCallback(async (): Promise<MediaStream> => {
+  const getLocalStream = useCallback(async (): Promise<any> => {
     return await mediaDevices.getUserMedia({
       audio: true,
       video: { width: 720, height: 1280, frameRate: 30, facingMode: 'user' },
-    }) as MediaStream;
+    });
   }, []);
 
   // ── Camera flip ───────────────────────────────────────────────────────────
@@ -567,6 +579,32 @@ export const LiveScreen: React.FC<{
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  // WebRTC native module not available (Expo Go) — show dev build gate
+  if (!webRTCAvailable) {
+    return (
+      <View style={[s.container, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#05000f', padding: 32 }]}>
+        <LinearGradient colors={['#130022', '#05000f', '#000']} style={StyleSheet.absoluteFill} />
+        <Ionicons name="videocam-off-outline" size={52} color="#ef4444" style={{ marginBottom: 20 }} />
+        <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 10 }}>
+          Live Streaming Unavailable
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 32 }}>
+          Live streaming requires a development build.{'\n'}
+          Run <Text style={{ color: '#818cf8', fontWeight: '700' }}>eas build</Text> or{' '}
+          <Text style={{ color: '#818cf8', fontWeight: '700' }}>expo run:android</Text> to unlock this feature.
+        </Text>
+        <TouchableOpacity
+          onPress={onClose}
+          style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14 }}
+          activeOpacity={0.8}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={s.container}>
 

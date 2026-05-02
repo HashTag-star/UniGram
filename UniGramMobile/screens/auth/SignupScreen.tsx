@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  ScrollView, Animated, StatusBar,
+  ScrollView, Animated, StatusBar, Image,
   GestureResponderEvent,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -570,9 +570,7 @@ export default function SignupScreen({
                 <ActivityIndicator color="#000" size="small" />
               ) : (
                 <>
-                  <View style={styles.googleIconCircle}>
-                    <Text style={styles.googleG}>G</Text>
-                  </View>
+                  <Image source={require('../../assets/google.png')} style={styles.googleIcon} />
                   <Text style={styles.googleBtnText}>Continue with Google</Text>
                 </>
               )}
@@ -697,12 +695,7 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15, shadowRadius: 8, elevation: 4,
   },
-  googleIconCircle: {
-    width: 26, height: 26, borderRadius: 13,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#f1f3f4',
-  },
-  googleG: { fontSize: 14, fontWeight: '800', color: '#4285F4' },
+  googleIcon: { width: 22, height: 22 },
   googleBtnText: { color: '#111', fontSize: 15, fontWeight: '600' },
 
   terms: { fontSize: 11, color: 'rgba(255,255,255,0.22)', textAlign: 'center', lineHeight: 18, marginBottom: 22 },

@@ -98,7 +98,7 @@
       "expo-video",
       "expo-audio",
       "expo-asset",
-      "react-native-webrtc",
+      "@config-plugins/react-native-webrtc",
       [
         "expo-build-properties",
         {
