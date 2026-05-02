@@ -18,9 +18,10 @@ BEGIN
     ADD CONSTRAINT notifications_type_check
     CHECK (type IN (
         'like', 'comment', 'follow', 'mention', 'repost', 'quote', 'save',
-        'live_started', 'reel_like', 'reel_comment', 'follow_suggestion',
-        'new_post', 'new_story', 'admin_report', 'admin_verification',
-        'admin_ban', 'verification_approved', 'verification_rejected',
+        'live_started', 'live_ended', 'reel_like', 'reel_comment',
+        'follow_suggestion', 'new_post', 'new_story', 'message', 'story_view',
+        'admin_report', 'admin_verification', 'admin_ban',
+        'verification_approved', 'verification_rejected',
         'announcement', 'account_suspended', 'account_unsuspended'
     ));
 EXCEPTION

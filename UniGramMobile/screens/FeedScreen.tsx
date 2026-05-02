@@ -2725,11 +2725,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
           { useNativeDriver: true, listener: handleScroll }
         )}
         scrollEventThrottle={16}
-        windowSize={7}
-        maxToRenderPerBatch={5}
-        updateCellsBatchingPeriod={30}
-        initialNumToRender={2}
-        removeClippedSubviews={Platform.OS === 'android'}
+        windowSize={5}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={3}
+        removeClippedSubviews
+        decelerationRate="normal"
         ListHeaderComponent={useMemo(() => (
           <>
             <View style={{ height: HEADER_HEIGHT }} />

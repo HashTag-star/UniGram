@@ -75,7 +75,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
       followers.forEach((f: any) => {
         sendPushToUser(
           f.follower_id,
-          username,
+          'New story',
           pushBody,
           { type: 'new_story', storyId: data.id, userId, channelId: 'stories' },
           media_url,

@@ -185,7 +185,7 @@ export async function followUser(followerId: string, followingId: string) {
     });
     sendPushToUser(
       followingId,
-      follower?.username || 'Someone',
+      'New follower',
       text,
       { type: 'follow', userId: followerId, channelId: 'follows' },
       undefined,

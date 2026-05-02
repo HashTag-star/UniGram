@@ -103,7 +103,7 @@ export async function createReel(
         const { data: target } = await supabase.from('profiles').select('id').eq('username', uname).single();
         if (target && target.id !== userId) {
           await createNotification({ user_id: target.id, actor_id: userId, type: 'mention', text: `mentioned you in a reel: "${caption.substring(0, 20)}..."` });
-          sendPushToUser(target.id, 'New Mention', `@${data.profiles.username} mentioned you in a reel`).catch(() => {});
+          sendPushToUser(target.id, 'New mention', `@${data.profiles.username} mentioned you in a reel`).catch(() => {});
         }
       } catch {}
     });
@@ -243,7 +243,7 @@ export async function addReelComment(reelId: string, userId: string, text: strin
         const { data: target } = await supabase.from('profiles').select('id').eq('username', uname).single();
         if (target && target.id !== userId) {
           await createNotification({ user_id: target.id, actor_id: userId, type: 'mention', text: `mentioned you in a reel comment: "${text.substring(0, 20)}..."` });
-          sendPushToUser(target.id, 'New Mention', `@${res.profiles.username} mentioned you in a reel comment`).catch(() => {});
+          sendPushToUser(target.id, 'New mention', `@${res.profiles.username} mentioned you in a reel comment`).catch(() => {});
         }
       } catch {}
     });

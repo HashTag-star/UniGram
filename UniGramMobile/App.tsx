@@ -1072,6 +1072,7 @@ function AppShell() {
         <View style={[styles.notifOverlay, { backgroundColor: colors.bg }]}>
           <NotificationsScreen
             userId={session.user.id}
+            myAvatarUrl={userProfile?.avatar_url ?? null}
             onBadgeClear={() => setNotifBadge(0)}
             onBack={() => setShowNotifications(false)}
             onUserPress={(uid: string) => handleNotificationAction({ type: 'follow', userId: uid })}

@@ -41,7 +41,10 @@
       "Bash(git push *)",
       "Bash(git update-index *)",
       "Bash(git *)",
-      "Bash(xargs ls *)"
+      "Bash(xargs ls *)",
+      "Bash(echo \"EXIT:$?\")",
+      "PowerShell(Get-Content *)",
+      "PowerShell(supabase *)"
     ]
   }
 }

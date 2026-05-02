@@ -50,13 +50,11 @@ export async function sendFollowSuggestionNotif(userId: string, suggestions: { i
   if (!suggestions.length) return;
 
   const top = suggestions.slice(0, 3);
-  const title = '👥 People you may know';
-  const names = top.length === 1
-    ? `@${top[0].username}`
-    : top.length === 2
-      ? `@${top[0].username} and @${top[1].username}`
-      : `@${top[0].username}, @${top[1].username} and @${top[2].username}`;
-  const text = `${names} — follow them to stay connected`;
+  const remaining = suggestions.length - top.length;
+  const title = 'People you may know';
+  const namesList = top.map(u => `@${u.username}`).join(', ');
+  const othersLabel = remaining > 0 ? ` and ${remaining} other${remaining > 1 ? 's' : ''}` : '';
+  const text = `${namesList}${othersLabel}`;
 
   try {
     await supabase.from('notifications').insert({

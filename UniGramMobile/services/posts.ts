@@ -108,7 +108,7 @@ export async function createPost(
         post_id: data.id,
         text: notifText
       });
-      sendPushToUser(tid, actor?.username || 'Someone', notifText, {
+      sendPushToUser(tid, 'New mention', notifText, {
         type: 'post', postId: data.id, userId, channelId: 'social',
       }, uploadedUrls[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     } catch (e) {}
@@ -148,7 +148,7 @@ export async function createPost(
       followers.forEach((f: any) => {
         sendPushToUser(
           f.follower_id,
-          username,
+          'New post',
           pushBody,
           { type: 'new_post', postId: data.id, userId, channelId: 'social' },
           uploadedUrls[0] ?? undefined,
@@ -228,7 +228,7 @@ export async function likePost(postId: string, userId: string) {
         post_id: postId,
         text
       });
-      sendPushToUser(post.user_id, actor?.username || 'Someone', text, {
+      sendPushToUser(post.user_id, 'New like', text, {
         type: 'like', postId, userId, channelId: 'social',
       }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined, 'post_like').catch(() => {});
     }
@@ -529,7 +529,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
         comment_id: res.id,
         text: notifText
       });
-      sendPushToUser(post.user_id, actorName, notifText, {
+      sendPushToUser(post.user_id, 'New comment', notifText, {
         type: 'comment', postId, commentId: res.id, userId, channelId: 'social',
       }, post.media_urls?.[0] ?? undefined, actorAvatar, 'post_comment').catch(() => {});
     }
@@ -553,7 +553,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
             comment_id: res.id,
             text: mentionText
           });
-          sendPushToUser(targetProfile.id, actorName, mentionText, {
+          sendPushToUser(targetProfile.id, 'New mention', mentionText, {
             type: 'mention', postId, commentId: res.id, userId, channelId: 'social',
           }, undefined, actorAvatar, 'post_comment').catch(() => {});
         }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, ActivityIndicator, RefreshControl,
+  StyleSheet, RefreshControl,
 } from 'react-native';
 import { CachedImage } from '../components/CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,7 @@ interface Notif {
   post_id: string | null;
   comment_id: string | null;
   actor_id: string | null;
+  metadata: Record<string, any> | null;
   profiles: NotifActor | null;
   posts: { media_url: string | null } | null;
 }
@@ -47,36 +48,75 @@ function timeAgo(ts: string) {
   return `${Math.floor(d / 604800)}w`;
 }
 
+function typeLabel(type: string): string {
+  const map: Record<string, string> = {
+    like: 'New like',
+    comment: 'New comment',
+    follow: 'New follower',
+    mention: 'New mention',
+    repost: 'New repost',
+    quote: 'New quote',
+    save: 'New save',
+    live_started: 'Live stream',
+    live_ended: 'Stream ended',
+    reel_like: 'New reel like',
+    reel_comment: 'New reel comment',
+    story_view: 'Story view',
+    follow_suggestion: 'People you may know',
+    message: 'New message',
+    new_post: 'New post',
+    new_story: 'New story',
+    announcement: 'Announcement',
+    admin_report: 'New report',
+    admin_verification: 'Verification request',
+    verification_approved: 'Verification approved',
+    verification_rejected: 'Verification update',
+    account_suspended: 'Account suspended',
+    account_unsuspended: 'Account restored',
+    admin_ban: 'Account action',
+  };
+  return map[type] ?? 'Notification';
+}
+
 function notifIcon(type: string): { name: string; color: string; bg: string } {
   switch (type) {
     case 'like':
+    case 'reel_like':
       return { name: 'heart', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
     case 'comment':
+    case 'reel_comment':
       return { name: 'chatbubble', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' };
     case 'follow':
     case 'follow_suggestion':
       return { name: 'person-add', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
     case 'mention':
       return { name: 'at', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' };
-    case 'reel_like':
-      return { name: 'heart', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
-    case 'reel_comment':
-      return { name: 'chatbubble', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' };
+    case 'repost':
+      return { name: 'repeat', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
+    case 'quote':
+      return { name: 'chatbox', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' };
     case 'story_view':
       return { name: 'eye', color: '#a78bfa', bg: 'rgba(167,139,250,0.15)' };
     case 'message':
       return { name: 'mail', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' };
+    case 'live_started':
+    case 'live_ended':
+      return { name: 'radio', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
+    case 'new_post':
+      return { name: 'images', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' };
+    case 'new_story':
+      return { name: 'film', color: '#a78bfa', bg: 'rgba(167,139,250,0.15)' };
     case 'admin_verification':
+    case 'verification_approved':
       return { name: 'shield-checkmark', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' };
     case 'admin_report':
       return { name: 'flag', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
     case 'announcement':
       return { name: 'megaphone', color: '#818cf8', bg: 'rgba(129,140,248,0.15)' };
-    case 'verification_approved':
-      return { name: 'shield-checkmark', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
     case 'verification_rejected':
       return { name: 'shield', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
     case 'account_suspended':
+    case 'admin_ban':
       return { name: 'ban', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
     case 'account_unsuspended':
       return { name: 'checkmark-circle', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
@@ -91,23 +131,59 @@ const NotifItem: React.FC<{
   item: Notif;
   onPress: (item: Notif) => void;
   isExpanded?: boolean;
-}> = React.memo(({ item, onPress, isExpanded }) => {
+  myAvatarUrl?: string | null;
+}> = React.memo(({ item, onPress, isExpanded, myAvatarUrl }) => {
   const { colors } = useTheme();
   const icon = notifIcon(item.type);
   const actor = item.profiles;
+  const label = typeLabel(item.type);
+  const suggestionCount = item.metadata?.suggestion_ids?.length ?? 0;
 
-  return (
-    <TouchableOpacity
-      style={[styles.item, !item.is_read && { backgroundColor: `${colors.accent}08` }]}
-      onPress={() => onPress(item)}
-      activeOpacity={0.7}
-    >
-      {/* Unread accent bar on the left edge */}
-      {!item.is_read && (
-        <View style={[styles.unreadBar, { backgroundColor: colors.accent }]} />
-      )}
+  const renderAvatar = () => {
+    if (item.type === 'follow') {
+      // Overlapping dual avatar: recipient (mine) in back, actor (follower) in front
+      return (
+        <View style={styles.dualAvatarWrap}>
+          {myAvatarUrl ? (
+            <CachedImage uri={myAvatarUrl} style={styles.avatarBack} />
+          ) : (
+            <View style={[styles.avatarBack, styles.avatarPlaceholder, { backgroundColor: colors.bg2 }]}>
+              <Ionicons name="person" size={13} color={colors.textMuted} />
+            </View>
+          )}
+          {actor?.avatar_url ? (
+            <CachedImage uri={actor.avatar_url} style={[styles.avatarFront, { borderColor: colors.bg }]} />
+          ) : (
+            <View style={[styles.avatarFront, styles.avatarPlaceholder, { backgroundColor: colors.bg2, borderColor: colors.bg }]}>
+              <Ionicons name="person" size={15} color={colors.textMuted} />
+            </View>
+          )}
+        </View>
+      );
+    }
 
-      {/* Avatar + icon badge */}
+    if (item.type === 'follow_suggestion') {
+      // Actor avatar (first suggestion) + +N count badge
+      return (
+        <View style={styles.avatarWrap}>
+          {actor?.avatar_url ? (
+            <CachedImage uri={actor.avatar_url} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: colors.bg2 }]}>
+              <Ionicons name="people" size={18} color={colors.textMuted} />
+            </View>
+          )}
+          {suggestionCount > 1 && (
+            <View style={[styles.suggestionBadge, { backgroundColor: '#22c55e', borderColor: colors.bg }]}>
+              <Text style={styles.suggestionBadgeText}>+{suggestionCount - 1}</Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    // Standard: single actor avatar + type icon badge
+    return (
       <View style={styles.avatarWrap}>
         {actor?.avatar_url ? (
           <CachedImage uri={actor.avatar_url} style={styles.avatar} />
@@ -120,20 +196,33 @@ const NotifItem: React.FC<{
           <Ionicons name={icon.name as any} size={10} color={icon.color} />
         </View>
       </View>
+    );
+  };
 
-      {/* Text — takes all remaining space */}
+  return (
+    <TouchableOpacity
+      style={[styles.item, !item.is_read && { backgroundColor: `${colors.accent}08` }]}
+      onPress={() => onPress(item)}
+      activeOpacity={0.7}
+    >
+      {!item.is_read && (
+        <View style={[styles.unreadBar, { backgroundColor: colors.accent }]} />
+      )}
+
+      {renderAvatar()}
+
       <View style={styles.textWrap}>
+        <View style={styles.labelRow}>
+          <Text style={[styles.typeLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+          <Text style={[styles.notifTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
+        </View>
         <Text style={[styles.notifText, { color: colors.textSub }]} numberOfLines={isExpanded ? undefined : 2}>
-          {actor?.username && (
-            <Text style={[styles.actorName, { color: colors.text }]}>@{actor.username} </Text>
-          )}
           {item.text}
         </Text>
-        <Text style={[styles.notifTime, { color: colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
       </View>
 
-      {/* Post thumbnail — only when not expanded */}
-      {!isExpanded && item.posts?.media_url && (
+      {/* Post thumbnail */}
+      {!isExpanded && item.posts?.media_url && item.type !== 'follow' && item.type !== 'follow_suggestion' && (
         <CachedImage uri={item.posts.media_url} style={styles.thumb} />
       )}
     </TouchableOpacity>
@@ -145,12 +234,13 @@ const NotifItem: React.FC<{
 let _cachedNotifs: Notif[] = [];
 let _cacheUserId = '';
 let _cacheAt = 0;
-const NOTIFS_TTL = 30_000; // 30 s — background refresh after this
+const NOTIFS_TTL = 30_000;
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export interface NotificationsScreenProps {
   userId: string;
+  myAvatarUrl?: string | null;
   onBadgeClear?: () => void;
   onBack?: () => void;
   onUserPress?: (uid: string) => void;
@@ -160,12 +250,11 @@ export interface NotificationsScreenProps {
 }
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
-  userId, onBadgeClear, onBack,
+  userId, myAvatarUrl, onBadgeClear, onBack,
   onUserPress, onPostPress, onMessagePress, onDiscoverPress,
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  // Seed state from cache immediately so the screen feels instant on revisit
   const hasFreshCache = _cacheUserId === userId && _cachedNotifs.length > 0;
   const [notifs, setNotifs] = useState<Notif[]>(hasFreshCache ? _cachedNotifs : []);
   const [loading, setLoading] = useState(!hasFreshCache);
@@ -180,7 +269,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       _cachedNotifs.length > 0 &&
       Date.now() - _cacheAt < NOTIFS_TTL;
 
-    // If we have a valid fresh cache, show it immediately and bail
     if (cacheValid) {
       setNotifs(_cachedNotifs);
       setLoading(false);
@@ -188,7 +276,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       return;
     }
 
-    // Only show full skeleton when there's no cached data at all
     if (!_cachedNotifs.length || _cacheUserId !== userId) setLoading(true);
 
     try {
@@ -199,7 +286,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         posts: Array.isArray(n.posts) ? n.posts[0] : n.posts,
       })) as Notif[];
 
-      // Update module-level cache
       _cachedNotifs = formatted;
       _cacheUserId = userId;
       _cacheAt = Date.now();
@@ -213,7 +299,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   }, [userId]);
 
-  // Mark all read when screen opens; background-refresh if cache is stale
   useEffect(() => {
     const cacheStale =
       _cacheUserId !== userId ||
@@ -223,20 +308,14 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     if (cacheStale) {
       load();
     } else {
-      // Cache is fresh — data already in state, just schedule a quiet refresh
       const timer = setTimeout(() => load(), NOTIFS_TTL - (Date.now() - _cacheAt));
-      markAllNotificationsRead(userId)
-        .then(() => onBadgeClear?.())
-        .catch(() => {});
+      markAllNotificationsRead(userId).then(() => onBadgeClear?.()).catch(() => {});
       return () => clearTimeout(timer);
     }
 
-    markAllNotificationsRead(userId)
-      .then(() => onBadgeClear?.())
-      .catch(() => {});
+    markAllNotificationsRead(userId).then(() => onBadgeClear?.()).catch(() => {});
   }, [userId]);
 
-  // Realtime subscription for new notifications
   useEffect(() => {
     const channel = supabase
       .channel(`notifs-screen-${userId}`)
@@ -245,7 +324,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
         (payload) => {
           const n = payload.new as any;
-          // Fetch actor profile for the new notification
           supabase
             .from('profiles')
             .select('id, username, avatar_url')
@@ -254,13 +332,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             .then(({ data: profile }) => {
               const newNotif: Notif = {
                 ...n,
-                is_read: true, // auto-mark read since screen is open
+                is_read: true,
                 profiles: profile,
                 posts: null,
               };
               setNotifs(prev => {
                 const updated = [newNotif, ...prev];
-                // Keep cache in sync with live updates
                 if (_cacheUserId === userId) {
                   _cachedNotifs = updated;
                   _cacheAt = Date.now();
@@ -335,11 +412,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       <View key={title}>
         <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>{title}</Text>
         {data.map(item => (
-          <NotifItem 
-            key={item.id} 
-            item={item} 
-            onPress={handlePress} 
+          <NotifItem
+            key={item.id}
+            item={item}
+            onPress={handlePress}
             isExpanded={expandedId === item.id}
+            myAvatarUrl={myAvatarUrl}
           />
         ))}
       </View>
@@ -350,7 +428,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
-      {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         {onBack ? (
           <TouchableOpacity style={styles.backBtn} onPress={onBack}>
@@ -384,7 +461,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); load(true /* forceRefresh */); }}
+              onRefresh={() => { setRefreshing(true); load(true); }}
               tintColor="#6366f1"
             />
           }
@@ -417,7 +494,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1 },
 
   header: {
     flexDirection: 'row',
@@ -426,7 +503,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   backBtn: {
     width: 40,
@@ -435,21 +511,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  markAllText: {
-    fontSize: 13,
-    color: '#818cf8',
-    fontWeight: '600',
-  },
+  headerTitle: { fontSize: 18, fontWeight: '700' },
+  markAllText: { fontSize: 13, color: '#818cf8', fontWeight: '600' },
 
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.3)',
     letterSpacing: 0.8,
     paddingHorizontal: 16,
     paddingTop: 20,
@@ -460,39 +527,31 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 20,   // wider left pad so content clears the 3px unread bar
+    paddingLeft: 20,
     paddingRight: 16,
     paddingVertical: 13,
     gap: 12,
   },
 
-  // Left-edge accent strip shown on unread items
   unreadBar: {
     position: 'absolute',
     left: 0,
     top: 0,
     bottom: 0,
     width: 3,
-    borderRadius: 0,
   },
 
+  // Standard avatar + icon badge
   avatarWrap: {
     position: 'relative',
     width: 46,
     height: 46,
     flexShrink: 0,
-    alignSelf: 'flex-start',  // anchor to top of row so avatar top = first text line
+    alignSelf: 'flex-start',
     marginTop: 1,
   },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-  },
-  avatarPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  avatar: { width: 46, height: 46, borderRadius: 23 },
+  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   iconBadge: {
     position: 'absolute',
     bottom: -2,
@@ -505,13 +564,60 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
 
-  textWrap: {
-    flex: 1,
-    gap: 4,
+  // Follow dual-avatar stack (IG style)
+  dualAvatarWrap: {
+    width: 62,
+    height: 52,
+    position: 'relative',
+    flexShrink: 0,
+    alignSelf: 'flex-start',
+    marginTop: 1,
   },
-  notifText: { fontSize: 14, lineHeight: 20 },
-  actorName: { fontWeight: '700' },
-  notifTime: { fontSize: 12 },
+  avatarBack: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    opacity: 0.55,
+  },
+  avatarFront: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    borderWidth: 2.5,
+  },
+
+  // Follow suggestion +N badge
+  suggestionBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    paddingHorizontal: 4,
+  },
+  suggestionBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+
+  // Text area
+  textWrap: { flex: 1, gap: 2 },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  typeLabel: { fontSize: 13, fontWeight: '700', flex: 1 },
+  notifText: { fontSize: 13, lineHeight: 18 },
+  notifTime: { fontSize: 11, flexShrink: 0 },
 
   thumb: {
     width: 46,
@@ -527,11 +633,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     gap: 12,
   },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.5)',
-  },
+  emptyTitle: { fontSize: 17, fontWeight: '600', color: 'rgba(255,255,255,0.5)' },
   emptySubtitle: {
     fontSize: 14,
     color: 'rgba(255,255,255,0.25)',

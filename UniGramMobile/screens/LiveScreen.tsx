@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, Dimensions, TouchableOpacity,
-  FlatList, Animated, Image, KeyboardAvoidingView, Platform,
+  FlatList, Animated, KeyboardAvoidingView, Platform,
   TextInput, ActivityIndicator, BackHandler,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import {
+  RTCPeerConnection,
+  RTCIceCandidate,
+  RTCSessionDescription,
+  MediaStream,
+  mediaDevices,
+  RTCView,
+} from 'react-native-webrtc';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,8 +20,17 @@ import { LiveService, LiveComment } from '../services/live';
 import { supabase } from '../lib/supabase';
 import { SocialSync } from '../services/social_sync';
 import { usePopup } from '../context/PopupContext';
+import { CachedImage } from '../components/CachedImage';
 
 const { width } = Dimensions.get('window');
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ],
+};
 
 // ─── Floating Heart ───────────────────────────────────────────────────────────
 const HEART_COLORS = ['#ff3b30', '#ff2d55', '#ff6b9d', '#ff9f1c', '#e040fb', '#ff6b6b'];
@@ -39,12 +55,8 @@ const FloatingHeart: React.FC<{ id: number; onDone: (id: number) => void }> = ({
 
   return (
     <Animated.View style={{
-      position: 'absolute',
-      bottom: 130,
-      right: 20 + (id % 6) * 10,
-      transform: [{ translateY }, { translateX }, { scale }],
-      opacity,
-      zIndex: 999,
+      position: 'absolute', bottom: 130, right: 20 + (id % 6) * 10,
+      transform: [{ translateY }, { translateX }, { scale }], opacity, zIndex: 999,
     }}>
       <Ionicons name="heart" size={size} color={HEART_COLORS[id % HEART_COLORS.length]} />
     </Animated.View>
@@ -55,7 +67,7 @@ const FloatingHeart: React.FC<{ id: number; onDone: (id: number) => void }> = ({
 const CommentRow: React.FC<{ item: LiveComment }> = React.memo(({ item }) => (
   <View style={s.commentRow}>
     {item.profiles?.avatar_url ? (
-      <Image source={{ uri: item.profiles.avatar_url }} style={s.commentAvatar} />
+      <CachedImage uri={item.profiles.avatar_url} style={s.commentAvatar} />
     ) : (
       <View style={[s.commentAvatar, { backgroundColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' }]}>
         <Ionicons name="person" size={10} color="#555" />
@@ -78,6 +90,7 @@ export const LiveScreen: React.FC<{
   const haptics = useHaptics();
   const isViewer = !!viewerSessionId;
 
+  // ── Common state
   const [comments, setComments] = useState<LiveComment[]>([]);
   const [viewers, setViewers] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -92,13 +105,26 @@ export const LiveScreen: React.FC<{
   const [broadcasterProfile, setBroadcasterProfile] = useState<any>(null);
   const [hearts, setHearts] = useState<number[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const [permission, requestPermission] = useCameraPermissions();
+  const [webrtcReady, setWebrtcReady] = useState(false);
 
+  // ── WebRTC state
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+
+  // ── Refs
   const heartIdRef = useRef(0);
   const flatListRef = useRef<FlatList>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const elapsedRef = useRef<any>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
+  // WebRTC refs
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map()); // broadcaster: viewerId → pc
+  const viewerPcRef = useRef<RTCPeerConnection | null>(null); // viewer's single pc
+  const signalingChannelRef = useRef<any>(null);
+  const iceCandidateBufferRef = useRef<Map<string, any[]>>(new Map());
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -106,28 +132,27 @@ export const LiveScreen: React.FC<{
   const viewerBumpAnim = useRef(new Animated.Value(1)).current;
   const endedFadeAnim = useRef(new Animated.Value(0)).current;
 
-  // Keep sessionId accessible in callbacks without stale closure
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
+  useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
 
-  // Pulsing ring animation (live indicator)
+  // Pulsing ring
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.18, duration: 900, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
-        ]),
-        Animated.sequence([
-          Animated.timing(pulseOpacity, { toValue: 0.3, duration: 900, useNativeDriver: true }),
-          Animated.timing(pulseOpacity, { toValue: 0.8, duration: 900, useNativeDriver: true }),
-        ]),
-      ])
-    );
+    const loop = Animated.loop(Animated.parallel([
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.18, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ]),
+      Animated.sequence([
+        Animated.timing(pulseOpacity, { toValue: 0.3, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseOpacity, { toValue: 0.8, duration: 900, useNativeDriver: true }),
+      ]),
+    ]));
     loop.start();
     return () => loop.stop();
   }, []);
 
-  // Elapsed time for broadcaster
+  // Elapsed timer
   useEffect(() => {
     if (isLive && !isViewer) {
       elapsedRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
@@ -135,10 +160,90 @@ export const LiveScreen: React.FC<{
     return () => { if (elapsedRef.current) clearInterval(elapsedRef.current); };
   }, [isLive, isViewer]);
 
-  const fmtTime = (s: number) => {
-    const m = Math.floor(s / 60);
-    return `${m}:${(s % 60).toString().padStart(2, '0')}`;
-  };
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+
+  // ── WebRTC helpers ────────────────────────────────────────────────────────
+
+  const flushIceCandidates = useCallback(async (pc: RTCPeerConnection, peerId: string) => {
+    const buf = iceCandidateBufferRef.current.get(peerId) ?? [];
+    for (const c of buf) {
+      try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+    }
+    iceCandidateBufferRef.current.delete(peerId);
+  }, []);
+
+  const safeAddIceCandidate = useCallback(async (pc: RTCPeerConnection, peerId: string, candidate: any) => {
+    if (pc.remoteDescription) {
+      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+    } else {
+      const buf = iceCandidateBufferRef.current.get(peerId) ?? [];
+      buf.push(candidate);
+      iceCandidateBufferRef.current.set(peerId, buf);
+    }
+  }, []);
+
+  // Broadcaster: create a peer connection for one viewer
+  const createPeerForViewer = useCallback(async (viewerId: string, stream: MediaStream, signalChannel: any) => {
+    if (peerConnectionsRef.current.has(viewerId)) return;
+
+    const pc = new RTCPeerConnection(ICE_SERVERS as any);
+    peerConnectionsRef.current.set(viewerId, pc);
+
+    // Add local tracks
+    stream.getTracks().forEach((track: any) => pc.addTrack(track, stream));
+
+    // Send ICE candidates to this viewer
+    (pc as any).onicecandidate = ({ candidate }: any) => {
+      if (candidate) {
+        signalChannel.send({
+          type: 'broadcast', event: 'ice-bc',
+          payload: { to: viewerId, candidate: candidate.toJSON() },
+        });
+      }
+    };
+
+    (pc as any).onconnectionstatechange = () => {
+      if ((pc as any).connectionState === 'failed' || (pc as any).connectionState === 'closed') {
+        peerConnectionsRef.current.delete(viewerId);
+      }
+    };
+
+    // Create and send offer
+    const offer = await pc.createOffer({});
+    await pc.setLocalDescription(offer as any);
+    signalChannel.send({
+      type: 'broadcast', event: 'offer',
+      payload: { to: viewerId, offer: { type: offer.type, sdp: offer.sdp } },
+    });
+
+    return pc;
+  }, []);
+
+  // Viewer: create peer connection to broadcaster
+  const createViewerPeerConnection = useCallback((signalChannel: any) => {
+    const pc = new RTCPeerConnection(ICE_SERVERS as any);
+    viewerPcRef.current = pc;
+
+    // Receive broadcaster's video/audio
+    (pc as any).ontrack = (event: any) => {
+      const streams = event.streams;
+      if (streams?.[0]) setRemoteStream(streams[0]);
+    };
+
+    // Send ICE candidates to broadcaster
+    (pc as any).onicecandidate = ({ candidate }: any) => {
+      if (candidate) {
+        signalChannel.send({
+          type: 'broadcast', event: 'ice-vw',
+          payload: { from: currentUserIdRef.current, candidate: candidate.toJSON() },
+        });
+      }
+    };
+
+    return pc;
+  }, []);
+
+  // ── Supabase live subscription (comments + session updates + reactions) ───
 
   const setupSubscription = useCallback((id: string) => {
     if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
@@ -165,16 +270,134 @@ export const LiveScreen: React.FC<{
     );
   }, []);
 
-  const spawnHeart = useCallback(() => {
-    const id = heartIdRef.current++;
-    setHearts(prev => [...prev, id]);
+  // ── Signaling channel (WebRTC) ────────────────────────────────────────────
+
+  const setupBroadcasterSignaling = useCallback((sessionId: string, stream: MediaStream) => {
+    const channel = supabase.channel(`live-signal-${sessionId}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    channel
+      .on('broadcast', { event: 'viewer-join' }, async ({ payload }: any) => {
+        const { viewerId } = payload;
+        if (!viewerId) return;
+        await createPeerForViewer(viewerId, stream, channel);
+      })
+      .on('broadcast', { event: 'answer' }, async ({ payload }: any) => {
+        const { from: viewerId, answer } = payload;
+        const pc = peerConnectionsRef.current.get(viewerId);
+        if (!pc || pc.remoteDescription) return;
+        await pc.setRemoteDescription(new RTCSessionDescription(answer) as any);
+        await flushIceCandidates(pc, viewerId);
+      })
+      .on('broadcast', { event: 'ice-vw' }, async ({ payload }: any) => {
+        const { from: viewerId, candidate } = payload;
+        const pc = peerConnectionsRef.current.get(viewerId);
+        if (pc) await safeAddIceCandidate(pc, viewerId, candidate);
+      })
+      .subscribe();
+
+    signalingChannelRef.current = channel;
+  }, [createPeerForViewer, flushIceCandidates, safeAddIceCandidate]);
+
+  const setupViewerSignaling = useCallback((sessionId: string, uid: string) => {
+    const channel = supabase.channel(`live-signal-${sessionId}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    const pc = createViewerPeerConnection(channel);
+
+    channel
+      .on('broadcast', { event: 'offer' }, async ({ payload }: any) => {
+        const { to, offer } = payload;
+        if (to !== uid) return;
+        const currentPc = viewerPcRef.current;
+        if (!currentPc || currentPc.remoteDescription) return;
+        await currentPc.setRemoteDescription(new RTCSessionDescription(offer) as any);
+        await flushIceCandidates(currentPc, 'broadcaster');
+        const answer = await currentPc.createAnswer();
+        await currentPc.setLocalDescription(answer as any);
+        channel.send({
+          type: 'broadcast', event: 'answer',
+          payload: { from: uid, answer: { type: answer.type, sdp: answer.sdp } },
+        });
+      })
+      .on('broadcast', { event: 'ice-bc' }, async ({ payload }: any) => {
+        const { to, candidate } = payload;
+        if (to !== uid) return;
+        const currentPc = viewerPcRef.current;
+        if (currentPc) await safeAddIceCandidate(currentPc, 'broadcaster', candidate);
+      })
+      .subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          // Announce presence after channel is ready
+          setTimeout(() => {
+            channel.send({
+              type: 'broadcast', event: 'viewer-join',
+              payload: { viewerId: uid },
+            });
+          }, 300);
+        }
+      });
+
+    signalingChannelRef.current = channel;
+  }, [createViewerPeerConnection, flushIceCandidates, safeAddIceCandidate]);
+
+  // ── Get local camera stream (broadcaster) ────────────────────────────────
+
+  const getLocalStream = useCallback(async (): Promise<MediaStream> => {
+    return await mediaDevices.getUserMedia({
+      audio: true,
+      video: { width: 720, height: 1280, frameRate: 30, facingMode: 'user' },
+    }) as MediaStream;
   }, []);
 
-  const removeHeart = useCallback((id: number) => {
-    setHearts(prev => prev.filter(h => h !== id));
+  // ── Camera flip ───────────────────────────────────────────────────────────
+
+  const handleFlipCamera = useCallback(() => {
+    setCameraFacing(prev => prev === 'front' ? 'back' : 'front');
+    // react-native-webrtc native camera toggle — no new stream needed
+    const videoTrack = (localStreamRef.current?.getVideoTracks()[0] as any);
+    if (videoTrack?._switchCamera) videoTrack._switchCamera();
   }, []);
 
-  // Init
+  // ── Mute ─────────────────────────────────────────────────────────────────
+
+  const handleToggleMute = useCallback(() => {
+    setIsMuted(prev => {
+      const next = !prev;
+      localStreamRef.current?.getAudioTracks().forEach((t: any) => { t.enabled = !next; });
+      return next;
+    });
+  }, []);
+
+  // ── Cleanup all WebRTC ────────────────────────────────────────────────────
+
+  const cleanupWebRTC = useCallback(() => {
+    peerConnectionsRef.current.forEach((pc: any) => {
+      try { pc.close(); } catch {}
+    });
+    peerConnectionsRef.current.clear();
+
+    if (viewerPcRef.current) {
+      try { (viewerPcRef.current as any).close(); } catch {}
+      viewerPcRef.current = null;
+    }
+
+    localStreamRef.current?.getTracks().forEach((t: any) => t.stop());
+
+    if (signalingChannelRef.current) {
+      supabase.removeChannel(signalingChannelRef.current);
+      signalingChannelRef.current = null;
+    }
+
+    iceCandidateBufferRef.current.clear();
+    setLocalStream(null);
+    setRemoteStream(null);
+  }, []);
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -187,31 +410,43 @@ export const LiveScreen: React.FC<{
         LiveService.joinLive(viewerSessionId).catch(() => {});
         setupSubscription(viewerSessionId);
 
-        // Load broadcaster profile + initial state
         const { data: ls } = await supabase
           .from('live_sessions')
           .select('*, profiles(id, username, avatar_url, is_verified)')
           .eq('id', viewerSessionId)
           .single();
+
         if (ls) {
           setBroadcasterProfile(ls.profiles);
           setViewers(ls.viewer_count ?? 0);
-          if (ls.status === 'ended') setIsEnded(true);
+          if (ls.status === 'ended') {
+            setIsEnded(true);
+            return;
+          }
         }
 
-        // Load existing comments
         try {
           const existing = await LiveService.getComments(viewerSessionId);
           setComments(existing);
           setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
-        } catch { /* silent */ }
+        } catch {}
+
+        // Start WebRTC as viewer
+        setupViewerSignaling(viewerSessionId, user.id);
       } else {
-        if (!permission?.granted) await requestPermission();
+        // Broadcaster: get camera stream up-front so preview is immediate
+        try {
+          const stream = await getLocalStream();
+          setLocalStream(stream);
+          setWebrtcReady(true);
+        } catch (e) {
+          console.warn('Could not get camera:', e);
+        }
       }
     };
+
     init();
 
-    // Android back button
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
       handleExit();
       return true;
@@ -222,46 +457,11 @@ export const LiveScreen: React.FC<{
       if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
       if (isViewer && viewerSessionId) LiveService.leaveLive(viewerSessionId).catch(() => {});
       if (elapsedRef.current) clearInterval(elapsedRef.current);
+      cleanupWebRTC();
     };
   }, []);
 
-  const doEndLive = useCallback(async () => {
-    const id = sessionIdRef.current;
-    setIsEnding(true);
-    if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
-    if (elapsedRef.current) clearInterval(elapsedRef.current);
-    if (id) {
-      try { await LiveService.endLive(id); } catch { /* silent */ }
-      SocialSync.emit('LIVE_ENDED', { id });
-    }
-    onClose();
-  }, [onClose]);
-
-  const handleExit = useCallback(() => {
-    if (isViewer) {
-      if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
-      if (viewerSessionId) LiveService.leaveLive(viewerSessionId).catch(() => {});
-      onClose();
-      return;
-    }
-
-    if (!isLive) {
-      onClose();
-      return;
-    }
-
-    // Broadcaster — use custom popup instead of native Alert
-    showPopup({
-      title: 'End Live Stream?',
-      message: 'This will end the broadcast for everyone watching.',
-      icon: 'videocam-off-outline',
-      iconColor: '#ff453a',
-      buttons: [
-        { text: 'Cancel', style: 'cancel', onPress: () => {} },
-        { text: 'End Live', style: 'destructive', onPress: doEndLive },
-      ],
-    });
-  }, [isViewer, isLive, viewerSessionId, doEndLive, onClose, showPopup]);
+  // ── Start live ────────────────────────────────────────────────────────────
 
   const handleStartLive = async () => {
     if (isStarting) return;
@@ -274,32 +474,90 @@ export const LiveScreen: React.FC<{
       uid = data.user?.id ?? null;
       if (uid) setCurrentUserId(uid);
     }
-
     if (!uid) {
       setIsStarting(false);
-      showPopup({ title: 'Session Error', message: 'Please log in again to start a live stream.', icon: 'person-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
       return;
     }
 
     try {
+      // Get stream if not already ready
+      let stream = localStreamRef.current;
+      if (!stream) {
+        stream = await getLocalStream();
+        setLocalStream(stream);
+      }
+
       const id = await LiveService.startLive(uid);
       setSessionId(id);
       setIsLive(true);
       SocialSync.emit('LIVE_STARTED', { id, targetId: uid });
       setupSubscription(id);
+      setupBroadcasterSignaling(id, stream);
       haptics.success();
     } catch (err: any) {
-      showPopup({ title: 'Streaming Error', message: err.message || 'Could not start live session.', icon: 'videocam-off-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({
+        title: 'Streaming Error',
+        message: err.message || 'Could not start live session.',
+        icon: 'videocam-off-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
     } finally {
       setIsStarting(false);
     }
   };
 
+  const spawnHeart = useCallback(() => {
+    const id = heartIdRef.current++;
+    setHearts(prev => [...prev, id]);
+  }, []);
+
+  const removeHeart = useCallback((id: number) => {
+    setHearts(prev => prev.filter(h => h !== id));
+  }, []);
+
+  const doEndLive = useCallback(async () => {
+    const id = sessionIdRef.current;
+    setIsEnding(true);
+    if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
+    if (elapsedRef.current) clearInterval(elapsedRef.current);
+    if (id) {
+      try { await LiveService.endLive(id); } catch {}
+      SocialSync.emit('LIVE_ENDED', { id });
+    }
+    cleanupWebRTC();
+    onClose();
+  }, [onClose, cleanupWebRTC]);
+
+  const handleExit = useCallback(() => {
+    if (isViewer) {
+      if (viewerSessionId) LiveService.leaveLive(viewerSessionId).catch(() => {});
+      cleanupWebRTC();
+      if (unsubscribeRef.current) { unsubscribeRef.current(); }
+      onClose();
+      return;
+    }
+    if (!isLive) {
+      cleanupWebRTC();
+      onClose();
+      return;
+    }
+    showPopup({
+      title: 'End Live Stream?',
+      message: 'This will end the broadcast for everyone watching.',
+      icon: 'videocam-off-outline',
+      iconColor: '#ff453a',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+        { text: 'End Live', style: 'destructive', onPress: doEndLive },
+      ],
+    });
+  }, [isViewer, isLive, viewerSessionId, doEndLive, onClose, showPopup, cleanupWebRTC]);
+
   const handleSendComment = async () => {
     const text = commentText.trim();
     if (!text || !sessionId || !currentUserId) return;
     setCommentText('');
-    try { await LiveService.sendComment(sessionId, currentUserId, text); } catch { /* silent */ }
+    try { await LiveService.sendComment(sessionId, currentUserId, text); } catch {}
   };
 
   const handleReaction = () => {
@@ -308,68 +566,55 @@ export const LiveScreen: React.FC<{
     if (sessionId) LiveService.sendReaction(sessionId, '❤️');
   };
 
-  // ── Permission gate (broadcaster only) ─────────────────────────────────────
-  if (!isViewer) {
-    if (!permission) return <View style={s.container} />;
-    if (!permission.granted) {
-      return (
-        <View style={[s.container, { alignItems: 'center', justifyContent: 'center', gap: 16 }]}>
-          <LinearGradient colors={['#1a0533', '#0d0d1a']} style={StyleSheet.absoluteFill} />
-          <View style={s.permIcon}>
-            <Ionicons name="videocam-outline" size={44} color="#a855f7" />
-          </View>
-          <Text style={s.permTitle}>Camera Access Needed</Text>
-          <Text style={s.permSub}>Allow camera & microphone to go live</Text>
-          <TouchableOpacity onPress={requestPermission} activeOpacity={0.85}>
-            <LinearGradient colors={['#9333ea', '#6366f1']} style={s.permBtn}>
-              <Text style={s.permBtnText}>Grant Permission</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 15 }}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-  }
-
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <View style={s.container}>
 
-      {/* ── Background ── */}
-      {!isViewer ? (
-        <CameraView style={StyleSheet.absoluteFill} facing={cameraFacing} />
+      {/* ── Video background ── */}
+      {!isViewer && localStream ? (
+        // Broadcaster: live camera preview via WebRTC
+        <RTCView
+          streamURL={(localStream as any).toURL()}
+          style={StyleSheet.absoluteFill}
+          objectFit="cover"
+          mirror={cameraFacing === 'front'}
+          zOrder={0}
+        />
+      ) : isViewer && remoteStream ? (
+        // Viewer: broadcaster's live video via WebRTC
+        <RTCView
+          streamURL={(remoteStream as any).toURL()}
+          style={StyleSheet.absoluteFill}
+          objectFit="cover"
+          zOrder={0}
+        />
       ) : (
+        // Fallback: dark gradient while connecting
         <View style={StyleSheet.absoluteFill}>
           {broadcasterProfile?.avatar_url && (
-            <Image
-              source={{ uri: broadcasterProfile.avatar_url }}
-              style={[StyleSheet.absoluteFill, { opacity: 0.15 }]}
-              blurRadius={30}
+            <CachedImage
+              uri={broadcasterProfile.avatar_url}
+              style={[StyleSheet.absoluteFill, { opacity: 0.12 }]}
             />
           )}
           <LinearGradient colors={['#130022', '#05000f', '#000']} style={StyleSheet.absoluteFill} />
         </View>
       )}
 
-      {/* Top scrim */}
+      {/* Scrim gradients */}
       <LinearGradient
         colors={['rgba(0,0,0,0.72)', 'transparent']}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 180 }}
         pointerEvents="none"
       />
-      {/* Bottom scrim */}
       <LinearGradient
         colors={['transparent', 'rgba(0,0,0,0.88)']}
         style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 340 }}
         pointerEvents="none"
       />
 
-      {/* ── Floating Hearts ── */}
-      {hearts.map(id => (
-        <FloatingHeart key={id} id={id} onDone={removeHeart} />
-      ))}
+      {/* Floating hearts */}
+      {hearts.map(id => <FloatingHeart key={id} id={id} onDone={removeHeart} />)}
 
       {/* ── Live Ended Overlay ── */}
       {isEnded && (
@@ -392,14 +637,14 @@ export const LiveScreen: React.FC<{
         </Animated.View>
       )}
 
-      {/* ── Pre-Live Screen (broadcaster) ── */}
+      {/* ── Pre-Live (broadcaster) ── */}
       {!isLive && !isViewer && (
         <View style={StyleSheet.absoluteFill}>
           <View style={[s.preLiveTopRow, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity style={s.preLiveIconBtn} onPress={onClose}>
               <Ionicons name="close" size={22} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={s.preLiveIconBtn} onPress={() => setCameraFacing(f => f === 'front' ? 'back' : 'front')}>
+            <TouchableOpacity style={s.preLiveIconBtn} onPress={handleFlipCamera}>
               <Ionicons name="camera-reverse-outline" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -421,10 +666,7 @@ export const LiveScreen: React.FC<{
             <LinearGradient colors={['#ff3b30', '#c0392b']} style={s.goLiveGrad}>
               {isStarting
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <>
-                    <Ionicons name="radio" size={19} color="#fff" />
-                    <Text style={s.goLiveText}>GO LIVE</Text>
-                  </>
+                : <><Ionicons name="radio" size={19} color="#fff" /><Text style={s.goLiveText}>GO LIVE</Text></>
               }
             </LinearGradient>
           </TouchableOpacity>
@@ -437,15 +679,13 @@ export const LiveScreen: React.FC<{
 
           {/* Top bar */}
           <View style={[s.topBar, { paddingTop: insets.top + 8 }]}>
-
-            {/* Left: broadcaster info + LIVE badge + viewers */}
             <View style={s.topLeft}>
               {isViewer && broadcasterProfile ? (
                 <TouchableOpacity style={s.broadcasterRow} activeOpacity={0.8}>
                   <View style={s.bcAvatarWrap}>
                     <Animated.View style={[s.bcPulseRing, { transform: [{ scale: pulseAnim }], opacity: pulseOpacity }]} />
                     {broadcasterProfile.avatar_url
-                      ? <Image source={{ uri: broadcasterProfile.avatar_url }} style={s.bcAvatar} />
+                      ? <CachedImage uri={broadcasterProfile.avatar_url} style={s.bcAvatar} />
                       : <View style={[s.bcAvatar, { backgroundColor: '#333', alignItems: 'center', justifyContent: 'center' }]}><Ionicons name="person" size={14} color="#fff" /></View>
                     }
                   </View>
@@ -472,14 +712,13 @@ export const LiveScreen: React.FC<{
               </Animated.View>
             </View>
 
-            {/* Right: controls + exit */}
             <View style={s.topRight}>
               {!isViewer && (
                 <>
-                  <TouchableOpacity style={s.ctrlBtn} onPress={() => setCameraFacing(f => f === 'front' ? 'back' : 'front')}>
+                  <TouchableOpacity style={s.ctrlBtn} onPress={handleFlipCamera}>
                     <Ionicons name="camera-reverse-outline" size={21} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity style={s.ctrlBtn} onPress={() => setIsMuted(!isMuted)}>
+                  <TouchableOpacity style={s.ctrlBtn} onPress={handleToggleMute}>
                     <Ionicons name={isMuted ? 'mic-off' : 'mic-outline'} size={21} color={isMuted ? '#ff3b30' : '#fff'} />
                   </TouchableOpacity>
                 </>
@@ -490,25 +729,22 @@ export const LiveScreen: React.FC<{
                 disabled={isEnding}
                 activeOpacity={0.8}
               >
-                {isEnding ? (
-                  <ActivityIndicator size="small" color="#ff453a" style={{ width: 36 }} />
-                ) : (
-                  <Text style={[s.exitPillText, !isViewer && { color: '#ff453a' }]}>
-                    {isViewer ? 'Leave' : 'End'}
-                  </Text>
-                )}
+                {isEnding
+                  ? <ActivityIndicator size="small" color="#ff453a" style={{ width: 36 }} />
+                  : <Text style={[s.exitPillText, !isViewer && { color: '#ff453a' }]}>{isViewer ? 'Leave' : 'End'}</Text>
+                }
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Viewer center — broadcaster avatar + pulsing ring */}
-          {isViewer && broadcasterProfile && !isEnded && (
-            <View style={s.viewerCenter} pointerEvents="none">
+          {/* Viewer connecting indicator — shown until video arrives */}
+          {isViewer && !remoteStream && !isEnded && (
+            <View style={s.connectingWrap} pointerEvents="none">
               <View style={s.viewerAvatarWrap}>
                 <Animated.View style={[s.vcPulse1, { transform: [{ scale: pulseAnim }], opacity: pulseOpacity }]} />
                 <View style={s.vcPulse2} />
-                {broadcasterProfile.avatar_url
-                  ? <Image source={{ uri: broadcasterProfile.avatar_url }} style={s.vcAvatar} />
+                {broadcasterProfile?.avatar_url
+                  ? <CachedImage uri={broadcasterProfile.avatar_url} style={s.vcAvatar} />
                   : <View style={[s.vcAvatar, { backgroundColor: '#1e1e2e', alignItems: 'center', justifyContent: 'center' }]}><Ionicons name="person" size={44} color="#555" /></View>
                 }
               </View>
@@ -516,16 +752,14 @@ export const LiveScreen: React.FC<{
                 <View style={s.liveDot} />
                 <Text style={s.vcLiveText}>LIVE</Text>
               </View>
-              <Text style={s.vcName}>@{broadcasterProfile.username}</Text>
-              <Text style={s.vcSub}>is streaming live</Text>
+              <Text style={s.vcName}>{broadcasterProfile?.username ? `@${broadcasterProfile.username}` : ''}</Text>
+              <ActivityIndicator color="rgba(255,255,255,0.4)" style={{ marginTop: 12 }} />
+              <Text style={s.connectingText}>Connecting to stream…</Text>
             </View>
           )}
 
           {/* Bottom: comments + input */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={s.bottomArea}
-          >
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.bottomArea}>
             <FlatList
               ref={flatListRef}
               data={comments}
@@ -534,13 +768,16 @@ export const LiveScreen: React.FC<{
               showsVerticalScrollIndicator={false}
               renderItem={({ item }) => <CommentRow item={item} />}
               contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 8 }}
+              removeClippedSubviews
+              maxToRenderPerBatch={10}
+              windowSize={5}
               onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
             />
 
             <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom + 12, 20) }]}>
               <View style={s.inputWrap}>
                 <TextInput
-                  placeholder="Comment..."
+                  placeholder="Comment…"
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   style={s.input}
                   value={commentText}
@@ -562,7 +799,6 @@ export const LiveScreen: React.FC<{
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
-
         </View>
       )}
     </View>
@@ -572,13 +808,6 @@ export const LiveScreen: React.FC<{
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-
-  // Permission
-  permIcon: { width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(168,85,247,0.12)', alignItems: 'center', justifyContent: 'center' },
-  permTitle: { color: '#fff', fontSize: 21, fontWeight: '800' },
-  permSub: { color: 'rgba(255,255,255,0.45)', fontSize: 14, textAlign: 'center', paddingHorizontal: 32 },
-  permBtn: { paddingHorizontal: 48, paddingVertical: 15, borderRadius: 28 },
-  permBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
 
   // Pre-live
   preLiveTopRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18 },
@@ -593,7 +822,7 @@ const s = StyleSheet.create({
 
   // Top bar
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 14, zIndex: 20 },
-  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'nowrap' },
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
   // Live pill
@@ -602,26 +831,23 @@ const s = StyleSheet.create({
   livePillText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   elapsedText: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600' },
 
-  // Viewer count pill
   viewerPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   viewerCountText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
-  // Broadcaster row (viewer mode top bar)
   broadcasterRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bcAvatarWrap: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   bcPulseRing: { position: 'absolute', width: 38, height: 38, borderRadius: 19, borderWidth: 2.5, borderColor: '#ff3b30' },
   bcAvatar: { width: 30, height: 30, borderRadius: 15 },
   bcName: { color: '#fff', fontSize: 12, fontWeight: '700', maxWidth: 90 },
 
-  // Controls
   ctrlBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   exitPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: 1 },
   exitPillLeave: { backgroundColor: 'rgba(0,0,0,0.45)', borderColor: 'rgba(255,255,255,0.2)' },
   exitPillEnd: { backgroundColor: 'rgba(255,67,58,0.12)', borderColor: 'rgba(255,67,58,0.4)' },
   exitPillText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  // Viewer center display
-  viewerCenter: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 150, alignItems: 'center', justifyContent: 'center' },
+  // Viewer connecting state
+  connectingWrap: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 150, alignItems: 'center', justifyContent: 'center' },
   viewerAvatarWrap: { width: 128, height: 128, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   vcPulse1: { position: 'absolute', width: 128, height: 128, borderRadius: 64, borderWidth: 3, borderColor: '#ff3b30' },
   vcPulse2: { position: 'absolute', width: 110, height: 110, borderRadius: 55, borderWidth: 1.5, borderColor: 'rgba(255,59,48,0.35)' },
@@ -629,7 +855,7 @@ const s = StyleSheet.create({
   vcLiveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#ff3b30', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8, marginBottom: 10 },
   vcLiveText: { color: '#fff', fontSize: 11, fontWeight: '900', letterSpacing: 1.5 },
   vcName: { color: '#fff', fontSize: 19, fontWeight: '800' },
-  vcSub: { color: 'rgba(255,255,255,0.45)', fontSize: 14, marginTop: 4 },
+  connectingText: { color: 'rgba(255,255,255,0.35)', fontSize: 13, marginTop: 6 },
 
   // Comments
   bottomArea: { position: 'absolute', bottom: 0, left: 0, right: 0 },
@@ -640,7 +866,6 @@ const s = StyleSheet.create({
   commentUser: { color: '#e0e0ff', fontWeight: '800', fontSize: 12 },
   commentText: { color: 'rgba(255,255,255,0.88)', fontSize: 12, flexShrink: 1 },
 
-  // Input
   inputRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 },
   inputWrap: { flex: 1, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
   input: { flex: 1, color: '#fff', fontSize: 14 },

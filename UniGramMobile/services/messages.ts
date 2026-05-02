@@ -137,7 +137,7 @@ export async function sendMessage(
     participants?.forEach((p: any) => {
       sendPushToUser(
         p.user_id,
-        sender?.username || 'Someone',
+        'New message',
         pushBody,
         { type: 'message', conversationId, channelId: 'messages' },
         type === 'image' ? (mediaUrl ?? undefined) : undefined,
