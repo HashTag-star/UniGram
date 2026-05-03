@@ -4,6 +4,7 @@ import {
   Image, Switch, Alert, Modal, TextInput, ActivityIndicator,
   Linking, KeyboardAvoidingView, Platform, FlatList,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -70,6 +71,7 @@ const Row: React.FC<{
 
 const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ visible, onClose }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -130,12 +132,12 @@ const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
         style={[styles.subModalContainer, { backgroundColor: colors.bg }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => { reset(); onClose(); }}>
+        <View style={[styles.subModalHeader, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
+          <TouchableOpacity onPress={() => { reset(); onClose(); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[styles.subModalCancel, { color: colors.textSub }]}>Cancel</Text>
           </TouchableOpacity>
           <Text style={[styles.subModalTitle, { color: colors.text }]}>Change Password</Text>
-          <TouchableOpacity onPress={handleSave} disabled={saving}>
+          <TouchableOpacity onPress={handleSave} disabled={saving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             {saving
               ? <ActivityIndicator size="small" color={colors.accentLight} />
               : <Text style={[styles.subModalSave, { color: colors.accentLight }]}>Save</Text>
@@ -210,6 +212,7 @@ const PrivacyModal: React.FC<{
   onProfileUpdated: (p: any) => void;
 }> = ({ visible, profile, onClose, onProfileUpdated }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { showPopup } = usePopup();
 
   const [isPrivate, setIsPrivate] = useState(false);
@@ -268,8 +271,8 @@ const PrivacyModal: React.FC<{
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.subModalContainer, { backgroundColor: colors.bg }]}>
-        <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={onClose}>
+        <View style={[styles.subModalHeader, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[styles.subModalCancel, { color: colors.textSub }]}>Done</Text>
           </TouchableOpacity>
           <Text style={[styles.subModalTitle, { color: colors.text }]}>Privacy</Text>
@@ -340,6 +343,7 @@ const PrivacyModal: React.FC<{
 
 const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => void }> = ({ visible, profile, onClose }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [blocked, setBlocked] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -397,8 +401,8 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.subModalContainer, { backgroundColor: colors.bg }]}>
-        <View style={[styles.subModalHeader, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={onClose}>
+        <View style={[styles.subModalHeader, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[styles.subModalCancel, { color: colors.textSub }]}>Done</Text>
           </TouchableOpacity>
           <Text style={[styles.subModalTitle, { color: colors.text }]}>Blocked Accounts</Text>
@@ -456,12 +460,13 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
 
 const NOTIF_STORAGE_KEY = 'unigram_notifications_enabled';
 
-export const SettingsScreen: React.FC<Props> = ({ 
+export const SettingsScreen: React.FC<Props> = ({
   visible, profile, onClose, onProfileUpdated, onAdminPress,
   onShowPrivacy, onShowTerms, onShowGuidelines
 }) => {
 
   const { colors, isDark, toggleTheme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -566,8 +571,8 @@ export const SettingsScreen: React.FC<Props> = ({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         {/* Header */}
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={onClose}>
+        <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>

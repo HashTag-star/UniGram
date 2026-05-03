@@ -395,6 +395,10 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
             maxToRenderPerBatch={9}
             initialNumToRender={9}
             removeClippedSubviews={true}
+            getItemLayout={(_data, index) => {
+              const row = Math.floor(index / 3);
+              return { length: COL, offset: row * (COL + 1), index };
+            }}
           />
         )}
         {detailPost && (
@@ -568,6 +572,10 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
           maxToRenderPerBatch={9}
           initialNumToRender={12}
           removeClippedSubviews={true}
+          getItemLayout={(_data, index) => {
+            const row = Math.floor(index / 3);
+            return { length: COL, offset: row * (COL + 1), index };
+          }}
           ListHeaderComponent={
             <>
               {/* Trending hashtags */}

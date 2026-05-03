@@ -1,8 +1,9 @@
 import './global.css';
-import React, { useState, useEffect, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useRef, useTransition, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal, ScrollView,
+  InteractionManager,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -467,6 +468,19 @@ function AppShell() {
   // Lazy-mount tabs: a screen only mounts on first visit, then stays alive (display:none)
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
+
+  // Pre-mount all non-Reels tabs after the feed is interactive so every subsequent
+  // tab switch is instant (display:none flip vs cold mount). Gate on session so
+  // this only fires after the user is authenticated and the feed has loaded.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      startTransition(() => {
+        setMountedTabs(new Set(['feed', 'explore', 'market', 'messages', 'profile'] as Tab[]));
+      });
+    });
+    return () => task.cancel();
+  }, [session?.user?.id]);
   const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const notifChannelRef = useRef<any>(null);
   const showNotifsRef = useRef(false);
@@ -850,15 +864,14 @@ function AppShell() {
     return <OnboardingNavigator userId={session.user.id} onComplete={() => setOnboardingDone(true)} />;
   }
 
-  const handleTabChange = (tab: Tab) => {
+  const handleTabChange = useCallback((tab: Tab) => {
     // Immediate: icon, indicator, and screen visibility all switch in one render
     setActiveTabVisual(tab);
-    setActiveTab(tab);
+    setActiveTab(prev => { if (tab === 'reels') setPrevTab(prev); return tab; });
     setHideTabBar(false);
     // Deferred: pure bookkeeping that has no visible effect on the incoming screen
     startTransition(() => {
       if (tab === 'reels') {
-        setPrevTab(activeTab);
         // Clear deep-link state when navigating to Reels via tab bar (not a reel tap)
         setInitialReelId(undefined);
         setInitialReels(undefined);
@@ -868,7 +881,7 @@ function AppShell() {
       if (tab === 'messages') setMessageBadge(0);
       setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
     });
-  };
+  }, []);
 
   const openNotifications = () => {
     setNotifBadge(0);

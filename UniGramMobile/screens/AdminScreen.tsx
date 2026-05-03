@@ -4,6 +4,7 @@ import {
   StyleSheet, ActivityIndicator, TextInput, Alert,
   RefreshControl, ScrollView, Modal,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, suspendUser as suspendUserAction, deleteReportedContent, getAuthorIdForReport } from '../services/reports';
@@ -1704,6 +1705,7 @@ interface Props {
 }
 
 export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -1801,8 +1803,8 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <TouchableOpacity onPress={onBack} style={styles.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>

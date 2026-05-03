@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import { PremiumPopup, PopupButton } from '../components/PremiumPopup';
 
 interface PopupConfig {
@@ -19,16 +19,19 @@ const PopupContext = createContext<PopupContextType | undefined>(undefined);
 export const PopupProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [visible, setVisible] = useState(false);
   const [config, setConfig] = useState<PopupConfig>({});
-  
+
   // To handle sequential popups (e.g. Delete -> Final Confirmation)
   const queue = useRef<PopupConfig[]>([]);
+  // Track visibility via ref so showPopup doesn't need `visible` as a dep
+  const visibleRef = useRef(false);
 
   const hidePopup = useCallback(() => {
+    visibleRef.current = false;
     setVisible(false);
-    // Check if there's another one in the queue
     if (queue.current.length > 0) {
       const next = queue.current.shift()!;
       setTimeout(() => {
+        visibleRef.current = true;
         setConfig(next);
         setVisible(true);
       }, 300);
@@ -36,17 +39,20 @@ export const PopupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const showPopup = useCallback((newConfig: PopupConfig) => {
-    if (visible) {
+    if (visibleRef.current) {
       queue.current.push(newConfig);
       hidePopup();
       return;
     }
+    visibleRef.current = true;
     setConfig(newConfig);
     setVisible(true);
-  }, [visible, hidePopup]);
+  }, [hidePopup]);
+
+  const value = useMemo(() => ({ showPopup, hidePopup }), [showPopup, hidePopup]);
 
   return (
-    <PopupContext.Provider value={{ showPopup, hidePopup }}>
+    <PopupContext.Provider value={value}>
       {children}
       <PremiumPopup
         visible={visible}

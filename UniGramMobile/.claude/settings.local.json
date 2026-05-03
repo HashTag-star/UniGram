@@ -44,7 +44,12 @@
       "Bash(xargs ls *)",
       "Bash(echo \"EXIT:$?\")",
       "PowerShell(Get-Content *)",
-      "PowerShell(supabase *)"
+      "PowerShell(supabase *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\#iamhashtag\\\\desktop\\\\UniGram\\\\UniGramMobile\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(Get-ChildItem -Path . -Depth 2)",
+      "Bash(Select-Object FullName)"
     ]
   }
 }
