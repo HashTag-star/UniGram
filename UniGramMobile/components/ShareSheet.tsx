@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
   Modal,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -104,6 +106,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       transparent
       onRequestClose={onClose}
     >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.dismiss} onPress={onClose} activeOpacity={1} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
@@ -176,7 +179,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
             />
           )}
         </View>
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };

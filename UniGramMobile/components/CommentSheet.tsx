@@ -865,6 +865,7 @@ export const CommentSheet: React.FC<Props> = ({
       keyboardBehavior="extend"
       keyboardBlurBehavior="restore"
       android_keyboardInputMode="adjustResize"
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <View style={{ flex: 1 }}>
         <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>

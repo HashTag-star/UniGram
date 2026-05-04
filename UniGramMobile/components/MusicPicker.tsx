@@ -1,24 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, ActivityIndicator, Image, Modal,
-  Animated, PanResponder, KeyboardAvoidingView, Platform,
+  Animated, Platform, KeyboardAvoidingView, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioPlayer } from 'expo-audio';
 import { useTheme } from '../context/ThemeContext';
-import { SafeModules } from '../lib/SafeModules';
 
 const { width, height } = Dimensions.get('window');
-
-const SafeBlur = ({ intensity, tint, style, children }: any) => {
-  if (SafeModules.hasBlur()) {
-    const { BlurView } = require('expo-blur');
-    return <BlurView intensity={intensity} tint={tint} style={style}>{children}</BlurView>;
-  }
-  return <View style={[style, { backgroundColor: tint === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)' }]}>{children}</View>;
-};
 
 interface MusicPickerProps {
   visible: boolean;
@@ -36,12 +27,29 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
   const [selectedTrack, setSelectedTrack] = useState<any>(null);
   const [trimMode, setTrimMode] = useState(false);
   
-  // Trimmer state
-  const [startPoint, setStartPoint] = useState(0); // 0 to 15 (assuming 15s clip from 30s preview)
+  const [startPoint, setStartPoint] = useState(0); 
+  const [isPlaying, setIsPlaying] = useState(false);
   const player = useAudioPlayer(selectedTrack?.previewUrl ?? '');
 
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+
   useEffect(() => {
-    if (visible && !query) searchMusic('popular hits');
+    if (visible && !query) {
+      searchMusic('popular hits');
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+      ]).start();
+    } else {
+      fadeAnim.setValue(0);
+      slideAnim.setValue(20);
+    }
   }, [visible]);
 
   const searchMusic = async (q: string) => {
@@ -59,44 +67,139 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
   };
 
   const handleTrackSelect = (track: any) => {
+    Keyboard.dismiss();
     setSelectedTrack(track);
     setTrimMode(true);
+    setIsPlaying(true);
   };
 
   const handleConfirm = () => {
     onSelect(selectedTrack, startPoint);
+    player.pause();
     setTrimMode(false);
     onClose();
   };
 
   useEffect(() => {
     if (trimMode && player && selectedTrack) {
-      player.play();
-      player.loop = true;
+      if (isPlaying) {
+        player.play();
+        player.loop = true;
+      } else {
+        player.pause();
+      }
     } else {
       player?.pause();
     }
-  }, [trimMode, selectedTrack, visible]); // Removed startPoint to prevent stuttering
+  }, [trimMode, selectedTrack, visible, isPlaying]);
+
+  const togglePlayback = () => {
+    setIsPlaying(!isPlaying);
+  };
+
+  const renderTrimmer = () => {
+    if (!selectedTrack) return null;
+
+    return (
+      <View style={styles.trimContainer}>
+        <View style={styles.trimHeader}>
+          <TouchableOpacity onPress={() => { setTrimMode(false); player.pause(); setIsPlaying(false); }}>
+            <Ionicons name="arrow-back" size={26} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.trimTitle, { color: colors.text }]}>Trim Music</Text>
+          <TouchableOpacity onPress={handleConfirm} style={[styles.doneBtn, { backgroundColor: colors.accent }]}>
+            <Text style={styles.doneText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.selectedHero}>
+          <Image source={{ uri: selectedTrack.artworkUrl100?.replace('100x100', '400x400') }} style={styles.heroArt} />
+          <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={1}>{selectedTrack.trackName}</Text>
+          <Text style={[styles.heroArtist, { color: colors.textMuted }]} numberOfLines={1}>{selectedTrack.artistName}</Text>
+        </View>
+
+        <View style={styles.trimmerSection}>
+          <View style={styles.timeInfo}>
+            <Text style={[styles.timeLabel, { color: colors.text }]}>
+              {Math.floor(startPoint)}s — {Math.floor(startPoint + 15)}s
+            </Text>
+            <TouchableOpacity onPress={togglePlayback} style={styles.playToggle}>
+              <Ionicons name={isPlaying ? 'pause' : 'play'} size={24} color={colors.accent} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.waveformContainer}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              decelerationRate="fast"
+              snapToInterval={20}
+              onScroll={(e) => {
+                const x = e.nativeEvent.contentOffset.x;
+                const newStart = (x / (width * 1.5)) * 30;
+                const clamped = Math.max(0, Math.min(15, newStart));
+                if (Math.abs(clamped - startPoint) > 0.5) {
+                   setStartPoint(clamped);
+                   player.seekTo(clamped * 1000);
+                }
+              }}
+              scrollEventThrottle={16}
+              contentContainerStyle={{ paddingHorizontal: width / 2 }}
+            >
+              <View style={[styles.waveBarContainer, { width: width * 1.5 }]}>
+                {[...Array(50)].map((_, i) => (
+                  <View 
+                    key={i} 
+                    style={[
+                      styles.waveBar, 
+                      { 
+                        height: 15 + Math.random() * 35, 
+                        backgroundColor: (i / 50) * 30 >= startPoint && (i / 50) * 30 <= startPoint + 15 
+                          ? colors.accent 
+                          : 'rgba(255,255,255,0.1)'
+                      }
+                    ]} 
+                  />
+                ))}
+              </View>
+            </ScrollView>
+            
+            <View style={[styles.selectionWindow, { borderColor: colors.accent }]} pointerEvents="none">
+              <View style={[styles.indicatorLine, { backgroundColor: colors.accent }]} />
+            </View>
+          </View>
+          <Text style={[styles.caption, { color: colors.textMuted }]}>Drag to choose your 15s clip</Text>
+        </View>
+      </View>
+    );
+  };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
         style={{ flex: 1 }}
       >
         <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-          <TouchableOpacity 
-            activeOpacity={1} 
-            style={[styles.sheet, { backgroundColor: colors.bg, paddingBottom: insets.bottom + 20 }]}
+          <Animated.View 
+            style={[
+              styles.sheet, 
+              { 
+                backgroundColor: colors.bg, 
+                paddingBottom: Math.max(insets.bottom, 20),
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
+              }
+            ]}
           >
             <View style={styles.handle} />
             
             {!trimMode ? (
-              <>
+              <View style={styles.searchContainer}>
                 <View style={styles.header}>
-                  <Text style={[styles.title, { color: colors.text }]}>Music</Text>
+                  <Text style={[styles.title, { color: colors.text }]}>Choose Music</Text>
                   <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                    <Ionicons name="close" size={24} color={colors.text} />
+                    <Ionicons name="close" size={28} color={colors.text} />
                   </TouchableOpacity>
                 </View>
 
@@ -104,7 +207,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
                   <Ionicons name="search" size={20} color={colors.textMuted} />
                   <TextInput
                     style={[styles.searchInput, { color: colors.text }]}
-                    placeholder="Search songs..."
+                    placeholder="Search for a song..."
                     placeholderTextColor={colors.textMuted}
                     value={query}
                     onChangeText={(t) => {
@@ -112,6 +215,8 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
                       if (t.length > 2) searchMusic(t);
                     }}
                     autoFocus
+                    returnKeyType="search"
+                    onSubmitEditing={() => searchMusic(query)}
                   />
                 </View>
 
@@ -128,93 +233,16 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
                         <Text style={[styles.trackName, { color: colors.text }]} numberOfLines={1}>{track.trackName}</Text>
                         <Text style={[styles.artistName, { color: colors.textMuted }]} numberOfLines={1}>{track.artistName}</Text>
                       </View>
-                      <Ionicons name="play-circle-outline" size={24} color={colors.textMuted} />
+                      <View style={[styles.playBtn, { backgroundColor: colors.bg2 }]}>
+                         <Ionicons name="play" size={14} color={colors.accent} />
+                      </View>
                     </TouchableOpacity>
                   ))}
+                  <View style={{ height: 40 }} />
                 </ScrollView>
-              </>
-            ) : (
-              <View style={styles.trimContainer}>
-                 <View style={styles.trimHeader}>
-                   <TouchableOpacity onPress={() => { setTrimMode(false); player.pause(); }}>
-                     <Ionicons name="arrow-back" size={24} color={colors.text} />
-                   </TouchableOpacity>
-                   <Text style={[styles.trimTitle, { color: colors.text }]}>Choose segment</Text>
-                   <TouchableOpacity onPress={handleConfirm} style={[styles.doneBtn, { backgroundColor: colors.accent }]}>
-                     <Text style={styles.doneText}>Done</Text>
-                   </TouchableOpacity>
-                 </View>
-
-                 <View style={styles.selectedHero}>
-                   <Image source={{ uri: selectedTrack.artworkUrl100 }} style={styles.heroArt} />
-                   <Text style={[styles.heroName, { color: colors.text }]}>{selectedTrack.trackName}</Text>
-                   <Text style={[styles.heroArtist, { color: colors.textMuted }]}>{selectedTrack.artistName}</Text>
-                 </View>
-
-                    {/* Waveform Trimmer with Range Window */}
-                  <View style={styles.waveformContainer}>
-                    <View style={styles.timeDisplay}>
-                      <Text style={[styles.timeLabel, { color: colors.text }]}>
-                        Selected: {Math.floor(startPoint)}:00 — {Math.floor(startPoint + 15)}:00
-                      </Text>
-                    </View>
-                    
-                    <View style={styles.trimmerWrapper}>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        snapToInterval={40} // Snap to 1-second intervals (1200 / 30 = 40)
-                        decelerationRate="fast"
-                        onScroll={(e) => {
-                          const x = e.nativeEvent.contentOffset.x;
-                          const newStart = (x / 1200) * 30;
-                          setStartPoint(Math.max(0, Math.min(15, newStart)));
-                        }}
-                        onScrollEndDrag={() => {
-                          if (player) {
-                            player.seekTo(startPoint * 1000);
-                            player.play();
-                          }
-                        }}
-                        onMomentumScrollEnd={() => {
-                          if (player) {
-                            player.seekTo(startPoint * 1000);
-                            player.play();
-                          }
-                        }}
-                        scrollEventThrottle={32}
-                        contentContainerStyle={{ paddingHorizontal: width / 2 - (600 / 2) }} // Center the 15s window (600px)
-                      >
-                        <View style={[styles.waveBarContainer, { width: 1200 }]}>
-                           {[...Array(60)].map((_, i) => (
-                             <View 
-                               key={i} 
-                               style={[
-                                 styles.waveBar, 
-                                 { 
-                                   height: 20 + Math.sin(i * 0.5) * 20 + Math.random() * 10, 
-                                   backgroundColor: (i / 60) * 30 >= startPoint && (i / 60) * 30 <= startPoint + 15 
-                                      ? colors.accent 
-                                      : colors.textMuted + '40'
-                                 }
-                               ]} 
-                             />
-                           ))}
-                        </View>
-                      </ScrollView>
-                      
-                      {/* Range Box Overaly (Fixed in center) */}
-                      <View style={[styles.rangeWindow, { borderColor: colors.accent, width: (15/30) * 1200 }]} pointerEvents="none">
-                         <View style={[styles.rangeEdge, { backgroundColor: colors.accent }]} />
-                         <View style={{ flex: 1 }} />
-                         <View style={[styles.rangeEdge, { backgroundColor: colors.accent }]} />
-                      </View>
-                    </View>
-                  </View>
-                  <Text style={[styles.caption, { color: colors.textMuted }]}>Slide the music to pick your 15s clip</Text>
               </View>
-            )}
-          </TouchableOpacity>
+            ) : renderTrimmer()}
+          </Animated.View>
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </Modal>
@@ -222,46 +250,59 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
 };
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: height * 0.72 },
-  handle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginVertical: 12 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16 },
-  title: { fontSize: 20, fontWeight: '800' },
-  closeBtn: { padding: 4 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, paddingHorizontal: 12, borderRadius: 12, height: 44, marginBottom: 16 },
-  searchInput: { flex: 1, marginLeft: 8, fontSize: 16 },
-  trackList: { paddingHorizontal: 16 },
-  trackRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-  artwork: { width: 48, height: 48, borderRadius: 6 },
-  trackName: { fontSize: 15, fontWeight: '700' },
-  artistName: { fontSize: 13, marginTop: 2 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: { 
+    borderTopLeftRadius: 32, 
+    borderTopRightRadius: 32, 
+    height: height * 0.8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 20,
+  },
+  handle: { width: 36, height: 5, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 3, alignSelf: 'center', marginVertical: 12 },
+  searchContainer: { flex: 1 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 16 },
+  title: { fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
+  closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' },
+  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 16, borderRadius: 16, height: 48, marginBottom: 16 },
+  searchInput: { flex: 1, marginLeft: 10, fontSize: 16, fontWeight: '500' },
+  trackList: { paddingHorizontal: 20 },
+  trackRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  artwork: { width: 52, height: 52, borderRadius: 10 },
+  trackName: { fontSize: 16, fontWeight: '700' },
+  artistName: { fontSize: 14, marginTop: 3 },
+  playBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingLeft: 2 },
   
-  trimContainer: { padding: 16, alignItems: 'center' },
+  trimContainer: { flex: 1, padding: 20 },
   trimHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 30 },
-  trimTitle: { fontSize: 16, fontWeight: '700' },
-  doneBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-  doneText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  trimTitle: { fontSize: 18, fontWeight: '800' },
+  doneBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 24 },
+  doneText: { color: '#fff', fontWeight: '900', fontSize: 15 },
   
   selectedHero: { alignItems: 'center', marginBottom: 40 },
-  heroArt: { width: 120, height: 120, borderRadius: 12, marginBottom: 16 },
-  heroName: { fontSize: 18, fontWeight: '800', textAlign: 'center' },
-  heroArtist: { fontSize: 14, marginTop: 4 },
+  heroArt: { width: 160, height: 160, borderRadius: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.4, shadowRadius: 15 },
+  heroName: { fontSize: 22, fontWeight: '900', textAlign: 'center', paddingHorizontal: 20 },
+  heroArtist: { fontSize: 16, marginTop: 6, fontWeight: '500' },
   
-  waveformContainer: { width: '100%', alignItems: 'center', marginTop: 10 },
-  timeDisplay: { marginBottom: 15 },
-  timeLabel: { fontSize: 13, fontWeight: '700' },
-  trimmerWrapper: { width: '100%', height: 80, alignItems: 'center', justifyContent: 'center' },
-  waveBarContainer: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 80 },
-  waveBar: { width: 5, borderRadius: 2.5 },
-  rangeWindow: { 
+  trimmerSection: { width: '100%', alignItems: 'center' },
+  timeInfo: { flexDirection: 'row', alignItems: 'center', gap: 15, marginBottom: 20 },
+  timeLabel: { fontSize: 15, fontWeight: '800', backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 },
+  playToggle: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' },
+  
+  waveformContainer: { width: '100%', height: 100, alignItems: 'center', justifyContent: 'center' },
+  waveBarContainer: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 100 },
+  waveBar: { width: 4, borderRadius: 2, minHeight: 10 },
+  selectionWindow: { 
     position: 'absolute', 
-    width: width * 0.45, // Target window size visually
-    height: 70, 
+    width: width * 0.5, 
+    height: 110, 
     borderWidth: 2, 
-    borderRadius: 8,
-    flexDirection: 'row',
-    zIndex: 10
+    borderRadius: 16,
+    zIndex: 10,
+    alignItems: 'center',
   },
-  rangeEdge: { width: 4, height: '100%', borderRadius: 2 },
-  caption: { fontSize: 13, marginTop: 25, textAlign: 'center' },
+  indicatorLine: { width: 2, height: '100%', opacity: 0.5 },
+  caption: { fontSize: 14, marginTop: 30, textAlign: 'center', fontWeight: '500' },
 });

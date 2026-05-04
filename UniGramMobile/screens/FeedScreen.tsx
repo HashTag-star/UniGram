@@ -5,7 +5,7 @@ import {
   StatusBar, RefreshControl, Animated, Alert, Share,
   TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
   TextInput, InteractionManager, AppState,
-  Platform,
+  Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { 
   Gesture, 
@@ -588,6 +588,7 @@ const StoryViewer: React.FC<{
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={[sv.bg, isReshared && { backgroundColor: '#0f0f0f' }]}>
         <StatusBar hidden />
         {!isReshared && (
@@ -744,6 +745,7 @@ const StoryViewer: React.FC<{
           onClose={() => setShowViewers(false)} 
         />
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };

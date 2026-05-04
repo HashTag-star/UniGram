@@ -3,6 +3,8 @@ import {
   View, Text, FlatList, Image, TouchableOpacity,
   StyleSheet, ActivityIndicator, TextInput, Alert,
   RefreshControl, ScrollView, Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -307,9 +309,9 @@ const UsersTab: React.FC = () => {
 
       // Notify the user their account is now verified
       const { data: { user: adminUser } } = await supabase.auth.getUser();
-      const adminId = adminUser?.id ?? adminId;
+      const resolvedAdminId = adminUser?.id ?? '';
       sendAdminNotification(
-        adminId,
+        resolvedAdminId,
         'Congratulations! Your account has been verified by the UniGram team.',
         'verification_approved',
         userId,
@@ -1381,6 +1383,7 @@ const VerificationsTab: React.FC = () => {
 
       {/* Rejection Modal */}
       <Modal visible={rejectionModalVisible} transparent animationType="fade">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.rejectionModal}>
             <View style={styles.rejectionHeader}>
@@ -1419,6 +1422,7 @@ const VerificationsTab: React.FC = () => {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1510,6 +1514,7 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
   };
 
   return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
     <ScrollView contentContainerStyle={[styles.tabContent, { padding: 16, paddingBottom: 100 }]}>
       {/* Compose */}
       <View style={annoStyles.card}>
@@ -1609,6 +1614,7 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
         </>
       )}
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
 
