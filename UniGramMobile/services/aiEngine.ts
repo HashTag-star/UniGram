@@ -122,18 +122,28 @@ export interface AIContextResult {
 const AI_CONTEXT_EMPTY: AIContextResult = { type: 'none', context: '', detail: '', confidence: 0 };
 
 /**
- * Analyze a post caption for misinformation or helpful context using Groq AI.
+ * Analyze a post for misinformation or helpful context using Groq AI (text + optional vision).
+ * When mediaUrl is supplied and isImage is true the edge function fetches the image and
+ * passes it to a vision model so fliers/posters are read directly.
  * Results are cached server-side; subsequent calls for the same postId return instantly.
  * Fails open — always returns a safe empty result on error.
  */
-export async function getPostAIContext(
-  postId: string,
-  caption: string,
-  postType: string,
-): Promise<AIContextResult> {
+export async function getPostAIContext(opts: {
+  postId: string;
+  caption?: string | null;
+  postType: string;
+  mediaUrl?: string | null;
+  isImage?: boolean;
+}): Promise<AIContextResult> {
   try {
     const { data, error } = await supabase.functions.invoke('post-ai-context', {
-      body: { postId, caption, postType },
+      body: {
+        postId: opts.postId,
+        caption: opts.caption ?? '',
+        postType: opts.postType,
+        mediaUrl: opts.mediaUrl ?? null,
+        isImage: opts.isImage ?? false,
+      },
     });
     if (error) return AI_CONTEXT_EMPTY;
     return (data as AIContextResult) ?? AI_CONTEXT_EMPTY;

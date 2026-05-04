@@ -2,12 +2,13 @@
 -- Written by the post-ai-context edge function, read by all clients
 
 CREATE TABLE IF NOT EXISTS post_ai_context (
-  post_id       uuid        PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  context_type  text        NOT NULL CHECK (context_type IN ('none', 'info', 'warning', 'misleading')),
-  context_text  text        NOT NULL DEFAULT '',
-  detail_text   text        NOT NULL DEFAULT '',
-  confidence    float       NOT NULL DEFAULT 0,
-  analyzed_at   timestamptz NOT NULL DEFAULT now()
+  post_id               uuid        PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  context_type          text        NOT NULL CHECK (context_type IN ('none', 'info', 'warning', 'misleading')),
+  context_text          text        NOT NULL DEFAULT '',
+  detail_text           text        NOT NULL DEFAULT '',
+  confidence            float       NOT NULL DEFAULT 0,
+  analyzed_with_vision  boolean     NOT NULL DEFAULT false,
+  analyzed_at           timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE post_ai_context ENABLE ROW LEVEL SECURITY;

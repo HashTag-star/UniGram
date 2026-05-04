@@ -1519,12 +1519,22 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
   }, [post.id, currentUserId]);
 
-  // Fetch AI context for posts with a caption; skip reposts (no original text)
+  // Fetch AI context — reads caption text and, for image posts, the actual image via vision model
   useEffect(() => {
-    if (!post.caption?.trim() || post.type === 'repost') return;
+    if (post.type === 'repost') return; // reposts have no original content to analyze
+    const hasCaption = !!post.caption?.trim();
+    const isImage = post.type === 'image';
+    const mediaUrl = post.media_url ?? post.media_urls?.[0] ?? null;
+    if (!hasCaption && !(isImage && mediaUrl)) return;
     if (_aiContextCache.has(post.id)) return;
     const timer = setTimeout(async () => {
-      const result = await getPostAIContext(post.id, post.caption!, post.type);
+      const result = await getPostAIContext({
+        postId: post.id,
+        caption: post.caption,
+        postType: post.type,
+        mediaUrl,
+        isImage,
+      });
       _aiContextCache.set(post.id, result);
       if (result.type !== 'none') setAiContext(result);
     }, 900);
