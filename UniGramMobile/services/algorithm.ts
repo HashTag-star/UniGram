@@ -33,6 +33,23 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
 
   let results = data ?? [];
 
+  // If the RPC succeeded but quote_of/repost_of are missing from its schema
+  // (pre-026 migration), backfill them from a single batch SELECT.
+  if (!error && results.length > 0 && results[0].quote_of === undefined) {
+    const { data: refs } = await supabase
+      .from('posts')
+      .select('id, quote_of, repost_of')
+      .in('id', results.map((p: any) => p.id));
+    if (refs?.length) {
+      const refMap = new Map(refs.map((r: any) => [r.id, r]));
+      results = results.map((p: any) => ({
+        ...p,
+        quote_of: refMap.get(p.id)?.quote_of ?? null,
+        repost_of: refMap.get(p.id)?.repost_of ?? null,
+      }));
+    }
+  }
+
   if (error) {
     // Fallback: followed users' posts, most recent first
     console.warn('Feed RPC fallback:', error.message);
@@ -40,12 +57,33 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       .from('posts')
       .select(`
         id, user_id, caption, type, media_url, media_urls,
-        likes_count, comments_count, location, song, tagged_users, created_at,
+        likes_count, comments_count, location, song, tagged_users,
+        repost_of, quote_of, created_at,
         profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
       `)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
     results = fallback ?? [];
+  }
+
+  // DEV: the RPC excludes the current user's own posts; inject them so they
+  // appear in the feed during development. Remove this block before production.
+  {
+    const { data: ownPosts } = await supabase
+      .from('posts')
+      .select(`
+        id, user_id, caption, type, media_url, media_urls,
+        likes_count, comments_count, location, song, tagged_users,
+        repost_of, quote_of, created_at,
+        profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (ownPosts?.length) {
+      const existingIds = new Set(results.map((p: any) => p.id));
+      results = [...(ownPosts.filter((p: any) => !existingIds.has(p.id))), ...results];
+    }
   }
 
   if (results.length === 0) return [];
@@ -640,7 +678,9 @@ function assembleFeed(rankedPosts: any[]): any[] {
   const topicCount: Record<string, number> = {};
 
   for (const post of rankedPosts) {
-    if (seenAuthors.has(post.user_id)) continue;
+    // DEV: allow multiple posts per author so own posts all appear.
+    // Restore the seenAuthors check before production:
+    // if (seenAuthors.has(post.user_id)) continue;
 
     const topic = derivePostTopic(post);
     if ((topicCount[topic] ?? 0) >= 2) continue;

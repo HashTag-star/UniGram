@@ -1875,13 +1875,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               Repost of @{post.repost_post.profiles?.username ?? 'user'}
             </Text>
           </View>
-          <QuotePostCard post={post.repost_post} />
+          <QuotePostCard post={post.repost_post} onPress={() => onPostPress?.(post.repost_post)} />
         </>
       )}
 
       {/* Quote card — shown below caption when this post quotes another */}
       {post.type === 'quote' && post.quote_post && (
-        <QuotePostCard post={post.quote_post} />
+        <QuotePostCard post={post.quote_post} onPress={() => onPostPress?.(post.quote_post)} />
       )}
 
       {post.type !== 'thread' && post.type !== 'repost' && (post.media_url || (post.media_urls && post.media_urls.length > 0)) ? (
@@ -2473,8 +2473,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const nextPage = pageRef.current + 1;
-      const morePosts = await getPersonalizedFeed(user.id, FEED_PAGE, nextPage * FEED_PAGE);
-      if (morePosts.length === 0) { setHasMore(false); return; }
+      const rawMore = await getPersonalizedFeed(user.id, FEED_PAGE, nextPage * FEED_PAGE);
+      if (rawMore.length === 0) { setHasMore(false); return; }
+      const morePosts = await enrichWithOriginalPosts(rawMore).catch(() => rawMore);
       pageRef.current = nextPage;
       setHasMore(morePosts.length === FEED_PAGE);
       setPosts(prev => {

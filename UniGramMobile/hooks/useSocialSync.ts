@@ -11,7 +11,7 @@ export function useSocialFollow(targetUserId: string, initialValue: boolean) {
   useEffect(() => {
     isMounted.current = true;
     const sub = SocialSync.on('FOLLOW_CHANGE', (data: SocialEventData) => {
-      if (data.targetId === targetUserId && isMounted.current) {
+      if (data.targetId === targetUserId && isMounted.current && data.isActive !== undefined) {
         setFollowing(data.isActive);
       }
     });
@@ -49,7 +49,7 @@ export function useSocialLike(
   useEffect(() => {
     isMounted.current = true;
     const sub = SocialSync.on(eventType, (data: SocialEventData) => {
-      if (data.targetId === targetId && isMounted.current) {
+      if (data.targetId === targetId && isMounted.current && data.isActive !== undefined) {
         setLiked(data.isActive);
         if (data.newCount !== undefined) {
           setCount(data.newCount);

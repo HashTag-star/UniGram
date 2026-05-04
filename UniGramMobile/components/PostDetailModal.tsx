@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -35,6 +35,7 @@ export const PostDetailModal: React.FC<PostDetailModalProps> = ({
   const [commentCount, setCommentCount] = useState<number>(post.comments_count ?? 0);
   const [showComments, setShowComments] = useState(openComments);
   const [isMuted, setIsMuted] = useState(false);
+  const [quotedPost, setQuotedPost] = useState<any>(null);
 
   return (
     // Own BottomSheetModalProvider scoped to this native Modal layer —
@@ -80,6 +81,7 @@ export const PostDetailModal: React.FC<PostDetailModalProps> = ({
               onCommentCountChange?.(id, delta);
             }}
             onUserPress={onUserPress}
+            onPostPress={setQuotedPost}
           />
         </ScrollView>
 
@@ -96,6 +98,22 @@ export const PostDetailModal: React.FC<PostDetailModalProps> = ({
           onCountSync={count => setCommentCount(count)}
         />
       </View>
+      {/* Drill-in: tapping a quoted/reposted card opens that post */}
+      <Modal
+        visible={!!quotedPost}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setQuotedPost(null)}
+      >
+        {quotedPost && (
+          <PostDetailModal
+            post={quotedPost}
+            currentUserId={currentUserId}
+            onClose={() => setQuotedPost(null)}
+            onUserPress={onUserPress}
+          />
+        )}
+      </Modal>
     </BottomSheetModalProvider>
   );
 };
