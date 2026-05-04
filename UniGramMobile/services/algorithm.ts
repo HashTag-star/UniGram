@@ -678,9 +678,7 @@ function assembleFeed(rankedPosts: any[]): any[] {
   const topicCount: Record<string, number> = {};
 
   for (const post of rankedPosts) {
-    // DEV: allow multiple posts per author so own posts all appear.
-    // Restore the seenAuthors check before production:
-    // if (seenAuthors.has(post.user_id)) continue;
+    if (seenAuthors.has(post.user_id)) continue;
 
     const topic = derivePostTopic(post);
     if ((topicCount[topic] ?? 0) >= 2) continue;
