@@ -63,6 +63,7 @@ import {
   sendVoiceMessage,
   unsendMessage,
   sendSharedContent,
+  forwardMessage,
 } from '../services/messages';
 import { updateActiveStatus, blockUser } from '../services/profiles';
 import { getUserStories, getViewedStoryIds, markStoryViewed } from '../services/stories';
@@ -570,6 +571,7 @@ interface MessageBubbleProps {
   onLongPress: (msg: any, x: number, y: number) => void;
   onReactionTap: (msg: any, emoji: string) => void;
   onSwipeReply: (msg: any) => void;
+  isLastSent?: boolean; // true for the very last message I sent (shows receipt)
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -581,6 +583,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   onLongPress,
   onReactionTap,
   onSwipeReply,
+  isLastSent = false,
 }) => {
   const { colors } = useTheme();
   const { light: hapticLight, medium: hapticMedium } = useHaptics();
@@ -594,16 +597,20 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 10,
+        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dy) < 20,
         onPanResponderMove: (_, gesture) => {
-          if (gesture.dx > 0) swipeX.value = Math.min(gesture.dx, 50);
+          if (gesture.dx > 0) {
+            swipeX.value = Math.min(gesture.dx, 60);
+            // Trigger haptic at threshold
+            if (swipeX.value >= 55 && swipeX.value < 60) hapticLight();
+          }
         },
         onPanResponderRelease: (_, gesture) => {
-          if (gesture.dx > 40) {
+          if (gesture.dx > 48) {
             onSwipeReply(msg);
-            hapticLight();
+            hapticMedium();
           }
-          swipeX.value = withSpring(0);
+          swipeX.value = withSpring(0, { damping: 15 });
         },
       }),
     [msg, onSwipeReply, swipeX]
@@ -635,6 +642,21 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
   const isRead = msg.is_read === true;
   const isDeleted = msg.is_deleted === true;
+  const isForwarded = msg.is_forwarded === true;
+
+  // 3-state read receipt: sending → sent (1 gray tick) → delivered (2 gray) → read (2 blue)
+  const receiptIcon = msg._sending
+    ? 'time-outline'
+    : !msg.id || msg.id.startsWith('temp-')
+    ? 'checkmark'
+    : isRead
+    ? 'checkmark-done'
+    : 'checkmark-done';
+  const receiptColor = msg._sending
+    ? colors.textMuted
+    : isRead
+    ? '#60a5fa'
+    : colors.textMuted;
 
   if (isDeleted) {
     return (
@@ -664,6 +686,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           <Text style={styles.replyQuoteText} numberOfLines={1}>
             {msg.reply.type === 'image' ? '📷 Photo' : msg.reply.type === 'audio' ? '🎤 Voice message' : msg.reply.type === 'share' ? '🔗 Shared content' : (msg.reply.text || '…')}
           </Text>
+        </View>
+      )}
+
+      {/* Forwarded label */}
+      {isForwarded && (
+        <View style={[styles.forwardedLabel, isMe && { alignSelf: 'flex-end' }]}>
+          <Ionicons name="arrow-redo-outline" size={11} color={colors.textMuted} />
+          <Text style={[styles.forwardedText, { color: colors.textMuted }]}>Forwarded</Text>
         </View>
       )}
 
@@ -762,15 +792,15 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             </View>
           )}
 
-          {/* Timestamp + read receipt */}
+          {/* Timestamp + read receipt (3-state) */}
           {(showTimestamp || msg._sending) && (
             <View style={[styles.msgMeta, isMe && { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 3 }]}>
               <Text style={[styles.msgTime, { color: colors.textMuted }]}>{fmtTime(msg.created_at)}</Text>
               {isMe && (
                 <Ionicons
-                  name={msg._sending ? 'time-outline' : isRead ? 'checkmark-done' : 'checkmark'}
+                  name={receiptIcon as any}
                   size={12}
-                  color={msg._sending ? colors.textMuted : isRead ? '#60a5fa' : colors.textMuted}
+                  color={receiptColor}
                 />
               )}
             </View>
@@ -1117,6 +1147,65 @@ const NewConvModal: React.FC<NewConvModalProps> = ({ visible, currentUserId, onC
   );
 };
 
+// ─── Forward Conversation Picker ──────────────────────────────────────────────
+
+const ForwardConvList: React.FC<{
+  currentUserId: string;
+  onSelect: (convId: string) => void;
+  colors: any;
+}> = ({ currentUserId, onSelect, colors }) => {
+  const [convs, setConvs] = useState<any[]>([]);
+
+  useEffect(() => {
+    getConversations(currentUserId).then((rows) => {
+      setConvs(rows.map((r: any) => r.conversations).filter(Boolean));
+    }).catch(() => {});
+  }, [currentUserId]);
+
+  if (convs.length === 0) {
+    return (
+      <View style={{ padding: 24, alignItems: 'center' }}>
+        <Text style={{ color: colors.textMuted, fontSize: 14 }}>No recent chats</Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={convs}
+      keyExtractor={(c) => c.id}
+      style={{ maxHeight: 380 }}
+      renderItem={({ item }) => {
+        const other = (item.conversation_participants ?? []).find(
+          (p: any) => p.user_id !== currentUserId,
+        )?.profiles;
+        const name = item.is_group
+          ? (item.group_name ?? 'Group')
+          : (other?.full_name ?? other?.username ?? 'Chat');
+        const avatar = item.is_group ? null : other?.avatar_url;
+        return (
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }}
+            onPress={() => onSelect(item.id)}
+          >
+            {avatar ? (
+              <CachedImage uri={avatar} style={{ width: 42, height: 42, borderRadius: 21 }} />
+            ) : (
+              <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name={item.is_group ? 'people' : 'person'} size={20} color={colors.textMuted} />
+              </View>
+            )}
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+              {name}
+            </Text>
+            <Ionicons name="arrow-forward-circle-outline" size={22} color={colors.accent} />
+          </TouchableOpacity>
+        );
+      }}
+    />
+  );
+};
+
 // ─── Chat View ────────────────────────────────────────────────────────────────
 
 interface ChatViewProps {
@@ -1150,6 +1239,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
   const [profile, setProfile] = useState<any>(otherProfile);
   const [isOtherRecording, setIsOtherRecording] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [forwardTarget, setForwardTarget] = useState<any | null>(null); // msg to forward
 
   // Recovery effect for erased/missing names
   useEffect(() => {
@@ -1379,6 +1469,21 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
     }
   }, [reactionTarget, currentUserId]);
 
+  const handleForward = useCallback(async (toConvId: string) => {
+    if (!forwardTarget) return;
+    const msg = forwardTarget;
+    setForwardTarget(null);
+    try {
+      await forwardMessage(toConvId, currentUserId, msg);
+    } catch {
+      showPopup({ title: 'Error', message: 'Could not forward message.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    }
+  }, [forwardTarget, currentUserId, showPopup]);
+
+  const handleLongPressAction = useCallback((msg: any, x: number, y: number) => {
+    setReactionTarget({ msg, x, y });
+  }, []);
+
   const loadOlderMessages = useCallback(async () => {
     if (loadingMore || !hasMore || messages.length === 0) return;
     setLoadingMore(true);
@@ -1505,19 +1610,29 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
   );
 
   const renderMessage = useCallback(
-    ({ item, index }: { item: any; index: number }) => (
-      <MessageBubble
-        msg={item}
-        isMe={item.sender_id === currentUserId}
-        prevMsg={messages[index - 1] ?? null}
-        nextMsg={messages[index + 1] ?? null}
-        currentUserId={currentUserId}
-        onLongPress={(msg, x, y) => setReactionTarget({ msg, x, y })}
-        onReactionTap={handleReactionTap}
-        onSwipeReply={(msg) => setReplyingTo(msg)}
-      />
-    ),
-    [messages, currentUserId, handleReactionTap],
+    ({ item, index }: { item: any; index: number }) => {
+      // Find the last non-temp message sent by me for receipt display
+      const lastSentIdx = [...messages].reverse().findIndex(
+        (m) => m.sender_id === currentUserId && !m._sending
+      );
+      const lastSentId = lastSentIdx >= 0
+        ? messages[messages.length - 1 - lastSentIdx]?.id
+        : null;
+      return (
+        <MessageBubble
+          msg={item}
+          isMe={item.sender_id === currentUserId}
+          prevMsg={messages[index - 1] ?? null}
+          nextMsg={messages[index + 1] ?? null}
+          currentUserId={currentUserId}
+          onLongPress={handleLongPressAction}
+          onReactionTap={handleReactionTap}
+          onSwipeReply={(msg) => setReplyingTo(msg)}
+          isLastSent={item.id === lastSentId}
+        />
+      );
+    },
+    [messages, currentUserId, handleReactionTap, handleLongPressAction],
   );
 
   const keyExtractor = useCallback((item: any) => item.id, []);
@@ -1801,7 +1916,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
         </View>
       )}
 
-      {/* Reaction picker overlay */}
+      {/* Long-press action sheet */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         <ReactionPicker
           visible={!!reactionTarget}
@@ -1809,13 +1924,35 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
           onPick={handleReaction}
           onClose={() => setReactionTarget(null)}
         />
-        {reactionTarget && reactionTarget.msg.sender_id === currentUserId && (
-          <TouchableOpacity
-            style={[styles.unsendBtn, { top: reactionTarget.y + 40, left: reactionTarget.x - 30 }]}
-            onPress={handleUnsend}
-          >
-            <Text style={styles.unsendText}>Unsend</Text>
-          </TouchableOpacity>
+        {reactionTarget && (
+          <View style={[styles.msgActionBar, {
+            top: Math.min(reactionTarget.y + 45, 600),
+            [reactionTarget.msg.sender_id === currentUserId ? 'right' : 'left']: 16,
+          }]}>
+            {/* Reply */}
+            <TouchableOpacity
+              style={styles.msgActionBtn}
+              onPress={() => { setReplyingTo(reactionTarget.msg); setReactionTarget(null); }}
+            >
+              <Ionicons name="return-down-back-outline" size={16} color="#fff" />
+              <Text style={styles.msgActionText}>Reply</Text>
+            </TouchableOpacity>
+            {/* Forward */}
+            <TouchableOpacity
+              style={styles.msgActionBtn}
+              onPress={() => { setForwardTarget(reactionTarget.msg); setReactionTarget(null); }}
+            >
+              <Ionicons name="arrow-redo-outline" size={16} color="#fff" />
+              <Text style={styles.msgActionText}>Forward</Text>
+            </TouchableOpacity>
+            {/* Unsend (own messages only) */}
+            {reactionTarget.msg.sender_id === currentUserId && (
+              <TouchableOpacity style={[styles.msgActionBtn, styles.msgActionDanger]} onPress={handleUnsend}>
+                <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                <Text style={[styles.msgActionText, { color: '#ef4444' }]}>Unsend</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
       </View>
 
@@ -1828,6 +1965,29 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
           uploading={uploading}
         />
       )}
+
+      {/* Forward Sheet */}
+      <Modal
+        visible={!!forwardTarget}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setForwardTarget(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          activeOpacity={1}
+          onPress={() => setForwardTarget(null)}
+        />
+        <View style={[styles.forwardSheet, { backgroundColor: colors.bg, paddingBottom: insets.bottom + 12 }]}>
+          <View style={styles.forwardSheetHandle} />
+          <Text style={[styles.forwardSheetTitle, { color: colors.text }]}>Forward to</Text>
+          <ForwardConvList
+            currentUserId={currentUserId}
+            onSelect={handleForward}
+            colors={colors}
+          />
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 };
@@ -3303,5 +3463,74 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 10,
+  },
+
+  // Forwarded label
+  forwardedLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+    marginLeft: 4,
+  },
+  forwardedText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+
+  // Message long-press action bar
+  msgActionBar: {
+    position: 'absolute',
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: 'rgba(20,20,30,0.95)',
+    borderRadius: 16,
+    padding: 6,
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  msgActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  msgActionDanger: {
+    backgroundColor: 'rgba(239,68,68,0.12)',
+  },
+  msgActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Forward sheet
+  forwardSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingHorizontal: 4,
+    minHeight: 220,
+  },
+  forwardSheetHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  forwardSheetTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    paddingHorizontal: 16,
+    marginBottom: 8,
   },
 });

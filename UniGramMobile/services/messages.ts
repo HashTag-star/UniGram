@@ -100,6 +100,7 @@ export async function sendMessage(
   mediaUrl?: string,
   replyToId?: string,
   duration?: number,
+  isForwarded = false,
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
@@ -114,6 +115,7 @@ export async function sendMessage(
       media_url: mediaUrl ?? null,
       reply_to_message_id: replyToId ?? null,
       duration: duration ?? null,
+      is_forwarded: isForwarded,
     })
     .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
     .single();
@@ -183,6 +185,23 @@ export async function unsendMessage(messageId: string, userId: string) {
     .eq('id', messageId)
     .eq('sender_id', userId);
   if (error) throw error;
+}
+
+export async function forwardMessage(
+  toConversationId: string,
+  senderId: string,
+  originalMsg: { text: string; type: string; media_url?: string | null },
+) {
+  return sendMessage(
+    toConversationId,
+    senderId,
+    originalMsg.text,
+    originalMsg.type as any,
+    originalMsg.media_url ?? undefined,
+    undefined, // no reply
+    undefined, // no duration
+    true,      // is_forwarded
+  );
 }
 
 export async function sendSharedContent(

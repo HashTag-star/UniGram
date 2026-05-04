@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, ActivityIndicator, Image, Modal,
-  Animated, Platform, KeyboardAvoidingView, Keyboard,
+  Animated, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -176,10 +176,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={{ flex: 1 }}
-      >
+      <View style={{ flex: 1 }}>
         <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
           <Animated.View 
             style={[
@@ -244,7 +241,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
             ) : renderTrimmer()}
           </Animated.View>
         </TouchableOpacity>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };

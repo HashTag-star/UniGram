@@ -3,7 +3,7 @@ import React, {
 } from 'react';
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
-  StyleSheet, ActivityIndicator, Alert, ActionSheetIOS, Platform,
+  StyleSheet, ActivityIndicator, Alert,
   FlatList, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -862,10 +862,9 @@ export const CommentSheet: React.FC<Props> = ({
       footerComponent={renderFooter}
       handleIndicatorStyle={{ backgroundColor: colors.border }}
       backgroundStyle={{ backgroundColor: colors.bg }}
-      keyboardBehavior="extend"
+      keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      android_keyboardInputMode="adjustPan"
     >
       <View style={{ flex: 1 }}>
         <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
