@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   Dimensions, ActivityIndicator, RefreshControl, Modal,
-  ScrollView, StatusBar,
+  ScrollView, StatusBar, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -58,85 +58,116 @@ const TrendingCard: React.FC<{
 }> = React.memo(({ post, rank, onPress, colors }) => {
   const profile = post.profiles ?? {};
   const rankColors = RANK_COLORS[rank];
+  const isVideo = post.type === 'video';
+  // Resolve media: prefer media_url, fall back to first item of media_urls array
+  const mediaUri: string | null =
+    post.media_url ?? (Array.isArray(post.media_urls) && post.media_urls.length > 0 ? post.media_urls[0] : null);
+  const hasMedia = !!mediaUri;
+  const multiCount = Array.isArray(post.media_urls) && post.media_urls.length > 1 ? post.media_urls.length : 0;
+
+  const RankBadge = () =>
+    rankColors ? (
+      <LinearGradient colors={rankColors as [string, string]} style={styles.rankBadge}>
+        <Text style={styles.rankTextGold}>#{rank}</Text>
+      </LinearGradient>
+    ) : (
+      <View style={[styles.rankBadge, { backgroundColor: colors.bg2 }]}>
+        <Text style={[styles.rankTextPlain, { color: colors.textMuted }]}>#{rank}</Text>
+      </View>
+    );
 
   return (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.bg2, borderColor: colors.border }]}
       onPress={() => onPress(post)}
-      activeOpacity={0.75}
+      activeOpacity={0.78}
     >
-      {/* Rank badge */}
-      <View style={styles.rankWrap}>
-        {rankColors ? (
-          <LinearGradient
-            colors={rankColors as [string, string]}
-            style={styles.rankBadge}
-          >
-            <Text style={styles.rankTextGold}>#{rank}</Text>
-          </LinearGradient>
-        ) : (
-          <View style={[styles.rankBadge, { backgroundColor: colors.bg + 'cc' }]}>
-            <Text style={[styles.rankTextPlain, { color: colors.textMuted }]}>#{rank}</Text>
-          </View>
-        )}
-      </View>
+      {/* ── Media preview ── */}
+      {hasMedia ? (
+        <View style={styles.mediaWrap}>
+          <CachedImage uri={mediaUri!} style={styles.mediaImage} />
 
-      {/* Main content */}
-      <View style={styles.cardBody}>
-        {/* Author row */}
+          {/* Gradient overlay for rank + multi-count badges */}
+          <LinearGradient
+            colors={['rgba(0,0,0,0.55)', 'transparent']}
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
+
+          {/* Rank badge top-left */}
+          <View style={styles.rankOverlay}>
+            <RankBadge />
+          </View>
+
+          {/* Video play icon center */}
+          {isVideo && (
+            <View style={styles.playOverlay}>
+              <View style={styles.playCircle}>
+                <Ionicons name="play" size={22} color="#fff" style={{ marginLeft: 3 }} />
+              </View>
+            </View>
+          )}
+
+          {/* Multi-image count badge top-right */}
+          {multiCount > 1 && (
+            <View style={[styles.multiCountBadge, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+              <Ionicons name="images-outline" size={11} color="#fff" />
+              <Text style={styles.multiCountText}>{multiCount}</Text>
+            </View>
+          )}
+        </View>
+      ) : null}
+
+      {/* ── Text body ── */}
+      <View style={[styles.cardBody, !hasMedia && styles.cardBodyNoMedia]}>
+        {/* Author row — includes rank badge when no media */}
         <View style={styles.authorRow}>
+          {!hasMedia && (
+            <View style={styles.rankWrapInline}>
+              <RankBadge />
+            </View>
+          )}
           {profile.avatar_url ? (
             <CachedImage uri={profile.avatar_url} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: colors.bg }]}>
-              <Ionicons name="person" size={14} color={colors.textMuted} />
+              <Ionicons name="person" size={13} color={colors.textMuted} />
             </View>
           )}
           <Text style={[styles.username, { color: colors.text }]} numberOfLines={1}>
             @{profile.username ?? 'user'}
           </Text>
-          {profile.is_verified && (
-            <VerifiedBadge type={profile.verification_type} />
-          )}
-          <Text style={[styles.timeAgo, { color: colors.textMuted }]}>
-            · {timeAgo(post.created_at)}
-          </Text>
+          {profile.is_verified && <VerifiedBadge type={profile.verification_type} />}
+          <Text style={[styles.timeAgo, { color: colors.textMuted }]}>· {timeAgo(post.created_at)}</Text>
         </View>
 
         {/* Caption */}
         {!!post.caption && (
-          <Text style={[styles.caption, { color: colors.text }]} numberOfLines={2}>
+          <Text style={[styles.caption, { color: colors.text }]} numberOfLines={hasMedia ? 2 : 3}>
             {post.caption}
           </Text>
         )}
 
-        {/* Engagement row */}
+        {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.stat}>
             <Ionicons name="heart" size={13} color="#ef4444" />
-            <Text style={[styles.statText, { color: colors.textMuted }]}>
-              {fmtCount(post.likes_count ?? 0)}
-            </Text>
+            <Text style={[styles.statText, { color: colors.textMuted }]}>{fmtCount(post.likes_count ?? 0)}</Text>
           </View>
           <View style={styles.stat}>
             <Ionicons name="chatbubble" size={13} color={colors.accent} />
-            <Text style={[styles.statText, { color: colors.textMuted }]}>
-              {fmtCount(post.comments_count ?? 0)}
-            </Text>
+            <Text style={[styles.statText, { color: colors.textMuted }]}>{fmtCount(post.comments_count ?? 0)}</Text>
           </View>
           <View style={styles.stat}>
             <Ionicons name="bookmark" size={13} color="#f59e0b" />
-            <Text style={[styles.statText, { color: colors.textMuted }]}>
-              {fmtCount(post.saves_count ?? 0)}
-            </Text>
+            <Text style={[styles.statText, { color: colors.textMuted }]}>{fmtCount(post.saves_count ?? 0)}</Text>
+          </View>
+          <View style={[styles.stat, styles.statTap]}>
+            <Ionicons name="expand-outline" size={13} color={colors.textMuted} />
+            <Text style={[styles.statText, { color: colors.textMuted }]}>View</Text>
           </View>
         </View>
       </View>
-
-      {/* Thumbnail — only if media exists */}
-      {!!post.media_url && (
-        <CachedImage uri={post.media_url} style={styles.thumbnail} />
-      )}
     </TouchableOpacity>
   );
 });
@@ -181,7 +212,7 @@ const PostModal: React.FC<{
             isActive={true}
             setIsMuted={() => {}}
             onOpenComments={() => setShowComments(true)}
-            onCommentCountChange={(_, delta) => setCommentCount(c => Math.max(0, c + delta))}
+            onCommentCountChange={(_, delta) => setCommentCount((c: number) => Math.max(0, c + delta))}
             onUserPress={onUserPress}
           />
         </ScrollView>
@@ -193,7 +224,7 @@ const PostModal: React.FC<{
         currentUserId={currentUserId}
         authorId={post.user_id}
         onClose={() => setShowComments(false)}
-        onCountChange={delta => setCommentCount(c => Math.max(0, c + delta))}
+        onCountChange={delta => setCommentCount((c: number) => Math.max(0, c + delta))}
         onCountSync={count => setCommentCount(count)}
       />
     </Modal>
@@ -418,27 +449,68 @@ const styles = StyleSheet.create({
 
   // Card
   card: {
-    flexDirection: 'row',
     borderRadius: 16,
     borderWidth: 1,
-    marginBottom: 12,
-    padding: 14,
-    gap: 12,
-    alignItems: 'flex-start',
+    marginBottom: 14,
+    overflow: 'hidden',
   },
-  rankWrap: { paddingTop: 2 },
-  rankBadge: {
-    minWidth: 36,
-    height: 36,
-    borderRadius: 10,
+
+  // Media
+  mediaWrap: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#111',
+  },
+  mediaImage: {
+    width: '100%',
+    height: '100%',
+  },
+  rankOverlay: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+  },
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+  },
+  playCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  multiCountBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  multiCountText: { fontSize: 11, color: '#fff', fontWeight: '700' },
+
+  rankBadge: {
+    minWidth: 34,
+    height: 34,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
   },
   rankTextGold: { fontSize: 13, fontWeight: '900', color: '#fff' },
   rankTextPlain: { fontSize: 13, fontWeight: '900' },
+  rankWrapInline: { marginRight: 2 },
 
-  cardBody: { flex: 1, gap: 6 },
+  cardBody: { paddingHorizontal: 14, paddingVertical: 11, gap: 7 },
+  cardBodyNoMedia: { paddingTop: 13 },
+
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'nowrap' },
   avatar: { width: 24, height: 24, borderRadius: 12 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
@@ -447,17 +519,10 @@ const styles = StyleSheet.create({
 
   caption: { fontSize: 14, lineHeight: 19 },
 
-  statsRow: { flexDirection: 'row', gap: 14, marginTop: 2 },
+  statsRow: { flexDirection: 'row', gap: 14, marginTop: 2, alignItems: 'center' },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statTap: { marginLeft: 'auto' as any },
   statText: { fontSize: 12, fontWeight: '600' },
-
-  thumbnail: {
-    width: 72,
-    height: 88,
-    borderRadius: 10,
-    flexShrink: 0,
-    backgroundColor: '#111',
-  },
 
   // Post modal
   modalHeader: {
