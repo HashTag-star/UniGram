@@ -110,6 +110,38 @@ export async function getCommentHighlights(
   }
 }
 
+// ─── Post AI Context ──────────────────────────────────────────────────────────
+
+export interface AIContextResult {
+  type: 'none' | 'info' | 'warning' | 'misleading';
+  context: string;
+  detail: string;
+  confidence: number;
+}
+
+const AI_CONTEXT_EMPTY: AIContextResult = { type: 'none', context: '', detail: '', confidence: 0 };
+
+/**
+ * Analyze a post caption for misinformation or helpful context using Groq AI.
+ * Results are cached server-side; subsequent calls for the same postId return instantly.
+ * Fails open — always returns a safe empty result on error.
+ */
+export async function getPostAIContext(
+  postId: string,
+  caption: string,
+  postType: string,
+): Promise<AIContextResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke('post-ai-context', {
+      body: { postId, caption, postType },
+    });
+    if (error) return AI_CONTEXT_EMPTY;
+    return (data as AIContextResult) ?? AI_CONTEXT_EMPTY;
+  } catch {
+    return AI_CONTEXT_EMPTY;
+  }
+}
+
 // ─── Learned Interests ────────────────────────────────────────────────────────
 
 /**

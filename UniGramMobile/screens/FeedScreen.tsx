@@ -46,6 +46,8 @@ import { sendFollowSuggestionNotif } from '../services/notifications';
 import { getReels } from '../services/reels';
 import { followUser, unfollowUser, blockUser } from '../services/profiles';
 import { createReport } from '../services/reports';
+import { AIContextCard, type AIContextResult } from '../components/AIContextCard';
+import { getPostAIContext } from '../services/aiEngine';
 import { CampusPulse } from '../components/CampusPulse';
 import { CommunityPulse } from '../components/CommunityPulse';
 import { DiscoveryBanner } from '../components/DiscoveryBanner';
@@ -1404,6 +1406,9 @@ const ivStyles = StyleSheet.create({
   },
 });
 
+// Session-scoped cache so we never re-fetch AI context for a post we've already seen
+const _aiContextCache = new Map<string, AIContextResult>();
+
 // ─── Feed Post ────────────────────────────────────────────────────────────────
 export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress, onPostPress }) => {
   const { colors } = useTheme();
@@ -1459,6 +1464,9 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   // with an empty-string source, which would interrupt background music.
   const songPlayer = useAudioPlayer(songPreviewUrl);
   const heartOverlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [aiContext, setAiContext] = useState<AIContextResult | null>(
+    _aiContextCache.get(post.id) ?? null
+  );
 
 
   // Animations
@@ -1510,6 +1518,18 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   useEffect(() => {
     if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
   }, [post.id, currentUserId]);
+
+  // Fetch AI context for posts with a caption; skip reposts (no original text)
+  useEffect(() => {
+    if (!post.caption?.trim() || post.type === 'repost') return;
+    if (_aiContextCache.has(post.id)) return;
+    const timer = setTimeout(async () => {
+      const result = await getPostAIContext(post.id, post.caption!, post.type);
+      _aiContextCache.set(post.id, result);
+      if (result.type !== 'none') setAiContext(result);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [post.id]);
 
   const toggleSongPreview = async () => {
     if (songPlayer.playing) {
@@ -1960,6 +1980,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? '#fbbf24' : colors.text} />
         </TouchableOpacity>
       </View>
+
+      {aiContext && (
+        <AIContextCard
+          result={aiContext}
+          isDark={colors.background === '#000000' || colors.background === '#0f0f0f'}
+        />
+      )}
 
       <View style={styles.postInfo}>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>

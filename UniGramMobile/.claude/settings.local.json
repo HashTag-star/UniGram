@@ -50,7 +50,8 @@
       "Bash(Format-Table -AutoSize)",
       "Bash(Get-ChildItem -Path . -Depth 2)",
       "Bash(Select-Object FullName)",
-      "Bash(findstr /n \"interface FeedPostProps\" screens/FeedScreen.tsx)"
+      "Bash(findstr /n \"interface FeedPostProps\" screens/FeedScreen.tsx)",
+      "Bash(supabase functions *)"
     ]
   }
 }
