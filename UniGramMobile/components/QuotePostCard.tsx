@@ -33,12 +33,14 @@ export const QuotePostCard: React.FC<QuotePostCardProps> = React.memo(({ post, o
             <Ionicons name="person" size={10} color="#555" />
           </View>
         )}
-        <Text style={[styles.username, { color: colors.text }]} numberOfLines={1}>
-          @{profile?.username ?? 'user'}
-        </Text>
-        {profile?.is_verified && (
-          <VerifiedBadge type={profile.verification_type} size="sm" />
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 4 }}>
+          <Text style={[styles.username, { color: colors.text }]} numberOfLines={1}>
+            @{profile?.username ?? 'user'}
+          </Text>
+          {profile?.is_verified && (
+            <VerifiedBadge type={profile.verification_type} size="sm" />
+          )}
+        </View>
         {isThread && (
           <View style={styles.threadPill}>
             <Ionicons name="chatbubbles-outline" size={10} color="#6366f1" />
@@ -90,7 +92,7 @@ const styles = StyleSheet.create({
   username: {
     fontSize: 13,
     fontWeight: '700',
-    flex: 1,
+    flexShrink: 1,
   },
   threadPill: {
     flexDirection: 'row',

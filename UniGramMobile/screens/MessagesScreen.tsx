@@ -1596,7 +1596,7 @@ const ChatView: React.FC<ChatViewProps> = ({ convData, currentUserId, onBack, st
             onPress={onHeaderPress}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>
+              <Text style={[styles.chatName, { color: colors.text, flexShrink: 1 }]} numberOfLines={1}>
                 {profile?.full_name ?? profile?.username ?? 'Chat'}
               </Text>
               {profile?.is_verified && (
@@ -2317,7 +2317,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
           <View style={{ flex: 1, marginLeft: 12, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
               <Text
-                style={[styles.convName, { color: colors.text, flex: 1 }, hasUnread && { fontWeight: 'bold' }]}
+                style={[styles.convName, { color: colors.text, flexShrink: 1 }, hasUnread && { fontWeight: 'bold' }]}
                 numberOfLines={1}
               >
                 {displayName}
