@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CachedImage } from '../components/CachedImage';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { QuotePostCard } from '../components/QuotePostCard';
 import { CommentSheet } from '../components/CommentSheet';
 import { FeedPost } from './FeedScreen';
 import { getUniversityTrendingFeed } from '../services/algorithm';
@@ -146,6 +147,11 @@ const TrendingCard: React.FC<{
           <Text style={[styles.caption, { color: colors.text }]} numberOfLines={hasMedia ? 2 : 3}>
             {post.caption}
           </Text>
+        )}
+
+        {/* Quoted post embed */}
+        {post.type === 'quote' && !!post.quote_post && (
+          <QuotePostCard post={post.quote_post} />
         )}
 
         {/* Stats */}
