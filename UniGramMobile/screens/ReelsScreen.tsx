@@ -22,12 +22,9 @@ import { supabase } from '../lib/supabase';
 import { createReport } from '../services/reports';
 import { useHaptics } from '../hooks/useHaptics';
 import { usePopup } from '../context/PopupContext';
-import { useToast } from '../context/ToastContext';
 
 const { width, height } = Dimensions.get('window');
-const ITEM_HEIGHT = height;
-const TAB_BAR_HEIGHT = 58;
-const COMMENT_BAR_HEIGHT = 56;
+const COMMENT_BAR_HEIGHT = 50;
 
 function fmtCount(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -52,7 +49,7 @@ const ReelVideo: React.FC<{
   playbackRate?: number;
   onProgress: (p: number) => void;
   onPlayerReady: (player: any) => void;
-}> = ({ videoUrl, isActive, isPaused, muted, playbackRate = 1.0, onProgress, onPlayerReady }) => {
+}> = React.memo(({ videoUrl, isActive, isPaused, muted, playbackRate = 1.0, onProgress, onPlayerReady }) => {
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop = true;
     p.muted = muted;
@@ -61,11 +58,35 @@ const ReelVideo: React.FC<{
     if (isActive && !isPaused) p.play();
   });
 
-  // Use a ref for onProgress to avoid interval re-creation when progress updates
   const onProgressRef = useRef(onProgress);
+  useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+
   useEffect(() => {
     onPlayerReady(player);
+    return () => {
+      // Silence immediately on unmount — prevents audio bleeding into the next reel
+      // while expo-video's own cleanup is still in flight.
+      try { player.pause(); } catch {}
+    };
   }, [player]);
+
+  // Keep playback state in sync with props
+  useEffect(() => {
+    if (isActive && !isPaused) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, isPaused, player]);
+
+  useEffect(() => {
+    player.muted = muted;
+    player.audioMixingMode = muted ? 'mixWithOthers' : 'duckOthers';
+  }, [muted, player]);
+
+  useEffect(() => {
+    player.playbackRate = playbackRate;
+  }, [playbackRate, player]);
 
   // timeUpdate listener — only re-subscribes when the player instance changes
   useEffect(() => {
@@ -94,7 +115,7 @@ const ReelVideo: React.FC<{
       nativeControls={false}
     />
   );
-};
+});
 
 // ─── Live Preview Card (YouTube Shorts-style) ─────────────────────────────────
 
@@ -102,7 +123,7 @@ const LivePreviewCard: React.FC<{
   session: any;
   itemHeight: number;
   onJoin: (sessionId: string) => void;
-}> = ({ session, itemHeight, onJoin }) => {
+}> = React.memo(({ session, itemHeight, onJoin }) => {
   const insets = useSafeAreaInsets();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseOpacity = useRef(new Animated.Value(1)).current;
@@ -216,7 +237,7 @@ const LivePreviewCard: React.FC<{
       </View>
     </View>
   );
-};
+});
 
 const liveCardStyles = StyleSheet.create({
   topBadge: {
@@ -260,12 +281,11 @@ const ReelItem: React.FC<{
   isLiked: boolean;
   isFollowingUser: boolean;
   isActive: boolean;
-  isAdjacent?: boolean;
   muted: boolean;
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
-}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, isAdjacent, muted, onMuteToggle, itemHeight, onBack }) => {
+}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
@@ -277,7 +297,6 @@ const ReelItem: React.FC<{
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isFastForwarding, setIsFastForwarding] = useState(false);
-  const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const playerRef = useRef<any>(null);
@@ -287,7 +306,6 @@ const ReelItem: React.FC<{
   const hideControlsTimer = useRef<NodeJS.Timeout | null>(null);
   const seekContainerWidth = useRef(width);
   const { showPopup } = usePopup();
-  const { showToast } = useToast();
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   // Native-driver animated opacities — no re-render needed for feedback/overlay
@@ -364,16 +382,19 @@ const ReelItem: React.FC<{
     }
   }, [isActive]);
 
-  // Reset pause state and cancel any pending tap when reel becomes inactive
+  // Reset all transient state when reel leaves the viewport
   useEffect(() => {
     if (!isActive) {
+      // Pause via ref immediately — this fires before ReelVideo unmounts,
+      // cutting audio before expo-video's own async cleanup runs.
+      try { playerRef.current?.pause(); } catch {}
       setIsPaused(false);
       setIsFastForwarding(false);
+      setProgress(0);
       if (pendingPauseRef.current) {
         clearTimeout(pendingPauseRef.current);
         pendingPauseRef.current = null;
       }
-      setIsAutoPaused(false);
     }
   }, [isActive]);
 
@@ -668,7 +689,16 @@ const ReelItem: React.FC<{
         delayLongPress={250}
         style={StyleSheet.absoluteFill}
       >
-        {(isActive || isAdjacent) && reel.video_url ? (
+        {/* Thumbnail always visible — acts as poster frame while video loads */}
+        {reel.thumbnail_url ? (
+          <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="film-outline" size={64} color="#333" />
+          </View>
+        )}
+        {/* Video renders on top only for the active reel */}
+        {isActive && reel.video_url && (
           <ReelVideo
             videoUrl={reel.video_url}
             isActive={isActive}
@@ -678,12 +708,6 @@ const ReelItem: React.FC<{
             onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
             onPlayerReady={(p) => { playerRef.current = p; }}
           />
-        ) : reel.thumbnail_url ? (
-          <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-            <Ionicons name="film-outline" size={64} color="#333" />
-          </View>
         )}
       </Pressable>
 
@@ -923,7 +947,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       />
 
       {/* Right actions */}
-      <Animated.View style={[skeletonStyles.rightActions, { bottom: 80, opacity }]}>
+      <Animated.View style={[skeletonStyles.rightActions, { bottom: COMMENT_BAR_HEIGHT + insets.bottom + 80, opacity }]}>
         {[{ sz: 30, w: 32 }, { sz: 28, w: 28 }, { sz: 26, w: 26 }, { sz: 24, w: 0 }, { sz: 24, w: 0 }].map((item, i) => (
           <View key={i} style={skeletonStyles.actionItem}>
             <View style={[skeletonStyles.circle, { width: item.sz, height: item.sz, borderRadius: item.sz / 2 }]} />
@@ -933,7 +957,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       </Animated.View>
 
       {/* Bottom info */}
-      <Animated.View style={[skeletonStyles.bottomInfo, { bottom: 14, opacity }]}>
+      <Animated.View style={[skeletonStyles.bottomInfo, { bottom: COMMENT_BAR_HEIGHT + insets.bottom + 14, opacity }]}>
         <View style={skeletonStyles.userRow}>
           <View style={skeletonStyles.avatar} />
           <View style={skeletonStyles.usernamePill} />
@@ -945,7 +969,10 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       </Animated.View>
 
       {/* Seek bar */}
-      <Animated.View style={[skeletonStyles.seekBar, { bottom: 0, opacity }]} />
+      <Animated.View style={[skeletonStyles.seekBar, { bottom: COMMENT_BAR_HEIGHT + insets.bottom, opacity }]} />
+
+      {/* Comment bar placeholder */}
+      <View style={[skeletonStyles.commentBar, { paddingBottom: insets.bottom }]} />
 
     </View>
   );
@@ -995,7 +1022,6 @@ export const ReelsScreen: React.FC<{
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
-  const { showToast } = useToast();
 
   // Build mixed feed: inject live cards every LIVE_INTERVAL reels
   const LIVE_INTERVAL = 5;
@@ -1014,8 +1040,10 @@ export const ReelsScreen: React.FC<{
   }, [rawReels, liveSessions]);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
-
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  // 65 %: new reel is clearly dominant on screen before we switch active state.
+  // Higher than 50 % avoids premature switches mid-swipe while still cutting audio
+  // well before the gesture fully settles.
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 65 }).current;
   const onViewableItemsChanged = useCallback(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
       const newIndex = viewableItems[0].index ?? 0;
@@ -1173,7 +1201,6 @@ export const ReelsScreen: React.FC<{
                 isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
                 isFollowingUser={followingIds.has(item.profiles?.id)}
                 isActive={index === activeIndex && isAppActive}
-                isAdjacent={Math.abs(index - activeIndex) === 1}
                 muted={isMuted}
                 onMuteToggle={() => setIsMuted(!isMuted)}
                 itemHeight={containerHeight}
@@ -1233,6 +1260,13 @@ const skeletonStyles = StyleSheet.create({
   followPill: { width: 58, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)' },
   captionLine: { width: '80%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
   seekBar: { position: 'absolute', left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
+  commentBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    height: COMMENT_BAR_HEIGHT,
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
 });
 
 const styles = StyleSheet.create({

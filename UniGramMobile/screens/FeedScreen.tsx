@@ -34,6 +34,7 @@ import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, getRepostedPostIds, repostPost, unrepostPost, quotePost, enrichWithOriginalPosts, deletePost, reportContent, getPostLikers } from '../services/posts';
 import { UsersListSheet } from '../components/UsersListSheet';
+import { PostDetailModal } from '../components/PostDetailModal';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { QuotePostCard } from '../components/QuotePostCard';
 import { RepostSheet } from '../components/RepostSheet';
@@ -119,6 +120,7 @@ interface FeedPostProps {
   onDeleted?: (id: string) => void;
   onUserPress?: (profile: any) => void;
   onVideoPress?: (post: Post, isLiked: boolean) => void;
+  onPostPress?: (post: Post) => void;
 }
 
 function fmtCount(n: number) {
@@ -745,44 +747,36 @@ const StoryViewer: React.FC<{
 };
 
 // ─── Reel Preview ─────────────────────────────────────────────────────────────
-const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => {
-  const player = useVideoPlayer(reel.video_url, p => {
+// Mounts only when its parent is active — creates exactly one player per visible preview
+const ReelVideoLayer: React.FC<{ videoUrl: string }> = ({ videoUrl }) => {
+  const player = useVideoPlayer(videoUrl, p => {
     p.loop = true;
     p.muted = true;
-    // Always muted preview — never steal audio focus from background music
     p.audioMixingMode = 'mixWithOthers';
-    if (isActive) p.play();
+    p.play();
   });
-
-  useEffect(() => {
-    if (!player) return;
-    if (isActive) player.play();
-    else player.pause();
-  }, [player, isActive]);
-
   return (
-    <View style={StyleSheet.absoluteFill}>
-      {reel.thumbnail_url ? (
-        <CachedImage 
-          uri={reel.thumbnail_url} 
-          style={StyleSheet.absoluteFill} 
-        />
-      ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-           <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.15)" />
-        </View>
-      )}
-      {isActive && player && (
-        <VideoView
-          player={player}
-          style={StyleSheet.absoluteFill}
-          contentFit="contain"
-          nativeControls={false}
-        />
-      )}
-    </View>
+    <VideoView
+      player={player}
+      style={StyleSheet.absoluteFill}
+      contentFit="contain"
+      nativeControls={false}
+    />
   );
-});
+};
+
+const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => (
+  <View style={StyleSheet.absoluteFill}>
+    {reel.thumbnail_url ? (
+      <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
+    ) : (
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.15)" />
+      </View>
+    )}
+    {isActive && reel.video_url && <ReelVideoLayer videoUrl={reel.video_url} />}
+  </View>
+));
 
 const VideoPost: React.FC<{ 
   uri: string; 
@@ -1411,7 +1405,7 @@ const ivStyles = StyleSheet.create({
 });
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress }) => {
+export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress, onPostPress }) => {
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { showToast } = useToast();
@@ -1909,6 +1903,8 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
                 } else {
                   setFullVideoUri(mediaUris[index] ?? mediaUris[0]);
                 }
+              } else if (onPostPress) {
+                onPostPress(post);
               } else {
                 setImageViewerUris(mediaUris);
                 setImageViewerIndex(index);
@@ -2041,7 +2037,7 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?
     >
       {reels.map((reel) => (
         <TouchableOpacity key={reel.id} style={feedInjStyles.reelThumb} onPress={() => onReelPress?.(reel.id)} activeOpacity={0.85}>
-          <ReelPreview reel={reel} isActive={true} />
+          <ReelPreview reel={reel} />
           <View style={feedInjStyles.reelPlayOverlay}>
             <Ionicons name="play" size={20} color="#fff" />
           </View>
@@ -2165,64 +2161,6 @@ const feedInjStyles = StyleSheet.create({
   liveBadgeMiniText: { color: '#fff', fontSize: 8, fontWeight: '800' },
 });
 
-// ─── Pulse Post Modal ─────────────────────────────────────────────────────────
-
-const PulsePostModal: React.FC<{
-  post: any;
-  currentUserId: string;
-  likedIds: Set<string>;
-  savedIds: Set<string>;
-  onClose: () => void;
-  onUserPress: (profile: any) => void;
-}> = ({ post, currentUserId, likedIds, savedIds, onClose, onUserPress }) => {
-  const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
-  const [commentCount, setCommentCount] = useState(post.comments_count ?? 0);
-  const [showComments, setShowComments] = useState(false);
-
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View style={[{
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 14, paddingBottom: 12, borderBottomWidth: 1,
-        borderBottomColor: colors.border,
-        paddingTop: insets.top > 0 ? insets.top : 14,
-      }]}>
-        <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="close" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>
-          @{post.profiles?.username ?? 'Post'}
-        </Text>
-        <View style={{ width: 32 }} />
-      </View>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <FeedPost
-          post={{ ...post, comments_count: commentCount }}
-          currentUserId={currentUserId}
-          isLiked={likedIds.has(post.id)}
-          isSaved={savedIds.has(post.id)}
-          isMuted
-          isActive
-          setIsMuted={() => {}}
-          onOpenComments={() => setShowComments(true)}
-          onCommentCountChange={(_, delta) => setCommentCount((c: number) => Math.max(0, c + delta))}
-          onUserPress={onUserPress}
-        />
-      </ScrollView>
-      <CommentSheet
-        visible={showComments}
-        targetId={post.id}
-        targetType="post"
-        currentUserId={currentUserId}
-        authorId={post.user_id}
-        onClose={() => setShowComments(false)}
-        onCountChange={delta => setCommentCount((c: number) => Math.max(0, c + delta))}
-        onCountSync={count => setCommentCount(count)}
-      />
-    </View>
-  );
-};
 
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
 const FEED_PAGE = 12; // posts per page
@@ -2788,9 +2726,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         )}
         scrollEventThrottle={16}
         windowSize={5}
-        maxToRenderPerBatch={3}
+        maxToRenderPerBatch={4}
         updateCellsBatchingPeriod={50}
-        initialNumToRender={3}
+        initialNumToRender={5}
         removeClippedSubviews
         decelerationRate="normal"
         ListHeaderComponent={useMemo(() => (
@@ -2895,9 +2833,10 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
                 };
                 onReelPress?.(post.id, [postAsReel]);
               }}
+              onPostPress={setPulsePost}
             />
           );
-        }, [likedIds, savedIds, repostedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress])}
+        }, [likedIds, savedIds, repostedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress, setPulsePost])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}
@@ -2975,11 +2914,11 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
 
       {pulsePost && (
         <Modal animationType="slide" visible={true} presentationStyle="pageSheet" onRequestClose={() => setPulsePost(null)}>
-          <PulsePostModal
+          <PostDetailModal
             post={pulsePost}
             currentUserId={currentUserId}
-            likedIds={likedIds}
-            savedIds={savedIds}
+            isLiked={likedIds.has(pulsePost.id)}
+            isSaved={savedIds.has(pulsePost.id)}
             onClose={() => setPulsePost(null)}
             onUserPress={(profile) => { setPulsePost(null); onUserPress?.(profile); }}
           />

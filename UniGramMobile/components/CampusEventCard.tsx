@@ -9,7 +9,7 @@ function formatEventDate(dateStr: string): string {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export function CampusEventCard({ event }: { event: CampusEvent }) {
+export const CampusEventCard = React.memo(({ event }: { event: CampusEvent }) => {
   const { colors } = useTheme();
 
   return (
@@ -42,7 +42,7 @@ export function CampusEventCard({ event }: { event: CampusEvent }) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {

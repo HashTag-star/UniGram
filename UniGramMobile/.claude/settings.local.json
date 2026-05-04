@@ -49,7 +49,8 @@
       "Bash(Select-Object Name, Mode)",
       "Bash(Format-Table -AutoSize)",
       "Bash(Get-ChildItem -Path . -Depth 2)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(findstr /n \"interface FeedPostProps\" screens/FeedScreen.tsx)"
     ]
   }
 }

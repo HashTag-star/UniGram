@@ -391,9 +391,9 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
             contentContainerStyle={{ gap: 1, paddingBottom: 80 }}
             columnWrapperStyle={{ gap: 1 }}
             showsVerticalScrollIndicator={false}
-            windowSize={5}
-            maxToRenderPerBatch={9}
-            initialNumToRender={9}
+            windowSize={7}
+            maxToRenderPerBatch={6}
+            initialNumToRender={12}
             removeClippedSubviews={true}
             getItemLayout={(_data, index) => {
               const row = Math.floor(index / 3);

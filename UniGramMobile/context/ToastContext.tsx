@@ -30,8 +30,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, 3500);
   }, []);
 
+  const value = React.useMemo(() => ({ showToast }), [showToast]);
+
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={value}>
       {children}
       <View style={[styles.container, { bottom: insets.bottom + 80 }]} pointerEvents="none">
         {toasts.map(t => (

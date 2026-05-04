@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleProp, ImageStyle, View, ViewStyle } from 'react-native';
+import { StyleProp, ImageStyle, View, ViewStyle, Image } from 'react-native';
 
 let ExpoImage: any = null;
 try {
@@ -17,7 +17,7 @@ interface Props {
   blurhash?: string;
 }
 
-export const CachedImage: React.FC<Props> = ({
+export const CachedImage: React.FC<Props> = React.memo(({
   uri, style, resizeMode = 'cover', placeholder, containerStyle,
   priority = 'normal', recyclingKey, blurhash,
 }) => {
@@ -46,6 +46,5 @@ export const CachedImage: React.FC<Props> = ({
     );
   }
 
-  const { Image } = require('react-native');
-  return <Image source={{ uri }} style={style} resizeMode={resizeMode} />;
-};
+  return <Image source={{ uri }} style={style as any} resizeMode={resizeMode} />;
+});

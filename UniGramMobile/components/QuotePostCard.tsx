@@ -10,7 +10,7 @@ interface QuotePostCardProps {
   onPress?: () => void;
 }
 
-export const QuotePostCard: React.FC<QuotePostCardProps> = ({ post, onPress }) => {
+export const QuotePostCard: React.FC<QuotePostCardProps> = React.memo(({ post, onPress }) => {
   const { colors } = useTheme();
   if (!post) return null;
 
@@ -62,7 +62,7 @@ export const QuotePostCard: React.FC<QuotePostCardProps> = ({ post, onPress }) =
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   card: {

@@ -4,10 +4,17 @@ import { uploadFile } from './upload';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
 
+const POST_SELECT = `
+  id, user_id, type, caption, media_url, media_urls, location, song, 
+  likes_count, comments_count, reposts_count, repost_of, quote_of, 
+  created_at, tagged_users, aspect_ratio,
+  profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type, major, university)
+`;
+
 export async function getFeedPosts(limit = 20, offset = 0) {
   const { data, error } = await supabase
     .from('posts')
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_SELECT)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;
@@ -17,7 +24,7 @@ export async function getFeedPosts(limit = 20, offset = 0) {
 export async function getUserPosts(userId: string) {
   const { data, error } = await supabase
     .from('posts')
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_SELECT)
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;

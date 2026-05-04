@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   View, Text, Image, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, Modal, ActivityIndicator, Alert,
   TextInput, KeyboardAvoidingView, Platform, RefreshControl,
-  DeviceEventEmitter,
+  DeviceEventEmitter, FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProfilePostsSkeleton, ProfileHeaderSkeleton } from '../components/Skeleton';
@@ -18,6 +18,7 @@ import { getProfile, getFollowers, getFollowing, isFollowing, followUser, unfoll
 import { getUserPosts, getSavedPosts, getLikedPostIds, updatePost } from '../services/posts';
 import { getUserReels } from '../services/reels';
 import { FeedPost } from './FeedScreen';
+import { PostDetailModal } from '../components/PostDetailModal';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
@@ -110,7 +111,15 @@ export const ProfileScreen: React.FC<Props> = ({
         getFollowing(targetId),
         getLikedPostIds(user.id),
         own ? getSavedPosts(user.id) : Promise.resolve([]),
-        supabase.from('posts').select('*, profiles(*)').contains('tagged_users', [targetId]).order('created_at', { ascending: false }).then(r => r.data || []),
+        supabase.from('posts')
+          .select(`
+            id, user_id, type, caption, media_url, media_urls, location, song, 
+            likes_count, comments_count, reposts_count, created_at, tagged_users, is_flagged, aspect_ratio,
+            profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type)
+          `)
+          .contains('tagged_users', [targetId])
+          .order('created_at', { ascending: false })
+          .then(r => r.data || []),
       ]);
 
       setProfile(prof);
@@ -227,21 +236,69 @@ export const ProfileScreen: React.FC<Props> = ({
     setSaving(true);
     try {
       await updatePost(focusedPost.id, currentUserId, { caption: editPostCaption });
-      setFocusedPost({ ...focusedPost, caption: editPostCaption });
       setPosts(prev => prev.map(p => p.id === focusedPost.id ? { ...p, caption: editPostCaption } : p));
-      await success();
+      setFocusedPost((prev: any) => ({ ...prev, caption: editPostCaption }));
       setShowEditPost(false);
+      showToast('Caption updated', 'success');
     } catch (e: any) {
-      showPopup({
-        title: 'Error',
-        message: e.message,
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
+      showToast(e.message || 'Failed to update post', 'error');
     } finally {
       setSaving(false);
     }
   };
+
+  const renderItem = useCallback(({ item }: { item: any }) => {
+    if (activeTab === 'threads') {
+      return (
+        <FeedPost
+          post={item}
+          currentUserId={currentUserId}
+          isLiked={likedIds.has(item.id)}
+          isMuted={true}
+          setIsMuted={() => {}}
+          onUserPress={(p) => DeviceEventEmitter.emit('NAVIGATE_PROFILE', { userId: p.id })}
+        />
+      );
+    }
+
+    if (activeTab === 'reels') {
+      return (
+        <TouchableOpacity key={item.id} style={styles.gridItem} activeOpacity={0.9} onPress={() => setFocusedPost(item)}>
+          {item.thumbnail_url ? (
+            <CachedImage uri={item.thumbnail_url} style={styles.gridImg} resizeMode="cover" />
+          ) : (
+            <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="film-outline" size={32} color="#333" />
+            </View>
+          )}
+          <View style={styles.gridOverlay}>
+            <Ionicons name="play" size={12} color="#fff" />
+            <Text style={styles.gridStatText}>{item.views_count ?? 0}</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // Grid for posts, tagged, saved
+    return (
+      <TouchableOpacity key={item.id} style={styles.gridBtn} onPress={() => setFocusedPost(item)}>
+        <CachedImage uri={item.media_url || item.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
+        {item.media_urls?.length > 1 && <View style={styles.mediaBadge}><Ionicons name="layers" size={12} color="#fff" /></View>}
+        {item.type === 'video' && <View style={styles.mediaBadge}><Ionicons name="play" size={12} color="#fff" /></View>}
+      </TouchableOpacity>
+    );
+  }, [activeTab, currentUserId, likedIds]);
+
+  const listData = useMemo(() => {
+    switch (activeTab) {
+      case 'posts': return posts.filter(p => p.type !== 'thread');
+      case 'reels': return reels;
+      case 'tagged': return taggedPosts;
+      case 'saved': return savedPosts;
+      case 'threads': return posts.filter(p => p.type === 'thread');
+      default: return [];
+    }
+  }, [activeTab, posts, reels, taggedPosts, savedPosts]);
 
   if (loading) return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -250,238 +307,186 @@ export const ProfileScreen: React.FC<Props> = ({
     </View>
   );
 
+  const Header = () => (
+    <>
+      {/* Cover & Header Section */}
+      <View style={styles.coverSection}>
+        <CachedImage uri={profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000'} style={styles.cover} />
+        <View style={styles.coverOverlay} />
+        <View style={[styles.headerTop, { top: insets.top + 10 }]}>
+          {onBack && (
+            <TouchableOpacity onPress={onBack} style={styles.navBtn}>
+              <Ionicons name="chevron-back" size={24} color="#fff" />
+            </TouchableOpacity>
+          )}
+          {isOwn && (
+            <TouchableOpacity 
+              style={styles.headerInfo} 
+              onPress={() => { selection(); setShowAccountSwitcher(true); }}
+            >
+              <Text style={styles.headerUsername}>@{profile?.username}</Text>
+              <Ionicons name="chevron-down" size={14} color="#fff" />
+            </TouchableOpacity>
+          )}
+          <View style={{ flex: 1 }} />
+          {isOwn && (
+            <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn}>
+              <Ionicons name="settings-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* Profile Info */}
+      <View style={styles.infoSection}>
+        <View style={styles.avatarRow}>
+          <View style={styles.avatarContainer}>
+            <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
+              <TouchableOpacity
+                onPress={() => profile?.avatar_url && setShowPicViewer(true)}
+                activeOpacity={0.88}
+                disabled={!profile?.avatar_url}
+              >
+                <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
+              </TouchableOpacity>
+              {isOwn && (
+                <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
+                  <Ionicons name="camera" size={24} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+            {profile?.is_verified && (
+              <View style={styles.verifiedBadgeRow}>
+                <VerifiedBadge type={profile.verification_type} size="sm" />
+              </View>
+            )}
+          </View>
+
+          <View style={styles.profileActions}>
+            <View style={styles.actionRow}>
+              {isOwn ? (
+                <>
+                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
+                    <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
+                  </TouchableOpacity>
+                  {!profile?.is_verified && (
+                    <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
+                      <Ionicons name="shield-checkmark" size={16} color="#fff" />
+                      <Text style={styles.verifyText}>Get Verified</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity 
+                    style={[
+                      styles.followBtn, 
+                      isFollowingUser ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: '#6366f1' }
+                    ]} 
+                    onPress={toggleFollow}
+                  >
+                    <Text style={[styles.followBtnText, isFollowingUser && { color: colors.text }]}>
+                      {isFollowingUser ? 'Following' : 'Follow'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}}>
+                    <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
+          <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
+          {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
+          <View style={styles.metaRow}>
+            {profile?.major && (
+              <View style={styles.majorTag}>
+                <Text style={styles.majorTagText}>{profile.major}</Text>
+              </View>
+            )}
+            {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
+          </View>
+        </View>
+
+        <View style={[styles.statsRow, { borderColor: colors.border }]}>
+          <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
+          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7}>
+            <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
+            <Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7}>
+            <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
+            <Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={[styles.tabHeader, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('posts'); }}>
+          <Ionicons name={activeTab === 'posts' ? 'apps' : 'apps-outline'} size={22} color={activeTab === 'posts' ? colors.text : colors.textMuted} />
+          {activeTab === 'posts' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('reels'); }}>
+          <Ionicons name={activeTab === 'reels' ? 'film' : 'film-outline'} size={22} color={activeTab === 'reels' ? colors.text : colors.textMuted} />
+          {activeTab === 'reels' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('threads'); }}>
+          <Ionicons name={activeTab === 'threads' ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={activeTab === 'threads' ? colors.text : colors.textMuted} />
+          {activeTab === 'threads' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
+        </TouchableOpacity>
+        {isOwn && (
+          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('saved'); }}>
+            <Ionicons name={activeTab === 'saved' ? 'bookmark' : 'bookmark-outline'} size={22} color={activeTab === 'saved' ? colors.text : colors.textMuted} />
+            {activeTab === 'saved' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
+          </TouchableOpacity>
+        )}
+        {isOwn && (
+          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('tagged'); }}>
+            <Ionicons name={activeTab === 'tagged' ? 'person-add' : 'person-add-outline'} size={22} color={activeTab === 'tagged' ? colors.text : colors.textMuted} />
+            {activeTab === 'tagged' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
+          </TouchableOpacity>
+        )}
+      </View>
+    </>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <ScrollView
+      <FlatList
+        key={activeTab === 'threads' ? 'threads-list' : 'grid-list'}
+        data={listData}
+        renderItem={renderItem}
+        keyExtractor={(item: any) => item.id}
+        numColumns={activeTab === 'threads' ? 1 : 3}
+        ListHeaderComponent={Header}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
-      >
-        {/* Cover & Header Section */}
-        <View style={styles.coverSection}>
-          <CachedImage uri={profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000'} style={styles.cover} />
-          <View style={styles.coverOverlay} />
-          <View style={[styles.headerTop, { top: insets.top + 10 }]}>
-            {onBack && (
-              <TouchableOpacity onPress={onBack} style={styles.navBtn}>
-                <Ionicons name="chevron-back" size={24} color="#fff" />
-              </TouchableOpacity>
-            )}
-            {isOwn && (
-              <TouchableOpacity 
-                style={styles.headerInfo} 
-                onPress={() => { selection(); setShowAccountSwitcher(true); }}
-              >
-                <Text style={styles.headerUsername}>@{profile?.username}</Text>
-                <Ionicons name="chevron-down" size={14} color="#fff" />
-              </TouchableOpacity>
-            )}
-            <View style={{ flex: 1 }} />
-            {isOwn && (
-              <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn}>
-                <Ionicons name="settings-outline" size={20} color="#fff" />
-              </TouchableOpacity>
-            )}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
+        removeClippedSubviews={Platform.OS === 'android'}
+        maxToRenderPerBatch={activeTab === 'threads' ? 5 : 12}
+        windowSize={activeTab === 'threads' ? 5 : 11}
+        ListEmptyComponent={!loading ? (
+          <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
+            <Ionicons name="images-outline" size={48} color={colors.textMuted} />
+            <Text style={{ color: colors.textMuted, marginTop: 12, textAlign: 'center' }}>No {activeTab} yet</Text>
           </View>
-        </View>
-
-        {/* Profile Info */}
-        <View style={styles.infoSection}>
-          <View style={styles.avatarRow}>
-            <View style={styles.avatarContainer}>
-              <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
-                <TouchableOpacity
-                  onPress={() => profile?.avatar_url && setShowPicViewer(true)}
-                  activeOpacity={0.88}
-                  disabled={!profile?.avatar_url}
-                >
-                  <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
-                </TouchableOpacity>
-                {isOwn && (
-                  <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
-                    <Ionicons name="camera" size={24} color="#fff" />
-                  </TouchableOpacity>
-                )}
-              </View>
-              {profile?.is_verified && (
-                <View style={styles.verifiedBadgeRow}>
-                  <VerifiedBadge type={profile.verification_type} size="sm" />
-                </View>
-              )}
-            </View>
-
-            <View style={styles.profileActions}>
-              <View style={styles.actionRow}>
-                {isOwn ? (
-                  <>
-                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
-                      <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
-                    </TouchableOpacity>
-                    {!profile?.is_verified && (
-                      <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
-                        <Ionicons name="shield-checkmark" size={16} color="#fff" />
-                        <Text style={styles.verifyText}>Get Verified</Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <TouchableOpacity 
-                      style={[
-                        styles.followBtn, 
-                        isFollowingUser ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: '#6366f1' }
-                      ]} 
-                      onPress={toggleFollow}
-                    >
-                      <Text style={[styles.followBtnText, isFollowingUser && { color: colors.text }]}>
-                        {isFollowingUser ? 'Following' : 'Follow'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}}>
-                      <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
+        ) : null}
+        ListFooterComponent={isSuspended ? (
+          <View style={styles.suspendedOverlay}>
+            <View style={styles.suspendedCard}>
+              <Ionicons name="ban" size={48} color="#f59e0b" />
+              <Text style={styles.suspendedTitle}>Account Suspended</Text>
+              <Text style={styles.suspendedSub}>
+                This account has been temporarily suspended for violating campus community guidelines. Posts are hidden during this period.
+              </Text>
             </View>
           </View>
-
-          <View style={{ marginTop: 12 }}>
-            <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
-            <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
-            {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
-            <View style={styles.metaRow}>
-              {profile?.major && (
-                <View style={styles.majorTag}>
-                  <Text style={styles.majorTagText}>{profile.major}</Text>
-                </View>
-              )}
-              {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
-            </View>
-          </View>
-
-          <View style={[styles.statsRow, { borderColor: colors.border }]}>
-            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
-            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7}>
-              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
-              <Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7}>
-              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
-              <Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Tabs — must be a plain View, direct child of ScrollView for stickyHeaderIndices to work */}
-        <View style={[styles.tabHeader, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('posts'); }}>
-            <Ionicons name={activeTab === 'posts' ? 'apps' : 'apps-outline'} size={22} color={activeTab === 'posts' ? colors.text : colors.textMuted} />
-            {activeTab === 'posts' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('reels'); }}>
-            <Ionicons name={activeTab === 'reels' ? 'film' : 'film-outline'} size={22} color={activeTab === 'reels' ? colors.text : colors.textMuted} />
-            {activeTab === 'reels' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('threads'); }}>
-            <Ionicons name={activeTab === 'threads' ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={activeTab === 'threads' ? colors.text : colors.textMuted} />
-            {activeTab === 'threads' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
-          </TouchableOpacity>
-          {isOwn && (
-            <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('saved'); }}>
-              <Ionicons name={activeTab === 'saved' ? 'bookmark' : 'bookmark-outline'} size={22} color={activeTab === 'saved' ? colors.text : colors.textMuted} />
-              {activeTab === 'saved' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
-            </TouchableOpacity>
-          )}
-          {isOwn && (
-            <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('tagged'); }}>
-              <Ionicons name={activeTab === 'tagged' ? 'person-add' : 'person-add-outline'} size={22} color={activeTab === 'tagged' ? colors.text : colors.textMuted} />
-              {activeTab === 'tagged' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Content Section */}
-        <View style={styles.tabContent}>
-          {activeTab === 'posts' && (
-            <View style={styles.grid}>
-              {posts.filter(p => p.type !== 'thread').map(post => (
-                <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
-                  {post.media_urls?.length > 1 && <View style={styles.mediaBadge}><Ionicons name="layers" size={12} color="#fff" /></View>}
-                  {post.type === 'video' && <View style={styles.mediaBadge}><Ionicons name="play" size={12} color="#fff" /></View>}
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {activeTab === 'reels' && (
-            <View style={styles.grid}>
-              {reels.map(reel => (
-                <TouchableOpacity key={reel.id} style={styles.gridItem} activeOpacity={0.9} onPress={() => setFocusedPost(reel)}>
-                  {reel.thumbnail_url ? (
-                    <CachedImage uri={reel.thumbnail_url} style={styles.gridImg} resizeMode="cover" />
-                  ) : (
-                    <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-                      <Ionicons name="film-outline" size={32} color="#333" />
-                    </View>
-                  )}
-                  <View style={styles.gridOverlay}>
-                    <Ionicons name="play" size={12} color="#fff" />
-                    <Text style={styles.gridStatText}>{reel.views_count ?? 0}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {activeTab === 'tagged' && (
-            <View style={styles.grid}>
-              {taggedPosts.map(post => (
-                <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {activeTab === 'saved' && (
-            <View style={styles.grid}>
-              {savedPosts.map(post => (
-                <TouchableOpacity key={post.id} style={styles.gridBtn} onPress={() => setFocusedPost(post)}>
-                  <CachedImage uri={post.media_url || post.media_urls?.[0]} style={styles.gridImg} resizeMode="cover" />
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {activeTab === 'threads' && (
-            <View>
-              {posts.filter(p => p.type === 'thread').map(post => (
-                <FeedPost
-                  key={post.id}
-                  post={post}
-                  currentUserId={currentUserId}
-                  isLiked={likedIds.has(post.id)}
-                  isMuted={true}
-                  setIsMuted={() => {}}
-                />
-              ))}
-            </View>
-          )}
-
-          {/* Suspended notice - covers ONLY the gallery/content area */}
-          {isSuspended && (
-            <View style={styles.suspendedOverlay}>
-              <View style={styles.suspendedCard}>
-                <Ionicons name="ban" size={48} color="#f59e0b" />
-                <Text style={styles.suspendedTitle}>Account Suspended</Text>
-                <Text style={styles.suspendedSub}>
-                  This account has been temporarily suspended for violating campus community guidelines. Posts are hidden during this period.
-                </Text>
-              </View>
-            </View>
-          )}
-        </View>
-      </ScrollView>
+        ) : null}
+      />
 
       {/* Admin Dashboard Modal */}
       <Modal visible={showAdmin} animationType="slide" onRequestClose={() => setShowAdmin(false)}>
@@ -489,32 +494,15 @@ export const ProfileScreen: React.FC<Props> = ({
       </Modal>
 
       {/* Focus Modal */}
-      <Modal visible={!!focusedPost} transparent animationType="fade" onRequestClose={() => setFocusedPost(null)}>
-        <View style={styles.focusContainer}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setFocusedPost(null)} />
-          <View style={[styles.focusContent, { marginTop: insets.top + 10, backgroundColor: colors.bg }]}>
-            <View style={[styles.focusHeader, { borderBottomColor: colors.border }]}>
-              <TouchableOpacity onPress={() => setFocusedPost(null)}><Ionicons name="chevron-back" size={28} color={colors.text} /></TouchableOpacity>
-              <Text style={[styles.focusTitle, { color: colors.text }]}>Post</Text>
-              {focusedPost?.user_id === currentUserId ? (
-                <TouchableOpacity onPress={initiateEditPost}>
-                  <Text style={{ color: colors.accent, fontWeight: 'bold' }}>Edit</Text>
-                </TouchableOpacity>
-              ) : <View style={{ width: 28 }} />}
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {focusedPost && (
-                <FeedPost
-                  post={focusedPost}
-                  currentUserId={currentUserId}
-                  isLiked={likedIds.has(focusedPost.id)}
-                  isMuted={false}
-                  setIsMuted={() => {}}
-                />
-              )}
-            </ScrollView>
-          </View>
-        </View>
+      <Modal visible={!!focusedPost} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setFocusedPost(null)}>
+        {focusedPost && (
+          <PostDetailModal
+            post={focusedPost}
+            currentUserId={currentUserId}
+            isLiked={likedIds.has(focusedPost.id)}
+            onClose={() => setFocusedPost(null)}
+          />
+        )}
       </Modal>
 
       {/* Edit Post Caption Modal */}
