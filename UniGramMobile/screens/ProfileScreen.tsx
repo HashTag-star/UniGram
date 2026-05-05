@@ -17,7 +17,7 @@ import { CachedImage } from '../components/CachedImage';
 import { getProfile, getFollowers, getFollowing, isFollowing, followUser, unfollowUser, uploadAvatar, updateProfile } from '../services/profiles';
 import { getUserPosts, getSavedPosts, getLikedPostIds, updatePost } from '../services/posts';
 import { getUserReels } from '../services/reels';
-import { FeedPost } from './FeedScreen';
+import { FeedPost } from '../components/FeedPost';
 import { PostDetailModal } from '../components/PostDetailModal';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
@@ -25,6 +25,8 @@ import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
+import { isProActive, getPostAnalytics, getProfileAnalytics, recordProfileViewAnalytics } from '../services/pro';
+import { ProSheet } from '../components/ProSheet';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
@@ -73,7 +75,7 @@ export const ProfileScreen: React.FC<Props> = ({
   const [isFollowingUser, setIsFollowingUser] = useSocialFollow(propUserId ?? '', false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'tagged' | 'saved' | 'threads'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'tagged' | 'saved' | 'threads' | 'analytics'>('posts');
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
   const [isOwn, setIsOwn] = useState(propIsOwn ?? false);
@@ -92,6 +94,12 @@ export const ProfileScreen: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [activeAccounts, setActiveAccounts] = useState<any[]>([]);
+  const [showProSheet, setShowProSheet] = useState(false);
+  const [proAnalytics, setProAnalytics] = useState<any>(null);
+  const [postAnalytics, setPostAnalytics] = useState<any[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  const isPro = isProActive(profile);
 
   const load = useCallback(async () => {
     try {
@@ -136,6 +144,7 @@ export const ProfileScreen: React.FC<Props> = ({
         const following = await isFollowing(user.id, targetId);
         setIsFollowingUser(following);
         recordProfileView(user.id, targetId).catch(() => {});
+        recordProfileViewAnalytics(targetId, user.id).catch(() => {});
       }
     } catch (e: any) {
       showToast(e?.message || 'Failed to load profile.', 'error');
@@ -166,6 +175,15 @@ export const ProfileScreen: React.FC<Props> = ({
     });
     return () => sub.remove();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'analytics' || !isOwn || !isPro || !currentUserId) return;
+    setAnalyticsLoading(true);
+    Promise.all([getProfileAnalytics(currentUserId), getPostAnalytics(currentUserId, 30)])
+      .then(([pa, pa2]) => { setProAnalytics(pa); setPostAnalytics(pa2); })
+      .catch(() => {})
+      .finally(() => setAnalyticsLoading(false));
+  }, [activeTab, isOwn, isPro, currentUserId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -296,6 +314,7 @@ export const ProfileScreen: React.FC<Props> = ({
       case 'tagged': return taggedPosts;
       case 'saved': return savedPosts;
       case 'threads': return posts.filter(p => p.type === 'thread');
+      case 'analytics': return [];
       default: return [];
     }
   }, [activeTab, posts, reels, taggedPosts, savedPosts]);
@@ -369,12 +388,17 @@ export const ProfileScreen: React.FC<Props> = ({
                   <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
                     <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
                   </TouchableOpacity>
-                  {!profile?.is_verified && (
+                  {!profile?.is_verified ? (
                     <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
                       <Ionicons name="shield-checkmark" size={16} color="#fff" />
                       <Text style={styles.verifyText}>Get Verified</Text>
                     </TouchableOpacity>
-                  )}
+                  ) : !isPro ? (
+                    <TouchableOpacity style={styles.proBtn} onPress={() => setShowProSheet(true)}>
+                      <Ionicons name="flash" size={14} color="#fff" />
+                      <Text style={styles.proText}>Go Pro</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -399,7 +423,15 @@ export const ProfileScreen: React.FC<Props> = ({
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
+            {isOwn && isPro && (
+              <View style={styles.proBadge}>
+                <Ionicons name="flash" size={11} color="#fff" />
+                <Text style={styles.proBadgeText}>PRO</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
           {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
           <View style={styles.metaRow}>
@@ -450,6 +482,12 @@ export const ProfileScreen: React.FC<Props> = ({
             {activeTab === 'tagged' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
         )}
+        {isOwn && isPro && (
+          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('analytics'); }}>
+            <Ionicons name={activeTab === 'analytics' ? 'bar-chart' : 'bar-chart-outline'} size={22} color={activeTab === 'analytics' ? '#6366f1' : colors.textMuted} />
+            {activeTab === 'analytics' && <View style={[styles.tabActiveBar, { backgroundColor: '#6366f1' }]} />}
+          </TouchableOpacity>
+        )}
       </View>
     </>
   );
@@ -457,11 +495,11 @@ export const ProfileScreen: React.FC<Props> = ({
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <FlatList
-        key={activeTab === 'threads' ? 'threads-list' : 'grid-list'}
+        key={activeTab === 'threads' || activeTab === 'analytics' ? 'list-view' : 'grid-list'}
         data={listData}
         renderItem={renderItem}
         keyExtractor={(item: any) => item.id}
-        numColumns={activeTab === 'threads' ? 1 : 3}
+        numColumns={activeTab === 'threads' || activeTab === 'analytics' ? 1 : 3}
         ListHeaderComponent={Header}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
         showsVerticalScrollIndicator={false}
@@ -470,10 +508,14 @@ export const ProfileScreen: React.FC<Props> = ({
         maxToRenderPerBatch={activeTab === 'threads' ? 5 : 12}
         windowSize={activeTab === 'threads' ? 5 : 11}
         ListEmptyComponent={!loading ? (
-          <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
-            <Ionicons name="images-outline" size={48} color={colors.textMuted} />
-            <Text style={{ color: colors.textMuted, marginTop: 12, textAlign: 'center' }}>No {activeTab} yet</Text>
-          </View>
+          activeTab === 'analytics' ? (
+            <AnalyticsDashboard pa={proAnalytics} posts={postAnalytics} loading={analyticsLoading} colors={colors} />
+          ) : (
+            <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
+              <Ionicons name="images-outline" size={48} color={colors.textMuted} />
+              <Text style={{ color: colors.textMuted, marginTop: 12, textAlign: 'center' }}>No {activeTab} yet</Text>
+            </View>
+          )
         ) : null}
         ListFooterComponent={isSuspended ? (
           <View style={styles.suspendedOverlay}>
@@ -584,6 +626,15 @@ export const ProfileScreen: React.FC<Props> = ({
         onClose={() => setShowPicViewer(false)}
       />
 
+      <ProSheet
+        visible={showProSheet}
+        onClose={() => setShowProSheet(false)}
+        onSuccess={() => {
+          setProfile((p: any) => p ? { ...p, is_pro: true, pro_expires_at: new Date(Date.now() + 30 * 86400000).toISOString() } : p);
+          showToast('Welcome to UniGram Pro!', 'success');
+        }}
+      />
+
       <UsersListSheet
         visible={showFollowersSheet}
         title="Followers"
@@ -604,6 +655,70 @@ export const ProfileScreen: React.FC<Props> = ({
           DeviceEventEmitter.emit('NAVIGATE_PROFILE', { userId: profile.id });
         }}
       />
+    </View>
+  );
+};
+
+const AnalyticsDashboard = ({ pa, posts, loading, colors }: { pa: any; posts: any[]; loading: boolean; colors: any }) => {
+  if (loading) return <ActivityIndicator style={{ marginTop: 60 }} color={colors.accent} />;
+  if (!pa) return null;
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 }}>
+      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 14 }}>Account Overview</Text>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Profile Views (7d)</Text>
+          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.profile_views_7d ?? 0}</Text>
+        </View>
+        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Profile Views (30d)</Text>
+          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.profile_views_30d ?? 0}</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 24 }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Followers</Text>
+          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.followers ?? 0}</Text>
+        </View>
+        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Total Likes</Text>
+          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.total_likes ?? 0}</Text>
+        </View>
+      </View>
+      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 12 }}>Post Performance · 30d</Text>
+      {posts.length === 0 ? (
+        <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 8 }}>No post data yet</Text>
+      ) : posts.map((p: any) => (
+        <View key={p.post_id} style={{ backgroundColor: colors.bg2, borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+          {p.media_url ? (
+            <CachedImage uri={p.media_url} style={{ width: 52, height: 52, borderRadius: 10 }} resizeMode="cover" />
+          ) : (
+            <View style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="document-text-outline" size={24} color={colors.textMuted} />
+            </View>
+          )}
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginBottom: 6 }} numberOfLines={1}>
+              {p.caption || 'No caption'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="eye-outline" size={13} color={colors.textMuted} />
+                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.views ?? 0}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="heart-outline" size={13} color={colors.textMuted} />
+                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.likes_count ?? 0}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="chatbubble-outline" size={13} color={colors.textMuted} />
+                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.comments_count ?? 0}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      ))}
     </View>
   );
 };
@@ -682,6 +797,10 @@ const styles = StyleSheet.create({
   editBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1 },
   verifyBtn: { backgroundColor: 'rgba(129, 140, 248, 0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: 'rgba(129, 140, 248, 0.3)' },
   verifyText: { color: '#818cf8', fontWeight: '600', fontSize: 13 },
+  proBtn: { backgroundColor: '#6366f1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  proText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  proBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#6366f1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  proBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   btnText: { fontSize: 13, fontWeight: '600' },
   followBtn: { backgroundColor: '#6366f1', borderRadius: 10, paddingHorizontal: 24, paddingVertical: 8 },
   followingBtn: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },

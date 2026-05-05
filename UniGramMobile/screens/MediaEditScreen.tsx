@@ -9,28 +9,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHaptics } from '../hooks/useHaptics';
 import { useTheme } from '../context/ThemeContext';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Video, ResizeMode } from 'expo-av';
-import { SafeModules } from '../lib/SafeModules';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { BlurView } from 'expo-blur';
 import { MusicPicker } from '../components/MusicPicker';
 import { SafeBlur } from './CreatePostModal';
-
-// Modern Expo Video safely imported but guarded
-let VideoView: any = null;
-let useVideoPlayer: any = null;
-let BlurView: any = null;
-
-try {
-  if (SafeModules.hasVideo()) {
-    const VideoPkg = require('expo-video');
-    VideoView = VideoPkg.VideoView;
-    useVideoPlayer = VideoPkg.useVideoPlayer;
-  }
-  if (SafeModules.hasBlur()) {
-    BlurView = require('expo-blur').BlurView;
-  }
-} catch (e) {
-  console.warn('Risk modules failed to load, using fallbacks');
-}
 
 const { width, height } = Dimensions.get('window');
 
@@ -280,10 +262,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
 };
 
 const VideoPreview = ({ uri }: { uri: string }) => {
-  if (SafeModules.hasVideo()) {
-    return <ModernVideoPlayer uri={uri} />;
-  }
-  return <LegacyVideoPlayer uri={uri} />;
+  return <ModernVideoPlayer uri={uri} />;
 };
 
 const ModernVideoPlayer = ({ uri }: { uri: string }) => {
@@ -302,20 +281,7 @@ const ModernVideoPlayer = ({ uri }: { uri: string }) => {
   );
 };
 
-const LegacyVideoPlayer = ({ uri }: { uri: string }) => {
-  return (
-    <Video
-      source={{ uri }}
-      rate={1.0}
-      volume={1.0}
-      isMuted={false}
-      resizeMode={ResizeMode.CONTAIN}
-      shouldPlay
-      isLooping
-      style={styles.fullMedia}
-    />
-  );
-};
+// LegacyVideoPlayer removed as we migrated to expo-video
 
 
 

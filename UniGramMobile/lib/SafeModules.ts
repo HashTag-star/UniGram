@@ -53,7 +53,7 @@ export const SafeModules = {
  */
 export const logModuleStatus = () => {
   console.log('--- Native Module Audit ---');
-  console.log('Video (New):', SafeModules.hasVideo() ? '✅' : '❌ (Fallback to expo-av)');
+  console.log('Video (New):', SafeModules.hasVideo() ? '✅' : '❌ (Warning: expo-av fallback removed)');
   console.log('Thumbnails:', SafeModules.hasThumbnails() ? '✅' : '❌ (Skipping)');
   console.log('Blur:', SafeModules.hasBlur() ? '✅' : '❌ (Fallback to View)');
   console.log('---------------------------');

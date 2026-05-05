@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase';
 
+const activeReactionChannels = new Map<string, ReturnType<typeof supabase.channel>>();
+
 export interface LiveSession {
   id: string;
   creator_id: string;
@@ -114,6 +116,7 @@ export const LiveService = {
         onReaction(payload.emoji);
       })
       .subscribe();
+    activeReactionChannels.set(sessionId, reactionChannel);
 
     // 3 Postgres Change for Session status/viewers
     const sessionSub = supabase
@@ -128,6 +131,7 @@ export const LiveService = {
       .subscribe();
 
     return () => {
+      activeReactionChannels.delete(sessionId);
       supabase.removeChannel(commentSub);
       supabase.removeChannel(reactionChannel);
       supabase.removeChannel(sessionSub);
@@ -136,7 +140,9 @@ export const LiveService = {
 
   // Broadcast a reaction to all viewers
   async sendReaction(sessionId: string, emoji: string): Promise<void> {
-    await supabase.channel(`live-reactions-${sessionId}`).send({
+    const channel = activeReactionChannels.get(sessionId);
+    if (!channel) return;
+    await channel.send({
       type: 'broadcast',
       event: 'reaction',
       payload: { emoji },

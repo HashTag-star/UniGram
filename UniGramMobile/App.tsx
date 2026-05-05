@@ -366,6 +366,7 @@ function AppShell() {
   const [showTrending, setShowTrending] = useState(false);
   const [activeMedia, setActiveMedia] = useState<any>(null);
   const [isLive, setIsLive] = useState(false);
+  const [viewerLiveSession, setViewerLiveSession] = useState<string | null>(null);
   const [feedMuted, setFeedMuted] = useState(true);   // feed videos always start muted
   const [globalMuted, setGlobalMuted] = useState(false); // reels auto-unmute
   const [initialReelId, setInitialReelId] = useState<string | undefined>(undefined);
@@ -510,11 +511,16 @@ function AppShell() {
       setActiveTabVisual('profile');
     });
 
+    const joinLiveSub = DeviceEventEmitter.addListener('JOIN_LIVE_SESSION', (ls: any) => {
+      if (ls?.id) setViewerLiveSession(ls.id);
+    });
+
     return () => {
       listener.subscription.unsubscribe();
       switchSub.remove();
       logoutSub.remove();
       navProfileSub.remove();
+      joinLiveSub.remove();
       clearTimeout(splashTimer);
       clearTimeout(fallbackTimer);
     };
@@ -525,7 +531,25 @@ function AppShell() {
     const handleUrl = async (url: string) => {
       if (!url.includes('auth-callback')) return;
 
-      // Tokens arrive in the hash fragment for the implicit flow
+      // ── PKCE flow (Supabase default) ──────────────────────────────────────
+      // Confirmation & recovery emails now redirect to ?code=XXXX&type=...
+      const queryString = url.split('?')[1]?.split('#')[0] ?? '';
+      const qParams: Record<string, string> = {};
+      queryString.split('&').forEach(pair => {
+        const [k, v] = pair.split('=');
+        if (k) qParams[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
+      });
+
+      if (qParams.code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(url);
+        if (!error && qParams.type === 'recovery') {
+          setResetPasswordMode(true);
+        }
+        return;
+      }
+
+      // ── Implicit flow (legacy fallback) ───────────────────────────────────
+      // Some older Supabase configs still send tokens in the URL hash fragment
       const hash = url.split('#')[1];
       if (!hash) return;
 
@@ -1058,12 +1082,27 @@ function AppShell() {
         </View>
       )}
 
-      {/* Live Mode simulation */}
+      {/* Live Mode — broadcaster */}
       {isLive && (
         <View style={StyleSheet.absoluteFill}>
           {(() => {
             const { LiveScreen } = require('./screens/LiveScreen');
             return <LiveScreen onClose={() => setIsLive(false)} />;
+          })()}
+        </View>
+      )}
+
+      {/* Live Mode — viewer (opened from notification) */}
+      {viewerLiveSession && (
+        <View style={StyleSheet.absoluteFill}>
+          {(() => {
+            const { LiveScreen } = require('./screens/LiveScreen');
+            return (
+              <LiveScreen
+                viewerSessionId={viewerLiveSession}
+                onClose={() => setViewerLiveSession(null)}
+              />
+            );
           })()}
         </View>
       )}

@@ -1,5 +1,8 @@
 project_id = "rcvzcbfmstgwzrolnhvy"
 
+[functions.paystack-webhook]
+verify_jwt = false
+
 [functions.caption-assistant]
 verify_jwt = false
 

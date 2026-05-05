@@ -14,6 +14,8 @@ export interface MarketItem {
   image_url: string | null;
   is_sold: boolean;
   views_count: number;
+  boost_type: string;          // 'none' | 'urgent' | 'spotlight' | 'featured'
+  boost_expires_at: string | null;
   created_at: string;
   profiles: {
     id: string;

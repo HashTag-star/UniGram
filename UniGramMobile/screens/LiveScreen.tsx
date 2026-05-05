@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { SocialSync } from '../services/social_sync';
 import { usePopup } from '../context/PopupContext';
 import { CachedImage } from '../components/CachedImage';
+import { getIceServers } from '../lib/iceServers';
 
 // Lazy-load WebRTC — static import crashes in Expo Go where native module is absent
 let RTCPeerConnection: any;
@@ -36,13 +37,6 @@ try {
 
 const { width } = Dimensions.get('window');
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-  ],
-};
 
 // ─── Floating Heart ───────────────────────────────────────────────────────────
 const HEART_COLORS = ['#ff3b30', '#ff2d55', '#ff6b9d', '#ff9f1c', '#e040fb', '#ff6b6b'];
@@ -101,6 +95,7 @@ export const LiveScreen: React.FC<{
   const { showPopup } = usePopup();
   const haptics = useHaptics();
   const isViewer = !!viewerSessionId;
+  const MAX_RETRIES = 3;
 
   // ── Common state
   const [comments, setComments] = useState<LiveComment[]>([]);
@@ -118,6 +113,8 @@ export const LiveScreen: React.FC<{
   const [hearts, setHearts] = useState<number[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [webrtcReady, setWebrtcReady] = useState(false);
+  const [connectionPhase, setConnectionPhase] = useState<'connecting' | 'connected' | 'failed'>('connecting');
+  const [retryCount, setRetryCount] = useState(0);
 
   // ── WebRTC state
   const [localStream, setLocalStream] = useState<any>(null);
@@ -131,6 +128,12 @@ export const LiveScreen: React.FC<{
   const sessionIdRef = useRef<string | null>(null);
   const currentUserIdRef = useRef<string | null>(null);
   const localStreamRef = useRef<any>(null);
+  const handleExitRef = useRef<() => void>(() => {});
+  const hasLeftLiveRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const connectTimeoutRef = useRef<any>(null);
+  const disconnectTimerRef = useRef<any>(null);
+  const retryViewerConnectionRef = useRef<() => void>(() => {});
 
   // WebRTC refs
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map()); // broadcaster: viewerId → pc
@@ -198,7 +201,7 @@ export const LiveScreen: React.FC<{
   const createPeerForViewer = useCallback(async (viewerId: string, stream: any, signalChannel: any) => {
     if (peerConnectionsRef.current.has(viewerId)) return;
 
-    const pc = new RTCPeerConnection(ICE_SERVERS as any);
+    const pc = new RTCPeerConnection({ iceServers: getIceServers() } as any);
     peerConnectionsRef.current.set(viewerId, pc);
 
     // Add local tracks
@@ -233,22 +236,41 @@ export const LiveScreen: React.FC<{
 
   // Viewer: create peer connection to broadcaster
   const createViewerPeerConnection = useCallback((signalChannel: any) => {
-    const pc = new RTCPeerConnection(ICE_SERVERS as any);
+    const pc = new RTCPeerConnection({ iceServers: getIceServers() } as any);
     viewerPcRef.current = pc;
 
-    // Receive broadcaster's video/audio
     (pc as any).ontrack = (event: any) => {
       const streams = event.streams;
       if (streams?.[0]) setRemoteStream(streams[0]);
     };
 
-    // Send ICE candidates to broadcaster
     (pc as any).onicecandidate = ({ candidate }: any) => {
       if (candidate) {
         signalChannel.send({
           type: 'broadcast', event: 'ice-vw',
           payload: { from: currentUserIdRef.current, candidate: candidate.toJSON() },
         });
+      }
+    };
+
+    (pc as any).onconnectionstatechange = () => {
+      const state = (pc as any).connectionState as string;
+      if (state === 'connected') {
+        if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null; }
+        if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); disconnectTimerRef.current = null; }
+        retryCountRef.current = 0;
+        setRetryCount(0);
+        setConnectionPhase('connected');
+      } else if (state === 'disconnected') {
+        // Disconnected can recover on its own — wait 5 s before triggering retry
+        disconnectTimerRef.current = setTimeout(() => {
+          if ((viewerPcRef.current as any)?.connectionState === 'disconnected') {
+            retryViewerConnectionRef.current();
+          }
+        }, 5000);
+      } else if (state === 'failed') {
+        if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); disconnectTimerRef.current = null; }
+        retryViewerConnectionRef.current();
       }
     };
 
@@ -342,7 +364,11 @@ export const LiveScreen: React.FC<{
       })
       .subscribe((status: string) => {
         if (status === 'SUBSCRIBED') {
-          // Announce presence after channel is ready
+          setConnectionPhase('connecting');
+          retryCountRef.current = 0;
+          setRetryCount(0);
+          if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
+          connectTimeoutRef.current = setTimeout(() => retryViewerConnectionRef.current(), 20_000);
           setTimeout(() => {
             channel.send({
               type: 'broadcast', event: 'viewer-join',
@@ -354,6 +380,42 @@ export const LiveScreen: React.FC<{
 
     signalingChannelRef.current = channel;
   }, [createViewerPeerConnection, flushIceCandidates, safeAddIceCandidate]);
+
+  // ── Viewer reconnect ─────────────────────────────────────────────────────
+
+  const retryViewerConnection = useCallback(() => {
+    if (retryCountRef.current >= MAX_RETRIES) {
+      setConnectionPhase('failed');
+      return;
+    }
+    retryCountRef.current += 1;
+    setRetryCount(retryCountRef.current);
+    setConnectionPhase('connecting');
+    setRemoteStream(null);
+
+    if (viewerPcRef.current) {
+      try { (viewerPcRef.current as any).close(); } catch {}
+      viewerPcRef.current = null;
+    }
+    iceCandidateBufferRef.current.delete('broadcaster');
+
+    const channel = signalingChannelRef.current;
+    if (!channel) { setConnectionPhase('failed'); return; }
+
+    createViewerPeerConnection(channel);
+
+    if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
+    connectTimeoutRef.current = setTimeout(() => retryViewerConnectionRef.current(), 20_000);
+
+    setTimeout(() => {
+      channel.send({
+        type: 'broadcast', event: 'viewer-join',
+        payload: { viewerId: currentUserIdRef.current },
+      });
+    }, 400);
+  }, [createViewerPeerConnection]);
+
+  useEffect(() => { retryViewerConnectionRef.current = retryViewerConnection; }, [retryViewerConnection]);
 
   // ── Get local camera stream (broadcaster) ────────────────────────────────
 
@@ -386,6 +448,9 @@ export const LiveScreen: React.FC<{
   // ── Cleanup all WebRTC ────────────────────────────────────────────────────
 
   const cleanupWebRTC = useCallback(() => {
+    if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null; }
+    if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); disconnectTimerRef.current = null; }
+
     peerConnectionsRef.current.forEach((pc: any) => {
       try { pc.close(); } catch {}
     });
@@ -419,7 +484,7 @@ export const LiveScreen: React.FC<{
       if (isViewer && viewerSessionId) {
         setSessionId(viewerSessionId);
         setIsLive(true);
-        LiveService.joinLive(viewerSessionId).catch(() => {});
+        await LiveService.joinLive(viewerSessionId).catch(() => {});
         setupSubscription(viewerSessionId);
 
         const { data: ls } = await supabase
@@ -460,14 +525,17 @@ export const LiveScreen: React.FC<{
     init();
 
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleExit();
+      handleExitRef.current();
       return true;
     });
 
     return () => {
       backSub.remove();
       if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
-      if (isViewer && viewerSessionId) LiveService.leaveLive(viewerSessionId).catch(() => {});
+      if (isViewer && viewerSessionId && !hasLeftLiveRef.current) {
+        hasLeftLiveRef.current = true;
+        LiveService.leaveLive(viewerSessionId).catch(() => {});
+      }
       if (elapsedRef.current) clearInterval(elapsedRef.current);
       cleanupWebRTC();
     };
@@ -542,7 +610,10 @@ export const LiveScreen: React.FC<{
 
   const handleExit = useCallback(() => {
     if (isViewer) {
-      if (viewerSessionId) LiveService.leaveLive(viewerSessionId).catch(() => {});
+      if (viewerSessionId && !hasLeftLiveRef.current) {
+        hasLeftLiveRef.current = true;
+        LiveService.leaveLive(viewerSessionId).catch(() => {});
+      }
       cleanupWebRTC();
       if (unsubscribeRef.current) { unsubscribeRef.current(); }
       onClose();
@@ -564,6 +635,8 @@ export const LiveScreen: React.FC<{
       ],
     });
   }, [isViewer, isLive, viewerSessionId, doEndLive, onClose, showPopup, cleanupWebRTC]);
+
+  useEffect(() => { handleExitRef.current = handleExit; }, [handleExit]);
 
   const handleSendComment = async () => {
     const text = commentText.trim();
@@ -775,14 +848,14 @@ export const LiveScreen: React.FC<{
             </View>
           </View>
 
-          {/* Viewer connecting indicator — shown until video arrives */}
+          {/* Viewer connecting / failed indicator — shown until video arrives */}
           {isViewer && !remoteStream && !isEnded && (
-            <View style={s.connectingWrap} pointerEvents="none">
+            <View style={s.connectingWrap} pointerEvents={connectionPhase === 'failed' ? 'box-none' : 'none'}>
               <View style={s.viewerAvatarWrap}>
-                <Animated.View style={[s.vcPulse1, { transform: [{ scale: pulseAnim }], opacity: pulseOpacity }]} />
+                <Animated.View style={[s.vcPulse1, { transform: [{ scale: pulseAnim }], opacity: connectionPhase === 'failed' ? 0 : pulseOpacity }]} />
                 <View style={s.vcPulse2} />
                 {broadcasterProfile?.avatar_url
-                  ? <CachedImage uri={broadcasterProfile.avatar_url} style={s.vcAvatar} />
+                  ? <CachedImage uri={broadcasterProfile.avatar_url} style={[s.vcAvatar, connectionPhase === 'failed' && { opacity: 0.4 }]} />
                   : <View style={[s.vcAvatar, { backgroundColor: '#1e1e2e', alignItems: 'center', justifyContent: 'center' }]}><Ionicons name="person" size={44} color="#555" /></View>
                 }
               </View>
@@ -791,8 +864,27 @@ export const LiveScreen: React.FC<{
                 <Text style={s.vcLiveText}>LIVE</Text>
               </View>
               <Text style={s.vcName}>{broadcasterProfile?.username ? `@${broadcasterProfile.username}` : ''}</Text>
-              <ActivityIndicator color="rgba(255,255,255,0.4)" style={{ marginTop: 12 }} />
-              <Text style={s.connectingText}>Connecting to stream…</Text>
+
+              {connectionPhase === 'failed' ? (
+                <>
+                  <Ionicons name="wifi-outline" size={28} color="rgba(255,255,255,0.35)" style={{ marginTop: 16 }} />
+                  <Text style={s.connectFailedText}>Could not connect to stream</Text>
+                  <Text style={s.connectFailedSub}>Check your connection or try again</Text>
+                  <TouchableOpacity onPress={retryViewerConnection} style={s.retryBtn} activeOpacity={0.8}>
+                    <LinearGradient colors={['#9333ea', '#6366f1']} style={s.retryBtnGrad}>
+                      <Ionicons name="refresh" size={15} color="#fff" />
+                      <Text style={s.retryBtnText}>Try Again</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <ActivityIndicator color="rgba(255,255,255,0.4)" style={{ marginTop: 12 }} />
+                  <Text style={s.connectingText}>
+                    {retryCount > 0 ? `Reconnecting… (${retryCount}/${MAX_RETRIES})` : 'Connecting to stream…'}
+                  </Text>
+                </>
+              )}
             </View>
           )}
 
@@ -919,4 +1011,11 @@ const s = StyleSheet.create({
   endedSub: { color: 'rgba(255,255,255,0.45)', fontSize: 15, textAlign: 'center', marginBottom: 36 },
   endedBtn: { paddingHorizontal: 52, paddingVertical: 15, borderRadius: 28 },
   endedBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+
+  // Connection failed
+  connectFailedText: { color: 'rgba(255,255,255,0.75)', fontSize: 15, fontWeight: '700', marginTop: 10 },
+  connectFailedSub: { color: 'rgba(255,255,255,0.35)', fontSize: 13, marginTop: 4, marginBottom: 20, textAlign: 'center' },
+  retryBtn: { borderRadius: 24 },
+  retryBtnGrad: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 28, paddingVertical: 13, borderRadius: 24 },
+  retryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

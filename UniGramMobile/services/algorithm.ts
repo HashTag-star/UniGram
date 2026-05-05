@@ -289,7 +289,8 @@ async function _legacyGetExplorePosts(userId: string, limit: number, offset: num
       (post.likes_count ?? 0) * 0.3 +
       (post.comments_count ?? 0) * 1.5 +
       (post.saves_count ?? 0) * 4.0;
-    return { ...post, _score: engagementScore + interestBonus + uniBonus };
+    const proBonus = post.profiles?.is_pro ? 15 : 0;
+    return { ...post, _score: engagementScore + interestBonus + uniBonus + proBonus };
   });
 
   return scored.sort((a: any, b: any) => b._score - a._score).slice(0, limit);

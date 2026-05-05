@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   Image, Switch, Alert, Modal, TextInput, ActivityIndicator,
-  Linking, KeyboardAvoidingView, Platform, FlatList,
+  Linking, KeyboardAvoidingView, Platform, FlatList, DeviceEventEmitter,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -473,6 +473,7 @@ export const SettingsScreen: React.FC<Props> = ({
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
   const { showPopup } = usePopup();
 
   useEffect(() => {
@@ -524,28 +525,34 @@ export const SettingsScreen: React.FC<Props> = ({
                 iconColor: '#ef4444',
                 buttons: [
                   { text: 'Cancel', style: 'cancel', onPress: () => {} },
-                  { 
-                    text: 'Delete Permanently', 
-                    style: 'destructive', 
+                  {
+                    text: 'Delete Permanently',
+                    style: 'destructive',
                     onPress: async () => {
+                      setIsDeleting(true);
                       try {
                         await deleteUserAccount(profile.id);
-                        onClose();
+                        // signOut({ scope:'local' }) already fired SIGNED_OUT which
+                        // clears the session in App.tsx. Emit FORCE_LOGOUT as a
+                        // belt-and-suspenders guarantee the login screen appears.
+                        DeviceEventEmitter.emit('FORCE_LOGOUT');
                       } catch (e: any) {
+                        setIsDeleting(false);
                         showPopup({
-                          title: 'Error',
-                          message: e.message,
-                          buttons: [{ text: 'OK', onPress: () => {} }]
+                          title: 'Could Not Delete Account',
+                          message: e.message || 'Please try again or contact support.',
+                          icon: 'warning-outline',
+                          buttons: [{ text: 'OK', onPress: () => {} }],
                         });
                       }
-                    } 
+                    },
                   },
-                ]
+                ],
               });
             }, 300);
           },
         },
-      ]
+      ],
     });
   };
 
@@ -697,7 +704,14 @@ export const SettingsScreen: React.FC<Props> = ({
 
           <Section title="Account Management">
             <Row icon="log-out-outline" label="Log Out" danger onPress={handleLogout} />
-            <Row icon="trash-outline" label="Delete Account" danger onPress={handleDeleteAccount} noBorder />
+            <Row
+              icon="trash-outline"
+              label={isDeleting ? 'Deleting account…' : 'Delete Account'}
+              danger
+              onPress={isDeleting ? undefined : handleDeleteAccount}
+              noBorder
+              right={isDeleting ? <ActivityIndicator size="small" color="#ef4444" /> : undefined}
+            />
           </Section>
 
           <View style={styles.footer}>

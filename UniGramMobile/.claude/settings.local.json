@@ -51,7 +51,11 @@
       "Bash(Get-ChildItem -Path . -Depth 2)",
       "Bash(Select-Object FullName)",
       "Bash(findstr /n \"interface FeedPostProps\" screens/FeedScreen.tsx)",
-      "Bash(supabase functions *)"
+      "Bash(supabase functions *)",
+      "Bash(findstr -v \"^total\")",
+      "Bash(powershell -Command \"\\(Get-Content 'screens\\\\LiveScreen.tsx' | Measure-Object -Line\\).Lines\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\#iamhashtag\\\\Desktop\\\\UniGram\\\\UniGramMobile\" -Recurse -Filter \"*.tsx\" -o Name)",
+      "Bash(Select-Object -First 20)"
     ]
   }
 }

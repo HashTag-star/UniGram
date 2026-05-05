@@ -248,9 +248,11 @@ export async function deleteUserAccount(userId: string) {
     console.warn('[Cleanup] Failed to remove account from registry:', e);
   }
 
-  // Fully sign out and flush the local auth session
-  const { error: signOutError } = await supabase.auth.signOut();
-  if (signOutError) throw signOutError;
+  // Use local-only sign-out — the auth.users row is already gone so a
+  // server-side revocation request would return "User not found" and throw.
+  // scope:'local' clears the stored session and fires SIGNED_OUT without
+  // making any network call.
+  await supabase.auth.signOut({ scope: 'local' });
 }
 
 /**

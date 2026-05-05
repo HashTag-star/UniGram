@@ -30,7 +30,7 @@ export async function getUserStories(userId: string) {
   return data ?? [];
 }
 
-export async function createStory(userId: string, mediaUri: string, caption?: string) {
+export async function createStory(userId: string, mediaUri: string, caption?: string, linkUrl?: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
@@ -40,7 +40,7 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
 
   const { data, error } = await supabase
     .from('stories')
-    .insert({ user_id: userId, media_url, caption })
+    .insert({ user_id: userId, media_url, caption, link_url: linkUrl ?? null })
     .select(`*, profiles!stories_user_id_fkey(*)`)
     .single();
   if (error) throw error;

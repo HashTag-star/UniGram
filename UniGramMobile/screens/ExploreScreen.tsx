@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
-import { FeedPost } from './FeedScreen';
+import { FeedPost } from '../components/FeedPost';
 import { CommentSheet } from '../components/CommentSheet';
 import { searchUsers, followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from '../services/posts';

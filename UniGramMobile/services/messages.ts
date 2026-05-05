@@ -5,12 +5,17 @@ import { sendPushToUser } from './pushNotifications';
 
 // ─── Conversations ────────────────────────────────────────────────────────────
 
-export async function getConversations(userId: string) {
-  const { data, error } = await supabase.rpc('get_user_conversations', { p_user_id: userId });
+export async function getConversations(userId: string, archived = false) {
+  const { data, error } = await supabase.rpc('get_user_conversations_v2', { 
+    p_user_id: userId,
+    p_archived: archived
+  });
   if (error) throw error;
   const rows = (Array.isArray(data) ? data : JSON.parse(data as string)) as any[];
   return rows.map((conv: any) => ({
     unread_count: conv.unread_count ?? 0,
+    is_archived: conv.is_archived ?? false,
+    is_muted: conv.is_muted ?? false,
     conversations: conv,
   }));
 }
@@ -43,12 +48,15 @@ export async function searchConversations(userId: string, query: string) {
     .from('conversation_participants')
     .select(`
       unread_count,
+      is_archived,
+      is_muted,
       conversations(
-        id, is_group, group_name, last_message, last_message_at,
+        id, is_group, group_name, last_message, last_message_at, pinned_message_id,
         conversation_participants(user_id, profiles(*))
       )
     `)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .eq('is_archived', false);
   if (error) throw error;
   if (!data) return [];
 
@@ -70,9 +78,29 @@ export async function searchConversations(userId: string, query: string) {
   });
 }
 
+export async function toggleArchive(conversationId: string, userId: string, archived: boolean) {
+  const { error } = await supabase
+    .from('conversation_participants')
+    .update({ is_archived: archived })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+  if (error) throw error;
+}
+
+export async function toggleMute(conversationId: string, userId: string, muted: boolean) {
+  const { error } = await supabase
+    .from('conversation_participants')
+    .update({ is_muted: muted })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+  if (error) throw error;
+}
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 export async function getMessages(conversationId: string, limit = 60, before?: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  
   let query = supabase
     .from('messages')
     .select(`
@@ -85,6 +113,11 @@ export async function getMessages(conversationId: string, limit = 60, before?: s
     .order('created_at', { ascending: false })
     .limit(limit);
 
+  if (user) {
+    // Exclude messages deleted for me
+    query = query.not('deleted_by', 'cs', `{${user.id}}`);
+  }
+
   if (before) query = query.lt('created_at', before);
 
   const { data, error } = await query;
@@ -96,11 +129,12 @@ export async function sendMessage(
   conversationId: string,
   senderId: string,
   text: string,
-  type: 'text' | 'image' | 'gif' | 'audio' | 'share' = 'text',
+  type: 'text' | 'image' | 'gif' | 'audio' | 'share' | 'video' | 'document' = 'text',
   mediaUrl?: string,
   replyToId?: string,
   duration?: number,
   isForwarded = false,
+  viewOnce = false,
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
@@ -116,6 +150,7 @@ export async function sendMessage(
       reply_to_message_id: replyToId ?? null,
       duration: duration ?? null,
       is_forwarded: isForwarded,
+      view_once: viewOnce,
     })
     .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
     .single();
@@ -125,24 +160,27 @@ export async function sendMessage(
   try {
     const sender = data.profiles;
     const pushBody =
-      type === 'image' ? 'Sent a photo 📷' :
+      type === 'image' ? (viewOnce ? 'Sent a view-once photo 📷' : 'Sent a photo 📷') :
       type === 'audio' ? 'Sent a voice message 🎤' :
       type === 'gif'   ? 'Sent a GIF 🎞️' :
+      type === 'video' ? 'Sent a video 📹' :
+      type === 'document' ? 'Sent a document 📄' :
       text.length > 80 ? text.slice(0, 77) + '…' : text;
 
     const { data: participants } = await supabase
       .from('conversation_participants')
-      .select('user_id')
+      .select('user_id, is_muted')
       .eq('conversation_id', conversationId)
       .neq('user_id', senderId);
 
     participants?.forEach((p: any) => {
+      if (p.is_muted) return; // Skip push for muted users
       sendPushToUser(
         p.user_id,
         'New message',
         pushBody,
         { type: 'message', conversationId, channelId: 'messages' },
-        type === 'image' ? (mediaUrl ?? undefined) : undefined,
+        (type === 'image' && !viewOnce) ? (mediaUrl ?? undefined) : undefined,
         sender?.avatar_url ?? undefined,
         'chat_message',
       ).catch(() => {});
@@ -158,12 +196,13 @@ export async function sendImageMessage(
   imageUri: string,
   replyToId?: string,
   caption?: string,
+  viewOnce = false,
 ) {
   const ext = imageUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${senderId}/${Date.now()}.${ext}`;
   const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
   const publicUrl = await uploadFile('message-media', path, imageUri, mimeType);
-  return sendMessage(conversationId, senderId, caption || '📷 Photo', 'image', publicUrl, replyToId);
+  return sendMessage(conversationId, senderId, caption || '📷 Photo', 'image', publicUrl, replyToId, undefined, false, viewOnce);
 }
 
 export async function sendVoiceMessage(
@@ -179,11 +218,38 @@ export async function sendVoiceMessage(
 }
 
 export async function unsendMessage(messageId: string, userId: string) {
+  // This is "Delete for Everyone"
   const { error } = await supabase
     .from('messages')
     .update({ is_deleted: true, text: 'Message unsent', media_url: null })
     .eq('id', messageId)
     .eq('sender_id', userId);
+  if (error) throw error;
+}
+
+export async function deleteMessageForMe(messageId: string, userId: string) {
+  // Use a raw RPC or a careful update with array append
+  // Since we don't have a specific array append RPC, we'll fetch and update or use raw SQL via RPC
+  const { error } = await supabase.rpc('delete_message_for_me', {
+    p_message_id: messageId,
+    p_user_id: userId
+  });
+  if (error) throw error;
+}
+
+export async function markMessageViewed(messageId: string) {
+  const { error } = await supabase
+    .from('messages')
+    .update({ viewed_at: new Date().toISOString() })
+    .eq('id', messageId);
+  if (error) throw error;
+}
+
+export async function pinMessage(conversationId: string, messageId: string | null) {
+  const { error } = await supabase
+    .from('conversations')
+    .update({ pinned_message_id: messageId })
+    .eq('id', conversationId);
   if (error) throw error;
 }
 
@@ -203,6 +269,7 @@ export async function forwardMessage(
     true,      // is_forwarded
   );
 }
+
 
 export async function sendSharedContent(
   conversationId: string,

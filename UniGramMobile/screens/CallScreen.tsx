@@ -19,6 +19,8 @@ import {
   CallRecord, CallType,
 } from '../services/calls';
 
+import { useHaptics } from '../hooks/useHaptics';
+
 const { width, height } = Dimensions.get('window');
 
 const ICE_SERVERS = [
@@ -38,12 +40,13 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
   const [callState, setCallState] = useState<'ringing' | 'connecting' | 'active' | 'ended'>(
     isIncoming ? 'ringing' : 'connecting',
   );
+  const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaker, setIsSpeaker] = useState(!isIncoming);
   const [cameraOn, setCameraOn] = useState(call.type === 'video');
   const [cameraFront, setCameraFront] = useState(true);
-  const [duration, setDuration] = useState(0);
-
+  const [showControls, setShowControls] = useState(true);
+  
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -52,9 +55,15 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
   const callChannelRef = useRef<any>(null);
   const iceChannelRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
+  const controlsTimerRef = useRef<any>(null);
+  
+  const { medium: hapticMedium, success: hapticSuccess, heavy: hapticHeavy } = useHaptics();
 
   const isVideo = call.type === 'video';
   const otherProfile = isIncoming ? call.caller_profile : null;
+
+  const fmtDuration = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   // Duration timer
   useEffect(() => {
@@ -63,6 +72,29 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     }
     return () => clearInterval(timerRef.current);
   }, [callState]);
+
+  // Auto-hide controls for video calls
+  useEffect(() => {
+    if (isVideo && callState === 'active') {
+      resetControlsTimer();
+    }
+    return () => { if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); };
+  }, [isVideo, callState]);
+
+  const resetControlsTimer = () => {
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    setShowControls(true);
+    controlsTimerRef.current = setTimeout(() => {
+      if (callState === 'active') setShowControls(false);
+    }, 4000);
+  };
+
+  const handleContainerPress = () => {
+    if (isVideo && callState === 'active') {
+      if (showControls) setShowControls(false);
+      else resetControlsTimer();
+    }
+  };
 
   // Vibrate on incoming ring
   useEffect(() => {
@@ -157,45 +189,41 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
 
   // Incoming call: wait for accept
   const handleAccept = useCallback(async () => {
+    hapticSuccess();
     Vibration.cancel();
     setCallState('connecting');
 
     const pc = await setupPeerConnection();
-
-    // Set remote offer
     await pc.setRemoteDescription(new RTCSessionDescription(call.offer as any));
-
-    // Create answer
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await answerCall(call.id, answer);
 
-    // Subscribe to ICE
     iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, async (candidate) => {
       try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
     });
 
-    // Subscribe to call status (in case caller hangs up)
     callChannelRef.current = subscribeToCall(call.id, (updated) => {
       if (updated.status === 'ended' || updated.status === 'declined') {
         setCallState('ended');
         setTimeout(onCallEnd, 1200);
       }
     });
-  }, [call, currentUserId, setupPeerConnection, onCallEnd]);
+  }, [call, currentUserId, setupPeerConnection, onCallEnd, hapticSuccess]);
 
   const handleDecline = useCallback(async () => {
+    hapticHeavy();
     Vibration.cancel();
     await declineCall(call.id).catch(console.error);
     setCallState('ended');
     setTimeout(onCallEnd, 800);
-  }, [call.id, onCallEnd]);
+  }, [call.id, onCallEnd, hapticHeavy]);
 
   const handleHangup = useCallback(async () => {
+    hapticHeavy();
     clearInterval(timerRef.current);
     Vibration.cancel();
 
-    // Cleanup media
     localStreamRef.current?.getTracks().forEach((t: any) => t.stop());
     pcRef.current?.close();
     callChannelRef.current?.unsubscribe();
@@ -204,55 +232,69 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     await endCall(call.id).catch(console.error);
     setCallState('ended');
     setTimeout(onCallEnd, 800);
-  }, [call.id, onCallEnd]);
+  }, [call.id, onCallEnd, hapticHeavy]);
 
   const toggleMute = useCallback(() => {
+    hapticMedium();
     localStreamRef.current?.getAudioTracks().forEach((t: any) => {
       t.enabled = !t.enabled;
     });
     setIsMuted((m) => !m);
-  }, []);
+    resetControlsTimer();
+  }, [hapticMedium]);
 
   const toggleCamera = useCallback(() => {
+    hapticMedium();
     localStreamRef.current?.getVideoTracks().forEach((t: any) => {
       t.enabled = !t.enabled;
     });
     setCameraOn((c) => !c);
-  }, []);
+    resetControlsTimer();
+  }, [hapticMedium]);
 
   const flipCamera = useCallback(() => {
+    hapticMedium();
     localStreamRef.current?.getVideoTracks().forEach((t: any) => {
       t._switchCamera?.();
     });
     setCameraFront((f) => !f);
-  }, []);
-
-  const fmtDuration = (s: number) =>
-    `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    resetControlsTimer();
+  }, [hapticMedium]);
 
   // ── Ringing (incoming) ──────────────────────────────────────────────────────
   if (callState === 'ringing' && isIncoming) {
     return (
       <View style={[styles.container, styles.ringingBg]}>
         <StatusBar barStyle="light-content" />
-        <View style={[styles.ringingTop, { paddingTop: insets.top + 20 }]}>
-          <Text style={styles.incomingLabel}>
-            Incoming {call.type === 'video' ? 'video' : 'voice'} call
-          </Text>
-          {otherProfile?.avatar_url ? (
-            <Image source={{ uri: otherProfile.avatar_url }} style={styles.callerAvatar} />
-          ) : (
-            <View style={[styles.callerAvatar, styles.callerAvatarPlaceholder]}>
-              <Ionicons name="person" size={52} color="rgba(255,255,255,0.4)" />
-            </View>
+        
+        {/* Immersive background simulation */}
+        <View style={StyleSheet.absoluteFill}>
+          {otherProfile?.avatar_url && (
+            <Image source={{ uri: otherProfile.avatar_url }} style={[StyleSheet.absoluteFill, { opacity: 0.3 }]} blurRadius={60} />
           )}
-          <Text style={styles.callerName}>
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)' }]} />
+        </View>
+
+        <View style={[styles.ringingTop, { paddingTop: insets.top + 60 }]}>
+          <Text style={styles.incomingLabel}>
+            UniGram {call.type === 'video' ? 'Video' : 'Voice'} Call
+          </Text>
+          <View style={styles.avatarGlowContainer}>
+             {otherProfile?.avatar_url ? (
+               <Image source={{ uri: otherProfile.avatar_url }} style={styles.callerAvatarImmersive} />
+             ) : (
+               <View style={[styles.callerAvatarImmersive, styles.callerAvatarPlaceholder]}>
+                 <Ionicons name="person" size={52} color="rgba(255,255,255,0.4)" />
+               </View>
+             )}
+          </View>
+          <Text style={styles.callerNameImmersive}>
             {otherProfile?.full_name || otherProfile?.username || 'Unknown'}
           </Text>
           <Text style={styles.callerUsername}>@{otherProfile?.username}</Text>
         </View>
 
-        <View style={[styles.ringingActions, { paddingBottom: insets.bottom + 40 }]}>
+        <View style={[styles.ringingActions, { paddingBottom: insets.bottom + 60 }]}>
           <View style={styles.ringingBtn}>
             <TouchableOpacity style={[styles.callActionCircle, styles.declineCircle]} onPress={handleDecline}>
               <Ionicons name="call" size={32} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
@@ -272,7 +314,11 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
 
   // ── Active / Connecting ─────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <TouchableOpacity 
+      style={styles.container} 
+      activeOpacity={1} 
+      onPress={handleContainerPress}
+    >
       <StatusBar barStyle="light-content" />
 
       {/* Video streams */}
@@ -284,14 +330,28 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
           mirror={false}
         />
       ) : (
-        <View style={[StyleSheet.absoluteFill, styles.audioBg]} />
+        <View style={[StyleSheet.absoluteFill, styles.audioBg]}>
+           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+             {otherProfile?.avatar_url ? (
+                <Image source={{ uri: otherProfile.avatar_url }} style={styles.activeCallAvatar} />
+             ) : (
+                <View style={[styles.activeCallAvatar, { backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={60} color="rgba(255,255,255,0.2)" />
+                </View>
+             )}
+             <Text style={styles.activeCallName}>{otherProfile?.full_name || otherProfile?.username}</Text>
+             <Text style={styles.callStateLabel}>
+               {callState === 'connecting' ? 'Connecting…' : fmtDuration(duration)}
+             </Text>
+           </View>
+        </View>
       )}
 
       {/* Local preview (video only) */}
       {isVideo && localStream && cameraOn && (
         <RTCView
           streamURL={localStream.toURL()}
-          style={styles.localPreview}
+          style={[styles.localPreview, !showControls && { top: insets.top + 16 }]}
           objectFit="cover"
           mirror={cameraFront}
           zOrder={1}
@@ -299,72 +359,76 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
       )}
 
       {/* Top overlay */}
-      <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.callerNameActive}>
-          {otherProfile?.full_name || otherProfile?.username || call.caller_id}
-        </Text>
-        <Text style={styles.callStateLabel}>
-          {callState === 'connecting' ? 'Connecting…' :
-           callState === 'ended' ? 'Call ended' :
-           fmtDuration(duration)}
-        </Text>
-      </View>
+      {showControls && (
+        <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
+          <Text style={styles.callerNameActive}>
+            {otherProfile?.full_name || otherProfile?.username || 'User'}
+          </Text>
+          <Text style={styles.callStateLabel}>
+            {callState === 'connecting' ? 'Connecting…' :
+             callState === 'ended' ? 'Call ended' :
+             fmtDuration(duration)}
+          </Text>
+        </View>
+      )}
 
       {/* Bottom controls */}
-      <View style={[styles.controls, { paddingBottom: insets.bottom + 24 }]}>
-        <View style={styles.controlRow}>
-          <View style={styles.controlItem}>
-            <TouchableOpacity
-              style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
-              onPress={toggleMute}
-            >
-              <Ionicons name={isMuted ? 'mic-off' : 'mic'} size={26} color="#fff" />
-            </TouchableOpacity>
-            <Text style={styles.controlLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-          </View>
-
-          {isVideo && (
-            <>
-              <View style={styles.controlItem}>
-                <TouchableOpacity
-                  style={[styles.controlBtn, !cameraOn && styles.controlBtnActive]}
-                  onPress={toggleCamera}
-                >
-                  <Ionicons name={cameraOn ? 'videocam' : 'videocam-off'} size={26} color="#fff" />
-                </TouchableOpacity>
-                <Text style={styles.controlLabel}>{cameraOn ? 'Camera' : 'Camera off'}</Text>
-              </View>
-
-              <View style={styles.controlItem}>
-                <TouchableOpacity style={styles.controlBtn} onPress={flipCamera}>
-                  <Ionicons name="camera-reverse" size={26} color="#fff" />
-                </TouchableOpacity>
-                <Text style={styles.controlLabel}>Flip</Text>
-              </View>
-            </>
-          )}
-
-          {!isVideo && (
+      {showControls && (
+        <View style={[styles.controls, { paddingBottom: insets.bottom + 32 }]}>
+          <View style={styles.controlRow}>
             <View style={styles.controlItem}>
               <TouchableOpacity
-                style={[styles.controlBtn, isSpeaker && styles.controlBtnActive]}
-                onPress={() => setIsSpeaker((s) => !s)}
+                style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
+                onPress={toggleMute}
               >
-                <Ionicons name={isSpeaker ? 'volume-high' : 'volume-low'} size={26} color="#fff" />
+                <Ionicons name={isMuted ? 'mic-off' : 'mic'} size={26} color="#fff" />
               </TouchableOpacity>
-              <Text style={styles.controlLabel}>Speaker</Text>
+              <Text style={styles.controlLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
             </View>
-          )}
 
-          <View style={styles.controlItem}>
-            <TouchableOpacity style={[styles.controlBtn, styles.hangupBtn]} onPress={handleHangup}>
-              <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
-            </TouchableOpacity>
-            <Text style={styles.controlLabel}>End</Text>
+            {isVideo && (
+              <>
+                <View style={styles.controlItem}>
+                  <TouchableOpacity
+                    style={[styles.controlBtn, !cameraOn && styles.controlBtnActive]}
+                    onPress={toggleCamera}
+                  >
+                    <Ionicons name={cameraOn ? 'videocam' : 'videocam-off'} size={26} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={styles.controlLabel}>{cameraOn ? 'Camera' : 'Camera off'}</Text>
+                </View>
+
+                <View style={styles.controlItem}>
+                  <TouchableOpacity style={styles.controlBtn} onPress={flipCamera}>
+                    <Ionicons name="camera-reverse" size={26} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={styles.controlLabel}>Flip</Text>
+                </View>
+              </>
+            )}
+
+            {!isVideo && (
+              <View style={styles.controlItem}>
+                <TouchableOpacity
+                  style={[styles.controlBtn, isSpeaker && styles.controlBtnActive]}
+                  onPress={() => { setIsSpeaker(s => !s); hapticMedium(); }}
+                >
+                  <Ionicons name={isSpeaker ? 'volume-high' : 'volume-low'} size={26} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.controlLabel}>Speaker</Text>
+              </View>
+            )}
+
+            <View style={styles.controlItem}>
+              <TouchableOpacity style={[styles.controlBtn, styles.hangupBtn]} onPress={handleHangup}>
+                <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+              </TouchableOpacity>
+              <Text style={styles.controlLabel}>End</Text>
+            </View>
           </View>
         </View>
-      </View>
-    </View>
+      )}
+    </TouchableOpacity>
   );
 };
 
@@ -447,4 +511,41 @@ const styles = StyleSheet.create({
   controlBtnActive: { backgroundColor: 'rgba(255,255,255,0.3)' },
   hangupBtn: { backgroundColor: '#ef4444' },
   controlLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
+
+  // Immersive additions
+  avatarGlowContainer: {
+    shadowColor: '#fff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 30,
+    elevation: 20,
+  },
+  callerAvatarImmersive: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  callerNameImmersive: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginTop: 20,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowRadius: 10,
+  },
+  activeCallAvatar: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    marginBottom: 20,
+  },
+  activeCallName: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
 });

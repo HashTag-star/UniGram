@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { FeedPost } from '../screens/FeedScreen';
+import { FeedPost } from './FeedPost';
 import { CommentSheet } from './CommentSheet';
 import { useTheme } from '../context/ThemeContext';
 

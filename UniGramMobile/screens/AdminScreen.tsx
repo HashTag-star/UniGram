@@ -13,6 +13,7 @@ import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, 
 import { sendAdminNotification } from '../services/notifications';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
+import { getAllAds, createAd, toggleAd, deleteAd, type SponsoredPost } from '../services/ads';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ interface AdminMarketItem {
   profiles: { username: string } | null;
 }
 
-type AdminTab = 'overview' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce';
+type AdminTab = 'overview' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce' | 'ads';
 type PostFilter = 'all' | 'flagged';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -1703,6 +1704,293 @@ const annoStyles = StyleSheet.create({
   historyMeta: { fontSize: 11, color: 'rgba(255,255,255,0.25)' },
 });
 
+// ─── Ads Tab ─────────────────────────────────────────────────────────────────
+
+const AdsTab: React.FC = () => {
+  const [ads, setAds] = useState<SponsoredPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const { showPopup } = usePopup();
+
+  // Form state
+  const [fbusiness, setFBusiness] = useState('');
+  const [ftitle, setFTitle] = useState('');
+  const [fbody, setFBody] = useState('');
+  const [fimage, setFImage] = useState('');
+  const [fctaLabel, setFCtaLabel] = useState('Learn More');
+  const [fctaUrl, setFCtaUrl] = useState('');
+  const [funiversity, setFUniversity] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getAllAds();
+      setAds(data);
+    } catch (e: any) {
+      showPopup({ title: 'Error', message: e.message ?? 'Could not load ads.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const resetForm = () => {
+    setFBusiness(''); setFTitle(''); setFBody(''); setFImage('');
+    setFCtaLabel('Learn More'); setFCtaUrl(''); setFUniversity('');
+    setShowForm(false);
+  };
+
+  const handleCreate = async () => {
+    if (!fbusiness.trim() || !ftitle.trim()) {
+      showPopup({ title: 'Required', message: 'Business name and title are required.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      return;
+    }
+    setSaving(true);
+    try {
+      await createAd({
+        business_name: fbusiness.trim(),
+        title: ftitle.trim(),
+        body: fbody.trim() || undefined,
+        image_url: fimage.trim() || undefined,
+        cta_label: fctaLabel.trim() || 'Learn More',
+        cta_url: fctaUrl.trim() || undefined,
+        university: funiversity.trim() || undefined,
+      });
+      resetForm();
+      await load();
+      showPopup({ title: 'Ad created!', message: 'It will appear in the feed immediately.', icon: 'checkmark-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    } catch (e: any) {
+      showPopup({ title: 'Error', message: e.message ?? 'Could not create ad.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (ad: SponsoredPost) => {
+    try {
+      await toggleAd(ad.id, !ad.is_active);
+      setAds(prev => prev.map(a => a.id === ad.id ? { ...a, is_active: !a.is_active } : a));
+    } catch (e: any) {
+      showPopup({ title: 'Error', message: e.message ?? 'Failed.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+    }
+  };
+
+  const handleDelete = (ad: SponsoredPost) => {
+    showPopup({
+      title: 'Delete Ad?',
+      message: `"${ad.title}" will be permanently removed.`,
+      icon: 'trash-outline',
+      buttons: [
+        { text: 'Cancel', onPress: () => {} },
+        { text: 'Delete', onPress: async () => {
+          try {
+            await deleteAd(ad.id);
+            setAds(prev => prev.filter(a => a.id !== ad.id));
+          } catch (e: any) {
+            showPopup({ title: 'Error', message: e.message ?? 'Failed.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+          }
+        }},
+      ],
+    });
+  };
+
+  const ctr = (ad: SponsoredPost) =>
+    ad.impressions > 0 ? ((ad.clicks / ad.impressions) * 100).toFixed(1) + '%' : '—';
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+    <ScrollView contentContainerStyle={[styles.tabContent, { padding: 16, paddingBottom: 100 }]}>
+      {/* Create button */}
+      {!showForm && (
+        <TouchableOpacity
+          style={adsStyles.createBtn}
+          onPress={() => setShowForm(true)}
+        >
+          <Ionicons name="add-circle-outline" size={18} color="#fff" />
+          <Text style={adsStyles.createBtnText}>New Sponsored Post</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Create form */}
+      {showForm && (
+        <View style={adsStyles.formCard}>
+          <Text style={adsStyles.formTitle}>New Ad</Text>
+
+          <Text style={adsStyles.label}>Business Name *</Text>
+          <TextInput style={adsStyles.input} value={fbusiness} onChangeText={setFBusiness} placeholder="e.g. Campus Canteen" placeholderTextColor="rgba(255,255,255,0.2)" />
+
+          <Text style={adsStyles.label}>Headline *</Text>
+          <TextInput style={adsStyles.input} value={ftitle} onChangeText={setFTitle} placeholder="Short catchy title" placeholderTextColor="rgba(255,255,255,0.2)" />
+
+          <Text style={adsStyles.label}>Body (optional)</Text>
+          <TextInput style={[adsStyles.input, { minHeight: 70 }]} value={fbody} onChangeText={setFBody} placeholder="More detail about the offer..." placeholderTextColor="rgba(255,255,255,0.2)" multiline />
+
+          <Text style={adsStyles.label}>Image URL (optional)</Text>
+          <TextInput style={adsStyles.input} value={fimage} onChangeText={setFImage} placeholder="https://..." placeholderTextColor="rgba(255,255,255,0.2)" autoCapitalize="none" keyboardType="url" />
+
+          <Text style={adsStyles.label}>CTA Label</Text>
+          <TextInput style={adsStyles.input} value={fctaLabel} onChangeText={setFCtaLabel} placeholder="Learn More" placeholderTextColor="rgba(255,255,255,0.2)" />
+
+          <Text style={adsStyles.label}>CTA URL (optional)</Text>
+          <TextInput style={adsStyles.input} value={fctaUrl} onChangeText={setFCtaUrl} placeholder="https://..." placeholderTextColor="rgba(255,255,255,0.2)" autoCapitalize="none" keyboardType="url" />
+
+          <Text style={adsStyles.label}>Campus Filter (leave blank for all)</Text>
+          <TextInput style={adsStyles.input} value={funiversity} onChangeText={setFUniversity} placeholder="e.g. KNUST" placeholderTextColor="rgba(255,255,255,0.2)" />
+
+          <View style={adsStyles.formBtns}>
+            <TouchableOpacity style={adsStyles.cancelBtn} onPress={resetForm} disabled={saving}>
+              <Text style={adsStyles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[adsStyles.saveBtn, saving && { opacity: 0.5 }]} onPress={handleCreate} disabled={saving}>
+              {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={adsStyles.saveBtnText}>Publish</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Stats summary */}
+      {ads.length > 0 && (
+        <View style={adsStyles.summaryRow}>
+          <View style={adsStyles.summaryCard}>
+            <Text style={adsStyles.summaryValue}>{ads.length}</Text>
+            <Text style={adsStyles.summaryLabel}>Total Ads</Text>
+          </View>
+          <View style={adsStyles.summaryCard}>
+            <Text style={adsStyles.summaryValue}>{ads.filter(a => a.is_active).length}</Text>
+            <Text style={adsStyles.summaryLabel}>Active</Text>
+          </View>
+          <View style={adsStyles.summaryCard}>
+            <Text style={adsStyles.summaryValue}>{ads.reduce((s, a) => s + a.impressions, 0).toLocaleString()}</Text>
+            <Text style={adsStyles.summaryLabel}>Impressions</Text>
+          </View>
+          <View style={adsStyles.summaryCard}>
+            <Text style={adsStyles.summaryValue}>{ads.reduce((s, a) => s + a.clicks, 0).toLocaleString()}</Text>
+            <Text style={adsStyles.summaryLabel}>Clicks</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Ads list */}
+      {loading
+        ? <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 40 }} />
+        : ads.length === 0
+          ? (
+            <View style={{ alignItems: 'center', paddingTop: 50 }}>
+              <Ionicons name="megaphone-outline" size={44} color="rgba(255,255,255,0.1)" />
+              <Text style={{ color: 'rgba(255,255,255,0.3)', marginTop: 12, fontSize: 14 }}>No sponsored posts yet.</Text>
+            </View>
+          )
+          : ads.map(ad => (
+            <View key={ad.id} style={adsStyles.adCard}>
+              <View style={adsStyles.adHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={adsStyles.adBiz}>{ad.business_name}</Text>
+                  <Text style={adsStyles.adTitle} numberOfLines={2}>{ad.title}</Text>
+                  {ad.university ? <Text style={adsStyles.adMeta}>Campus: {ad.university}</Text> : null}
+                </View>
+                <View style={[adsStyles.activeBadge, { backgroundColor: ad.is_active ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.06)' }]}>
+                  <Text style={[adsStyles.activeBadgeText, { color: ad.is_active ? '#22c55e' : 'rgba(255,255,255,0.3)' }]}>
+                    {ad.is_active ? 'Live' : 'Off'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={adsStyles.statsRow}>
+                <View style={adsStyles.statItem}>
+                  <Text style={adsStyles.statValue}>{ad.impressions.toLocaleString()}</Text>
+                  <Text style={adsStyles.statLabel}>Impr.</Text>
+                </View>
+                <View style={adsStyles.statItem}>
+                  <Text style={adsStyles.statValue}>{ad.clicks.toLocaleString()}</Text>
+                  <Text style={adsStyles.statLabel}>Clicks</Text>
+                </View>
+                <View style={adsStyles.statItem}>
+                  <Text style={adsStyles.statValue}>{ctr(ad)}</Text>
+                  <Text style={adsStyles.statLabel}>CTR</Text>
+                </View>
+              </View>
+
+              <View style={adsStyles.adActions}>
+                <TouchableOpacity style={adsStyles.adActionBtn} onPress={() => handleToggle(ad)}>
+                  <Ionicons name={ad.is_active ? 'pause-circle-outline' : 'play-circle-outline'} size={18} color="#818cf8" />
+                  <Text style={adsStyles.adActionText}>{ad.is_active ? 'Pause' : 'Resume'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={adsStyles.adActionBtn} onPress={() => handleDelete(ad)}>
+                  <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                  <Text style={[adsStyles.adActionText, { color: '#ef4444' }]}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+      }
+    </ScrollView>
+    </KeyboardAvoidingView>
+  );
+};
+
+const adsStyles = StyleSheet.create({
+  createBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#6366f1', borderRadius: 12,
+    padding: 14, marginBottom: 16,
+    justifyContent: 'center',
+  },
+  createBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  formCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14,
+    padding: 16, marginBottom: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  formTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 14 },
+  label: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '600', marginBottom: 4, marginTop: 10 },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    color: '#fff', fontSize: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  formBtns: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  cancelBtn: {
+    flex: 1, padding: 12, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+  },
+  cancelBtnText: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' },
+  saveBtn: {
+    flex: 1, padding: 12, borderRadius: 10,
+    backgroundColor: '#6366f1', alignItems: 'center',
+  },
+  saveBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  summaryRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  summaryCard: {
+    flex: 1, backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12, padding: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  summaryValue: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  summaryLabel: { color: 'rgba(255,255,255,0.35)', fontSize: 11, marginTop: 2 },
+  adCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14,
+    padding: 14, marginBottom: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  adHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
+  adBiz: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  adTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginTop: 2 },
+  adMeta: { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 2 },
+  activeBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  activeBadgeText: { fontSize: 11, fontWeight: '700' },
+  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  statItem: { alignItems: 'center' },
+  statValue: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  statLabel: { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 1 },
+  adActions: { flexDirection: 'row', gap: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 10 },
+  adActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  adActionText: { color: '#818cf8', fontSize: 13, fontWeight: '600' },
+});
+
 // ─── Main AdminScreen ─────────────────────────────────────────────────────────
 
 interface Props {
@@ -1804,6 +2092,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
     { key: 'verifications', label: 'Verify', icon: 'shield-checkmark' },
     { key: 'reports', label: 'Reports', icon: 'flag' },
     { key: 'announce', label: 'Announce', icon: 'megaphone' },
+    { key: 'ads', label: 'Ads', icon: 'megaphone-outline' },
   ];
 
   return (
@@ -1857,6 +2146,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
         {activeTab === 'verifications' && <VerificationsTab />}
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'announce' && <AnnouncementsTab adminId={adminId} />}
+        {activeTab === 'ads' && <AdsTab />}
       </View>
     </View>
   );

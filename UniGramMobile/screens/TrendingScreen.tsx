@@ -11,7 +11,7 @@ import { CachedImage } from '../components/CachedImage';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { QuotePostCard } from '../components/QuotePostCard';
 import { CommentSheet } from '../components/CommentSheet';
-import { FeedPost } from './FeedScreen';
+import { FeedPost } from '../components/FeedPost';
 import { getUniversityTrendingFeed } from '../services/algorithm';
 import { getLikedPostIds, getSavedPostIds } from '../services/posts';
 import { useTheme } from '../context/ThemeContext';
