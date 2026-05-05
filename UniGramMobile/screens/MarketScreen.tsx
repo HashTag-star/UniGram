@@ -643,7 +643,14 @@ const SellModal: React.FC<SellModalProps> = ({
     setSubmitting(true);
     try {
       if (isEdit && editItem) {
-        const updates: UpdateItemPayload = { title: trimmedTitle, description: description.trim(), price: parsedPrice, category, condition };
+        const updates: UpdateItemPayload = {
+          title: trimmedTitle,
+          description: description.trim(),
+          price: parsedPrice,
+          category,
+          condition,
+          imageUri: imageUri || undefined,
+        };
         const updated = await updateMarketItem(editItem.id, currentUserId, updates);
         onUpdated(updated);
       } else {

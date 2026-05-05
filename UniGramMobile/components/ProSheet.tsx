@@ -12,6 +12,12 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const PRO_FEATURES = [
   {
+    icon: 'bulb-outline' as const,
+    color: '#a855f7',
+    title: 'AI Insights',
+    desc: 'Get a personalised AI performance report on your content.',
+  },
+  {
     icon: 'bar-chart-outline' as const,
     color: '#6366f1',
     title: 'Post Analytics',
@@ -19,13 +25,13 @@ const PRO_FEATURES = [
   },
   {
     icon: 'eye-outline' as const,
-    color: '#a855f7',
+    color: '#0ea5e9',
     title: 'Profile Views',
     desc: 'See how many people visited your profile this week.',
   },
   {
     icon: 'link-outline' as const,
-    color: '#0ea5e9',
+    color: '#22c55e',
     title: 'Story Links',
     desc: 'Add a clickable link to your stories.',
   },

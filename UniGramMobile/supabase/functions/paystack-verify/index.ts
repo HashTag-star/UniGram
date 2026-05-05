@@ -9,10 +9,11 @@ const corsHeaders = {
 async function applyPro(supabase: any, payment: any) {
   if (payment.product_type !== 'pro_sub') return;
   const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  await supabase
+  const { error } = await supabase
     .from('profiles')
     .update({ is_pro: true, pro_expires_at: expiresAt })
     .eq('id', payment.user_id);
+  if (error) throw new Error(`applyPro failed: ${error.message}`);
 }
 
 async function applyBoost(supabase: any, payment: any) {
@@ -85,11 +86,15 @@ Deno.serve(async (req) => {
         await applyBoost(supabase, payment);
         await applyPro(supabase, payment);
       }
+    } else if (isSuccess) {
+      // Payment was already marked success (webhook fired first).
+      // Re-apply Pro in case the earlier attempt failed silently.
+      await applyPro(supabase, payment);
     }
 
     return new Response(
       JSON.stringify({
-        status: txStatus,
+        status: isSuccess ? 'success' : txStatus,
         product_type: payment.product_type,
         product_id: payment.product_id,
         metadata: payment.metadata,

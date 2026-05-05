@@ -4,10 +4,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
 async function applyPro(supabase: any, payment: any) {
   if (payment.product_type !== 'pro_sub') return;
   const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  await supabase
+  const { error } = await supabase
     .from('profiles')
     .update({ is_pro: true, pro_expires_at: expiresAt })
     .eq('id', payment.user_id);
+  if (error) throw new Error(`applyPro failed: ${error.message}`);
 }
 
 async function applyBoost(supabase: any, payment: any) {

@@ -43,6 +43,7 @@ export interface UpdateItemPayload {
   price?: number;
   category?: string;
   condition?: string;
+  imageUri?: string;
 }
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
@@ -168,11 +169,20 @@ export async function updateMarketItem(
   // Auth check
   const { data: existing, error: fetchErr } = await supabase
     .from('market_items')
-    .select('seller_id')
+    .select('seller_id, image_url')
     .eq('id', itemId)
     .single();
   if (fetchErr) throw fetchErr;
   if (existing.seller_id !== userId) throw new Error('Not authorised to edit this listing.');
+
+  let image_url = existing.image_url;
+
+  if (updates.imageUri && updates.imageUri !== existing.image_url) {
+    const uri = updates.imageUri;
+    const ext = uri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
+    const path = `${userId}/${Date.now()}_u.${ext}`;
+    image_url = await uploadFile('market-images', path, uri);
+  }
 
   const { data, error } = await supabase
     .from('market_items')
@@ -182,6 +192,7 @@ export async function updateMarketItem(
       ...(updates.price !== undefined && { price: updates.price }),
       ...(updates.category !== undefined && { category: updates.category }),
       ...(updates.condition !== undefined && { condition: updates.condition }),
+      image_url,
     })
     .eq('id', itemId)
     .select('*, profiles(*)')

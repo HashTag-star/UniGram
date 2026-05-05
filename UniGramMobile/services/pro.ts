@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
 
-export const PRO_PRICE_GHS = 15;
+export const PRO_PRICE_GHS = 20;
 export const PRO_DURATION_DAYS = 30;
 
 export interface PostAnalyticsRow {
@@ -21,9 +21,20 @@ export interface ProfileAnalytics {
   following: number;
   profile_views_7d: number;
   profile_views_30d: number;
+  profile_views_prev_7d: number;
+  profile_views_prev_30d: number;
   total_posts: number;
   total_likes: number;
+  total_comments: number;
+  likes_30d: number;
+  comments_30d: number;
   total_views_30d: number;
+  total_views_prev_30d: number;
+}
+
+export interface AIInsightsResult {
+  insights: string[];
+  outlook: 'positive' | 'neutral' | 'needs_work';
 }
 
 async function callEdgeFunction(name: string, body: object) {
@@ -94,4 +105,8 @@ export async function recordProfileViewAnalytics(profileId: string, viewerId: st
       p_viewer_id: viewerId,
     });
   } catch (_) {}
+}
+
+export async function getAIInsights(userId: string): Promise<AIInsightsResult> {
+  return callEdgeFunction('analytics-insights', {}) as Promise<AIInsightsResult>;
 }

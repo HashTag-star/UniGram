@@ -25,7 +25,8 @@ import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
-import { isProActive, getPostAnalytics, getProfileAnalytics, recordProfileViewAnalytics } from '../services/pro';
+import { isProActive, getPostAnalytics, getProfileAnalytics, recordProfileViewAnalytics, getAIInsights } from '../services/pro';
+import { LinearGradient } from 'expo-linear-gradient';
 import { ProSheet } from '../components/ProSheet';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
@@ -99,6 +100,11 @@ export const ProfileScreen: React.FC<Props> = ({
   const [postAnalytics, setPostAnalytics] = useState<any[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [aiInsights, setAiInsights] = useState<string[] | null>(null);
+  const [aiOutlook, setAiOutlook] = useState<'positive' | 'neutral' | 'needs_work' | null>(null);
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+  const [aiInsightsError, setAiInsightsError] = useState<string | null>(null);
+  const aiLoadedRef = React.useRef(false);
 
   const isPro = isProActive(profile);
 
@@ -186,6 +192,27 @@ export const ProfileScreen: React.FC<Props> = ({
       .catch((e: any) => setAnalyticsError(e?.message ?? 'Could not load analytics.'))
       .finally(() => setAnalyticsLoading(false));
   }, [activeTab, isOwn, isPro, currentUserId]);
+
+  const loadAIInsights = useCallback(async () => {
+    if (aiInsightsLoading) return;
+    setAiInsightsLoading(true);
+    setAiInsightsError(null);
+    try {
+      const result = await getAIInsights(currentUserId);
+      setAiInsights(result.insights);
+      setAiOutlook(result.outlook);
+      aiLoadedRef.current = true;
+    } catch (e: any) {
+      setAiInsightsError(e?.message ?? 'AI insights unavailable.');
+    } finally {
+      setAiInsightsLoading(false);
+    }
+  }, [currentUserId, aiInsightsLoading]);
+
+  useEffect(() => {
+    if (activeTab !== 'analytics' || !isOwn || !isPro || aiLoadedRef.current) return;
+    loadAIInsights();
+  }, [activeTab, isOwn, isPro]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -511,7 +538,19 @@ export const ProfileScreen: React.FC<Props> = ({
         windowSize={activeTab === 'threads' ? 5 : 11}
         ListEmptyComponent={!loading ? (
           activeTab === 'analytics' ? (
-            <AnalyticsDashboard pa={proAnalytics} posts={postAnalytics} loading={analyticsLoading} error={analyticsError} colors={colors} onRetry={() => { setProAnalytics(null); setAnalyticsError(null); setActiveTab('posts'); setTimeout(() => setActiveTab('analytics'), 50); }} />
+            <AnalyticsDashboard
+              pa={proAnalytics}
+              posts={postAnalytics}
+              loading={analyticsLoading}
+              error={analyticsError}
+              colors={colors}
+              onRetry={() => { setProAnalytics(null); setAnalyticsError(null); setActiveTab('posts'); setTimeout(() => setActiveTab('analytics'), 50); }}
+              aiInsights={aiInsights}
+              aiOutlook={aiOutlook}
+              aiLoading={aiInsightsLoading}
+              aiError={aiInsightsError}
+              onLoadAI={loadAIInsights}
+            />
           ) : (
             <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
               <Ionicons name="images-outline" size={48} color={colors.textMuted} />
@@ -632,8 +671,11 @@ export const ProfileScreen: React.FC<Props> = ({
         visible={showProSheet}
         onClose={() => setShowProSheet(false)}
         onSuccess={() => {
+          // Optimistic update so the UI responds immediately
           setProfile((p: any) => p ? { ...p, is_pro: true, pro_expires_at: new Date(Date.now() + 30 * 86400000).toISOString() } : p);
           showToast('Welcome to UniGram Pro!', 'success');
+          // Re-fetch from DB to confirm the subscription persisted
+          load();
         }}
       />
 
@@ -661,18 +703,76 @@ export const ProfileScreen: React.FC<Props> = ({
   );
 };
 
-const StatCard = ({ label, value, sub, accent }: { label: string; value: number; sub?: string; accent?: boolean }) => {
-  const { colors } = useTheme();
+// ── Analytics helpers ─────────────────────────────────────────────────────────
+
+function fmtNum(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+function pctChange(curr: number, prev: number): number | null {
+  if (prev === 0) return null;
+  return Math.round(((curr - prev) / prev) * 100);
+}
+
+const OUTLOOK_CONFIG = {
+  positive: { label: 'Growing', color: '#22c55e', bg: 'rgba(34,197,94,0.12)', icon: 'trending-up' as const },
+  neutral:  { label: 'Steady',  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', icon: 'remove' as const },
+  needs_work: { label: 'Needs Work', color: '#ef4444', bg: 'rgba(239,68,68,0.12)', icon: 'trending-down' as const },
+};
+
+const TrendChip = ({ curr, prev }: { curr: number; prev: number }) => {
+  const delta = pctChange(curr, prev);
+  if (delta === null) return null;
+  const up = delta >= 0;
+  const color = up ? '#22c55e' : '#ef4444';
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14, borderWidth: accent ? 1 : 0, borderColor: accent ? 'rgba(99,102,241,0.3)' : 'transparent' }}>
-      <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>
-      <Text style={{ color: accent ? '#818cf8' : colors.text, fontSize: 26, fontWeight: '800' }}>{value.toLocaleString()}</Text>
-      {sub ? <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>{sub}</Text> : null}
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', borderRadius: 20, paddingHorizontal: 7, paddingVertical: 3, alignSelf: 'flex-start' }}>
+      <Ionicons name={up ? 'trending-up' : 'trending-down'} size={11} color={color} />
+      <Text style={{ color, fontSize: 11, fontWeight: '700' }}>{up ? '+' : ''}{delta}%</Text>
     </View>
   );
 };
 
-const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry }: { pa: any; posts: any[]; loading: boolean; error: string | null; colors: any; onRetry: () => void }) => {
+const HeroCard = ({ label, sub, value, prev, accentColor }: { label: string; sub: string; value: number; prev: number; accentColor: string }) => {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: accentColor + '28' }}>
+      <Text style={{ color: colors.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>{label}</Text>
+      <Text style={{ color: accentColor, fontSize: 30, fontWeight: '800', letterSpacing: -0.5 }}>{fmtNum(value)}</Text>
+      <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2, marginBottom: 8 }}>{sub}</Text>
+      <TrendChip curr={value} prev={prev} />
+    </View>
+  );
+};
+
+const MiniCard = ({ label, value, accent, sub }: { label: string; value: string; accent?: string; sub?: string }) => {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 12 }}>
+      <Text style={{ color: colors.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>{label}</Text>
+      <Text style={{ color: accent ?? colors.text, fontSize: 20, fontWeight: '800' }}>{value}</Text>
+      {sub ? <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 3 }}>{sub}</Text> : null}
+    </View>
+  );
+};
+
+interface AnalyticsDashboardProps {
+  pa: any;
+  posts: any[];
+  loading: boolean;
+  error: string | null;
+  colors: any;
+  onRetry: () => void;
+  aiInsights: string[] | null;
+  aiOutlook: 'positive' | 'neutral' | 'needs_work' | null;
+  aiLoading: boolean;
+  aiError: string | null;
+  onLoadAI: () => void;
+}
+
+const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsights, aiOutlook, aiLoading, aiError, onLoadAI }: AnalyticsDashboardProps) => {
   if (loading) {
     return (
       <View style={{ alignItems: 'center', paddingTop: 60, gap: 14 }}>
@@ -700,64 +800,183 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry }: { pa
 
   if (!pa) return null;
 
+  const engRate = pa.total_views_30d > 0
+    ? (((pa.likes_30d ?? 0) + (pa.comments_30d ?? 0)) / pa.total_views_30d * 100).toFixed(1)
+    : '0.0';
+
+  const maxViews = posts.length > 0 ? Math.max(...posts.map((p: any) => p.views ?? 0), 1) : 1;
+  const outlook = aiOutlook ? OUTLOOK_CONFIG[aiOutlook] : null;
+
   return (
-    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 }}>
-      {/* Overview */}
-      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 14 }}>Account Overview</Text>
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-        <StatCard label="Profile Views" value={pa.profile_views_7d ?? 0} sub="last 7 days" accent />
-        <StatCard label="Profile Views" value={pa.profile_views_30d ?? 0} sub="last 30 days" />
-      </View>
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-        <StatCard label="Followers" value={pa.followers ?? 0} />
-        <StatCard label="Total Likes" value={pa.total_likes ?? 0} />
-      </View>
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 28 }}>
-        <StatCard label="Post Views" value={pa.total_views_30d ?? 0} sub="last 30 days" />
-        <StatCard label="Posts" value={pa.total_posts ?? 0} />
+    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 60 }}>
+
+      {/* ── Period label */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <Text style={{ color: colors.text, fontWeight: '800', fontSize: 18, letterSpacing: -0.3 }}>Your Analytics</Text>
+        <View style={{ backgroundColor: 'rgba(99,102,241,0.12)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+          <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '700' }}>Last 30 days</Text>
+        </View>
       </View>
 
-      {/* Per-post */}
-      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 4 }}>Post Performance</Text>
-      <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 14 }}>Last 30 days · {posts.length} posts</Text>
+      {/* ── Hero metrics */}
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+        <HeroCard
+          label="Profile Views"
+          sub="last 7 days"
+          value={pa.profile_views_7d ?? 0}
+          prev={pa.profile_views_prev_7d ?? 0}
+          accentColor="#818cf8"
+        />
+        <HeroCard
+          label="Post Impressions"
+          sub="last 30 days"
+          value={pa.total_views_30d ?? 0}
+          prev={pa.total_views_prev_30d ?? 0}
+          accentColor="#0ea5e9"
+        />
+      </View>
+
+      {/* ── Secondary metrics */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+        <MiniCard label="Followers" value={fmtNum(pa.followers ?? 0)} />
+        <MiniCard label="Engagement" value={`${engRate}%`} accent="#818cf8" sub="likes + comments / views" />
+        <MiniCard label="Total Likes" value={fmtNum(pa.total_likes ?? 0)} />
+      </View>
+
+      {/* ── AI Insights card */}
+      <LinearGradient
+        colors={['#6366f1', '#a855f7', '#ec4899']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ borderRadius: 18, padding: 1.5, marginBottom: 24 }}
+      >
+        <View style={{ backgroundColor: colors.bg2, borderRadius: 17, padding: 18 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: 'rgba(168,85,247,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="bulb" size={18} color="#a855f7" />
+              </View>
+              <Text style={{ color: colors.text, fontWeight: '800', fontSize: 15 }}>AI Insights</Text>
+            </View>
+            {outlook && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: outlook.bg, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+                <Ionicons name={outlook.icon} size={12} color={outlook.color} />
+                <Text style={{ color: outlook.color, fontSize: 11, fontWeight: '700' }}>{outlook.label}</Text>
+              </View>
+            )}
+          </View>
+
+          {aiLoading ? (
+            <View style={{ alignItems: 'center', paddingVertical: 20, gap: 10 }}>
+              <ActivityIndicator color="#a855f7" />
+              <Text style={{ color: colors.textMuted, fontSize: 12 }}>Analysing your performance…</Text>
+            </View>
+          ) : aiError ? (
+            <View style={{ gap: 10 }}>
+              <Text style={{ color: colors.textMuted, fontSize: 13, lineHeight: 19 }}>{aiError}</Text>
+              <TouchableOpacity
+                onPress={onLoadAI}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(168,85,247,0.12)', borderRadius: 12, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(168,85,247,0.25)' }}
+              >
+                <Ionicons name="refresh" size={14} color="#a855f7" />
+                <Text style={{ color: '#a855f7', fontWeight: '700', fontSize: 13 }}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : aiInsights && aiInsights.length > 0 ? (
+            <View style={{ gap: 10 }}>
+              {aiInsights.map((insight, i) => (
+                <View key={i} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(99,102,241,0.15)', alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 }}>
+                    <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '800' }}>{i + 1}</Text>
+                  </View>
+                  <Text style={{ color: colors.textSub, fontSize: 13, lineHeight: 20, flex: 1 }}>{insight}</Text>
+                </View>
+              ))}
+              <TouchableOpacity
+                onPress={onLoadAI}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, alignSelf: 'flex-end' }}
+              >
+                <Ionicons name="refresh" size={12} color={colors.textMuted} />
+                <Text style={{ color: colors.textMuted, fontSize: 11 }}>Regenerate</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ gap: 10 }}>
+              <Text style={{ color: colors.textMuted, fontSize: 13, lineHeight: 19 }}>
+                Get a personalised AI breakdown of your content performance — what's working, what isn't, and how to grow.
+              </Text>
+              <TouchableOpacity
+                onPress={onLoadAI}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: '#a855f7', borderRadius: 12, paddingVertical: 11 }}
+              >
+                <Ionicons name="sparkles" size={15} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Generate Insights</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </LinearGradient>
+
+      {/* ── Post performance */}
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <Text style={{ color: colors.text, fontWeight: '800', fontSize: 16, letterSpacing: -0.2 }}>Post Performance</Text>
+        <Text style={{ color: colors.textMuted, fontSize: 12 }}>{posts.length} posts · 30d</Text>
+      </View>
 
       {posts.length === 0 ? (
         <View style={{ alignItems: 'center', paddingVertical: 32, gap: 10 }}>
           <Ionicons name="bar-chart-outline" size={38} color={colors.textMuted} />
-          <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center' }}>
+          <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
             No posts in the last 30 days.{'\n'}Post something to see data here.
           </Text>
         </View>
-      ) : posts.map((p: any) => (
-        <View key={p.post_id} style={{ backgroundColor: colors.bg2, borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-          {p.media_url ? (
-            <CachedImage uri={p.media_url} style={{ width: 52, height: 52, borderRadius: 10 }} resizeMode="cover" />
-          ) : (
-            <View style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="document-text-outline" size={22} color={colors.textMuted} />
+      ) : posts.map((p: any) => {
+        const barWidth = maxViews > 0 ? Math.max(4, Math.round(((p.views ?? 0) / maxViews) * 100)) : 4;
+        return (
+          <View key={p.post_id} style={{ backgroundColor: colors.bg2, borderRadius: 16, padding: 14, marginBottom: 10 }}>
+            <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+              {p.media_url ? (
+                <CachedImage uri={p.media_url} style={{ width: 48, height: 48, borderRadius: 10 }} resizeMode="cover" />
+              ) : (
+                <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="document-text-outline" size={20} color={colors.textMuted} />
+                </View>
+              )}
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', flex: 1, lineHeight: 19 }} numberOfLines={2}>
+                {p.caption || '(no caption)'}
+              </Text>
             </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginBottom: 8 }} numberOfLines={1}>
-              {p.caption || '(no caption)'}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 16 }}>
+            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Ionicons name="eye-outline" size={13} color="#818cf8" />
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.views ?? 0).toLocaleString()}</Text>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{fmtNum(p.views ?? 0)}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="people-outline" size={13} color="#0ea5e9" />
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{fmtNum(p.reach ?? 0)}</Text>
+                <Text style={{ color: colors.textMuted, fontSize: 10 }}>reach</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Ionicons name="heart-outline" size={13} color="#f43f5e" />
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.likes_count ?? 0).toLocaleString()}</Text>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{fmtNum(p.likes_count ?? 0)}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Ionicons name="chatbubble-outline" size={13} color="#22c55e" />
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.comments_count ?? 0).toLocaleString()}</Text>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{fmtNum(p.comments_count ?? 0)}</Text>
               </View>
             </View>
+            {/* Relative performance bar */}
+            <View style={{ height: 4, backgroundColor: colors.bg, borderRadius: 2, overflow: 'hidden' }}>
+              <LinearGradient
+                colors={['#6366f1', '#818cf8']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={{ height: '100%', width: `${barWidth}%`, borderRadius: 2 }}
+              />
+            </View>
           </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 };
