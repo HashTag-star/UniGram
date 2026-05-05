@@ -49,7 +49,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     p.likes_count,
     p.comments_count,
     p.reposts_count,
-    COUNT(pi.id)                AS views,
+    COUNT(pi.post_id)           AS views,
     COUNT(DISTINCT pi.user_id)  AS reach
   FROM posts p
   LEFT JOIN post_impressions pi ON pi.post_id = p.id
@@ -75,7 +75,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
       SELECT COUNT(*) FROM post_impressions pi
       JOIN posts p ON p.id = pi.post_id
       WHERE p.user_id = p_user_id
-        AND pi.created_at > now() - interval '30 days'
+        AND pi.seen_at > now() - interval '30 days'
     )
   );
 $$;

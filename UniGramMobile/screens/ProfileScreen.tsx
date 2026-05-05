@@ -98,6 +98,7 @@ export const ProfileScreen: React.FC<Props> = ({
   const [proAnalytics, setProAnalytics] = useState<any>(null);
   const [postAnalytics, setPostAnalytics] = useState<any[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   const isPro = isProActive(profile);
 
@@ -179,9 +180,10 @@ export const ProfileScreen: React.FC<Props> = ({
   useEffect(() => {
     if (activeTab !== 'analytics' || !isOwn || !isPro || !currentUserId) return;
     setAnalyticsLoading(true);
+    setAnalyticsError(null);
     Promise.all([getProfileAnalytics(currentUserId), getPostAnalytics(currentUserId, 30)])
       .then(([pa, pa2]) => { setProAnalytics(pa); setPostAnalytics(pa2); })
-      .catch(() => {})
+      .catch((e: any) => setAnalyticsError(e?.message ?? 'Could not load analytics.'))
       .finally(() => setAnalyticsLoading(false));
   }, [activeTab, isOwn, isPro, currentUserId]);
 
@@ -509,7 +511,7 @@ export const ProfileScreen: React.FC<Props> = ({
         windowSize={activeTab === 'threads' ? 5 : 11}
         ListEmptyComponent={!loading ? (
           activeTab === 'analytics' ? (
-            <AnalyticsDashboard pa={proAnalytics} posts={postAnalytics} loading={analyticsLoading} colors={colors} />
+            <AnalyticsDashboard pa={proAnalytics} posts={postAnalytics} loading={analyticsLoading} error={analyticsError} colors={colors} onRetry={() => { setProAnalytics(null); setAnalyticsError(null); setActiveTab('posts'); setTimeout(() => setActiveTab('analytics'), 50); }} />
           ) : (
             <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
               <Ionicons name="images-outline" size={48} color={colors.textMuted} />
@@ -659,61 +661,98 @@ export const ProfileScreen: React.FC<Props> = ({
   );
 };
 
-const AnalyticsDashboard = ({ pa, posts, loading, colors }: { pa: any; posts: any[]; loading: boolean; colors: any }) => {
-  if (loading) return <ActivityIndicator style={{ marginTop: 60 }} color={colors.accent} />;
+const StatCard = ({ label, value, sub, accent }: { label: string; value: number; sub?: string; accent?: boolean }) => {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14, borderWidth: accent ? 1 : 0, borderColor: accent ? 'rgba(99,102,241,0.3)' : 'transparent' }}>
+      <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>
+      <Text style={{ color: accent ? '#818cf8' : colors.text, fontSize: 26, fontWeight: '800' }}>{value.toLocaleString()}</Text>
+      {sub ? <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>{sub}</Text> : null}
+    </View>
+  );
+};
+
+const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry }: { pa: any; posts: any[]; loading: boolean; error: string | null; colors: any; onRetry: () => void }) => {
+  if (loading) {
+    return (
+      <View style={{ alignItems: 'center', paddingTop: 60, gap: 14 }}>
+        <ActivityIndicator color="#6366f1" size="large" />
+        <Text style={{ color: colors.textMuted, fontSize: 13 }}>Loading analytics…</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 32, gap: 14 }}>
+        <Ionicons name="alert-circle-outline" size={44} color="#ef4444" />
+        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, textAlign: 'center' }}>Analytics unavailable</Text>
+        <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>{error}</Text>
+        <TouchableOpacity
+          onPress={onRetry}
+          style={{ backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 4 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (!pa) return null;
 
   return (
     <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 }}>
+      {/* Overview */}
       <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 14 }}>Account Overview</Text>
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Profile Views (7d)</Text>
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.profile_views_7d ?? 0}</Text>
-        </View>
-        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Profile Views (30d)</Text>
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.profile_views_30d ?? 0}</Text>
-        </View>
+        <StatCard label="Profile Views" value={pa.profile_views_7d ?? 0} sub="last 7 days" accent />
+        <StatCard label="Profile Views" value={pa.profile_views_30d ?? 0} sub="last 30 days" />
       </View>
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 24 }}>
-        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Followers</Text>
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.followers ?? 0}</Text>
-        </View>
-        <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 14, padding: 14 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Total Likes</Text>
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>{pa.total_likes ?? 0}</Text>
-        </View>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+        <StatCard label="Followers" value={pa.followers ?? 0} />
+        <StatCard label="Total Likes" value={pa.total_likes ?? 0} />
       </View>
-      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 12 }}>Post Performance · 30d</Text>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 28 }}>
+        <StatCard label="Post Views" value={pa.total_views_30d ?? 0} sub="last 30 days" />
+        <StatCard label="Posts" value={pa.total_posts ?? 0} />
+      </View>
+
+      {/* Per-post */}
+      <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 4 }}>Post Performance</Text>
+      <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 14 }}>Last 30 days · {posts.length} posts</Text>
+
       {posts.length === 0 ? (
-        <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 8 }}>No post data yet</Text>
+        <View style={{ alignItems: 'center', paddingVertical: 32, gap: 10 }}>
+          <Ionicons name="bar-chart-outline" size={38} color={colors.textMuted} />
+          <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center' }}>
+            No posts in the last 30 days.{'\n'}Post something to see data here.
+          </Text>
+        </View>
       ) : posts.map((p: any) => (
         <View key={p.post_id} style={{ backgroundColor: colors.bg2, borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', gap: 12, alignItems: 'center' }}>
           {p.media_url ? (
             <CachedImage uri={p.media_url} style={{ width: 52, height: 52, borderRadius: 10 }} resizeMode="cover" />
           ) : (
             <View style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="document-text-outline" size={24} color={colors.textMuted} />
+              <Ionicons name="document-text-outline" size={22} color={colors.textMuted} />
             </View>
           )}
           <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginBottom: 6 }} numberOfLines={1}>
-              {p.caption || 'No caption'}
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginBottom: 8 }} numberOfLines={1}>
+              {p.caption || '(no caption)'}
             </Text>
-            <View style={{ flexDirection: 'row', gap: 14 }}>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name="eye-outline" size={13} color={colors.textMuted} />
-                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.views ?? 0}</Text>
+                <Ionicons name="eye-outline" size={13} color="#818cf8" />
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.views ?? 0).toLocaleString()}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name="heart-outline" size={13} color={colors.textMuted} />
-                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.likes_count ?? 0}</Text>
+                <Ionicons name="heart-outline" size={13} color="#f43f5e" />
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.likes_count ?? 0).toLocaleString()}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name="chatbubble-outline" size={13} color={colors.textMuted} />
-                <Text style={{ color: colors.textMuted, fontSize: 12 }}>{p.comments_count ?? 0}</Text>
+                <Ionicons name="chatbubble-outline" size={13} color="#22c55e" />
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{(p.comments_count ?? 0).toLocaleString()}</Text>
               </View>
             </View>
           </View>
