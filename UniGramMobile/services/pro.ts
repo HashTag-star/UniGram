@@ -49,8 +49,15 @@ async function callEdgeFunction(name: string, body: object) {
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json();
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
+  let json: any;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`Function unreachable (HTTP ${res.status}) — is it deployed?`);
+  }
+  if (!res.ok || json.error) {
+    throw new Error(json.error ?? json.message ?? `HTTP ${res.status}`);
+  }
   return json;
 }
 
