@@ -243,7 +243,6 @@ const MediaPickerBtn: React.FC<{
       mediaTypes: type === 'video' ? 'videos' : 'images',
       quality: 0.85,
       allowsEditing: true,
-      aspect: type === 'image' ? [4, 3] : undefined,
     });
     if (!result.canceled && result.assets[0]) onPick(result.assets[0].uri);
   }, [type, onPick]);
@@ -273,7 +272,7 @@ const MediaPickerBtn: React.FC<{
             Tap to add {type === 'video' ? 'video' : 'photo'}
           </Text>
           <Text style={[styles.mediaPickerSub, { color: colors.textMuted }]}>
-            {type === 'video' ? 'MP4 · up to 60 seconds' : 'JPG or PNG · 4:3 ratio'}
+            {type === 'video' ? 'MP4 · up to 60 seconds' : 'JPG or PNG · Flexible ratio'}
           </Text>
         </>
       )}
