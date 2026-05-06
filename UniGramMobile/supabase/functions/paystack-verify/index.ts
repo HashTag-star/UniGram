@@ -16,6 +16,17 @@ async function applyPro(supabase: any, payment: any) {
   if (error) throw new Error(`applyPro failed: ${error.message}`);
 }
 
+async function applyAdPayment(supabase: any, payment: any) {
+  if (payment.product_type !== 'ad_payment' || !payment.product_id) return;
+  const durationDays: number = payment.metadata?.duration_days ?? 7;
+  const startDate = new Date().toISOString();
+  const endDate   = new Date(Date.now() + durationDays * 86_400_000).toISOString();
+  await supabase
+    .from('campus_ads')
+    .update({ start_date: startDate, end_date: endDate })
+    .eq('id', payment.product_id);
+}
+
 async function applyBoost(supabase: any, payment: any) {
   if (payment.product_type !== 'market_boost' || !payment.product_id) return;
   const boostType: string = payment.metadata?.boost_type;
@@ -85,6 +96,7 @@ Deno.serve(async (req) => {
       if (isSuccess) {
         await applyBoost(supabase, payment);
         await applyPro(supabase, payment);
+        await applyAdPayment(supabase, payment);
       }
     } else if (isSuccess) {
       // Payment was already marked success (webhook fired first).

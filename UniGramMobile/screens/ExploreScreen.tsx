@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, FlatList, TouchableOpacity,
+  View, Text, TextInput, TouchableOpacity,
   StyleSheet, Dimensions, ActivityIndicator, Modal, ScrollView,
 } from 'react-native';
+import { FlashList as _FlashList } from '@shopify/flash-list';
+const FlashList = _FlashList as React.ComponentType<any>;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { VerifiedBadge } from '../components/VerifiedBadge';
@@ -14,6 +16,7 @@ import { searchPosts, getPostsByHashtag, getLikedPostIds, getSavedPostIds } from
 import { getTrendingHashtags, getPersonalizedExplorePosts, getFollowSuggestions } from '../services/algorithm';
 import { trackInterestSignal } from '../services/aiEngine';
 import { Skeleton, ProfilePostsSkeleton } from '../components/Skeleton';
+import { Image as ExpoImage } from 'expo-image';
 import { supabase } from '../lib/supabase';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
@@ -183,7 +186,7 @@ interface Props {
   isVisible?: boolean;
 }
 
-export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, onTrendingPress, isVisible }) => {
+export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrendingPress, isVisible }: Props) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { selection } = useHaptics();
@@ -323,10 +326,24 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
     setSuggested(prev => prev.filter(u => u.id !== userId));
   }, []);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const isSearching = isSearchFocused || query.length > 0;
-  const mediaGridPosts = useMemo(() => gridPosts.filter(p => p.media_url), [gridPosts]);
+  const mediaGridPosts = useMemo(() => gridPosts.filter((p: any) => p.media_url), [gridPosts]);
+
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      const lastVisible = viewableItems[viewableItems.length - 1];
+      const startIdx = (lastVisible.index ?? 0) + 1;
+      const urls: string[] = [];
+      const items = mediaGridPosts;
+      for (let i = startIdx; i < Math.min(startIdx + 12, items.length); i++) {
+        const it = items[i];
+        if (it?.media_url) urls.push(it.media_url);
+      }
+      if (urls.length) ExpoImage.prefetch(urls, 'memory-disk').catch(() => {});
+    }
+  }, [mediaGridPosts]);
+
 
   // ── Search result tabs ────────────────────────────────────────────────────
   const SEARCH_TABS: Array<{ id: SearchTab; label: string }> = [
@@ -383,22 +400,15 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
             <ActivityIndicator color="#4f46e5" />
           </View>
         ) : (
-          <FlatList
-            data={hashtagPosts.filter(p => p.media_url)}
-            keyExtractor={p => p.id}
+          <FlashList
+            data={hashtagPosts.filter((p: any) => p.media_url)}
+            keyExtractor={(p: any) => p.id}
             numColumns={3}
             renderItem={renderPostGridItem}
-            contentContainerStyle={{ gap: 1, paddingBottom: 80 }}
-            columnWrapperStyle={{ gap: 1 }}
+            contentContainerStyle={{ paddingBottom: 80 }}
+            estimatedItemSize={COL}
             showsVerticalScrollIndicator={false}
-            windowSize={7}
-            maxToRenderPerBatch={6}
-            initialNumToRender={12}
-            removeClippedSubviews={true}
-            getItemLayout={(_data, index) => {
-              const row = Math.floor(index / 3);
-              return { length: COL, offset: row * (COL + 1), index };
-            }}
+            drawDistance={300}
           />
         )}
         {detailPost && (
@@ -434,8 +444,8 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
               </View>
             </View>)}
           </View>
-          <ProfilePostsSkeleton colSize={COL} />
-          <ProfilePostsSkeleton colSize={COL} />
+          <ProfilePostsSkeleton key="skeleton-1" colSize={COL} />
+          <ProfilePostsSkeleton key="skeleton-2" colSize={COL} />
         </ScrollView>
       </View>
     );
@@ -501,15 +511,16 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
               <ActivityIndicator color="#4f46e5" />
             </View>
           ) : (
-            <FlatList
+            <FlashList
               data={
                 activeTab === 'people' ? userResults
                 : activeTab === 'posts' ? postResults.filter(p => p.media_url)
                 : activeTab === 'tags' ? trendingTags.filter(t => t.tag.toLowerCase().includes(query.toLowerCase()))
                 : [...userResults.slice(0, 3), ...postResults.slice(0, 6)] // top mix
               }
-              keyExtractor={(item: any, i) => item.id ?? item.tag ?? String(i)}
+              keyExtractor={(item: any, i: number) => item.id ?? item.tag ?? String(i)}
               contentContainerStyle={{ paddingBottom: 80 }}
+              estimatedItemSize={70}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <View style={{ alignItems: 'center', paddingTop: 40 }}>
@@ -517,38 +528,38 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
                   <Text style={{ color: colors.textMuted, marginTop: 10 }}>No results for "{query}"</Text>
                 </View>
               }
-              renderItem={({ item }) => {
-                if (activeTab === 'tags' || item.tag) {
+              renderItem={({ item }: { item: any }) => {
+                if (activeTab === 'tags' || (item as any).tag) {
                   return (
-                    <TouchableOpacity style={styles.userRow} onPress={() => openHashtag(item.tag)}>
+                    <TouchableOpacity style={styles.userRow} onPress={() => openHashtag((item as any).tag)}>
                       <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
                         <Ionicons name="pricetag-outline" size={18} color={colors.accent} />
                       </View>
                       <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={[styles.userName, { color: colors.text }]}>{item.tag}</Text>
-                        <Text style={[styles.userMeta, { color: colors.textMuted }]}>{(item.posts ?? 0).toLocaleString()} posts</Text>
+                        <Text style={[styles.userName, { color: colors.text }]}>{(item as any).tag}</Text>
+                        <Text style={[styles.userMeta, { color: colors.textMuted }]}>{((item as any).posts ?? 0).toLocaleString()} posts</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                     </TouchableOpacity>
                   );
                 }
-                if (item.username) return (
+                if ((item as any).username) return (
                   <UserRow
                     user={item}
                     currentUserId={currentUserId}
-                    isFollowing={followingIds.has(item.id)}
+                    isFollowing={followingIds.has((item as any).id)}
                     onPress={onUserPress}
                     onFollowToggle={handleFollowToggle}
                   />
                 );
-                if (item.media_url) {
+                if ((item as any).media_url) {
                   return (
                     <TouchableOpacity style={styles.postResultRow} onPress={() => setDetailPost(item)} activeOpacity={0.8}>
-                      <CachedImage uri={item.media_url} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
+                      <CachedImage uri={(item as any).media_url} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={[styles.postResultCaption, { color: colors.text }]} numberOfLines={2}>{item.caption}</Text>
+                        <Text style={[styles.postResultCaption, { color: colors.text }]} numberOfLines={2}>{(item as any).caption}</Text>
                         <Text style={[styles.postResultMeta, { color: colors.textMuted }]}>
-                          {item.profiles?.username} · {item.likes_count ?? 0} likes
+                          {(item as any).profiles?.username} · {(item as any).likes_count ?? 0} likes
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -561,21 +572,14 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
         </View>
       ) : (
         // ─── Discovery home ──────────────────────────────────────────────
-        <FlatList
+        <FlashList
           data={mediaGridPosts}
-          keyExtractor={post => post.id}
+          keyExtractor={(post: any) => post.id}
           numColumns={3}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 80, gap: 1 }}
-          columnWrapperStyle={{ gap: 1 }}
-          windowSize={5}
-          maxToRenderPerBatch={9}
-          initialNumToRender={12}
-          removeClippedSubviews={true}
-          getItemLayout={(_data, index) => {
-            const row = Math.floor(index / 3);
-            return { length: COL, offset: row * (COL + 1), index };
-          }}
+          contentContainerStyle={{ paddingBottom: 80 }}
+          estimatedItemSize={COL}
+          drawDistance={300}
           ListHeaderComponent={
             <>
               {/* Trending hashtags */}
@@ -653,7 +657,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
               <Text style={{ color: colors.textMuted, fontSize: 13 }}>No photos yet</Text>
             </View>
           }
-          renderItem={({ item: post }) => (
+          renderItem={({ item: post }: { item: any }) => (
             <TouchableOpacity
               style={[styles.gridItem, { width: COL, height: COL }]}
               onPress={() => setDetailPost(post)}
@@ -676,6 +680,8 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
               )}
             </TouchableOpacity>
           )}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
         />
       )}
 
@@ -694,7 +700,7 @@ export const ExploreScreen: React.FC<Props> = ({ onUserPress, onDiscoverPress, o
       )}
     </View>
   );
-};
+});
 
 // ─── Post Detail Modal ─────────────────────────────────────────────────────
 const PostDetailModal: React.FC<{

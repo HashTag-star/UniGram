@@ -47,11 +47,11 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
   const [cameraFront, setCameraFront] = useState(true);
   const [showControls, setShowControls] = useState(true);
   
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const pcRef = useRef<any>(null);
+  const localStreamRef = useRef<any>(null);
+  const remoteStreamRef = useRef<any>(null);
+  const [localStream, setLocalStream] = useState<any>(null);
+  const [remoteStream, setRemoteStream] = useState<any>(null);
   const callChannelRef = useRef<any>(null);
   const iceChannelRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
@@ -106,7 +106,7 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
   }, [isIncoming, callState]);
 
   const setupPeerConnection = useCallback(async () => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new (RTCPeerConnection as any)({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     // Get local media
@@ -159,7 +159,9 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
 
       // Offer already created before initiating — set it locally
       if (call.offer) {
-        await pc.setLocalDescription(new RTCSessionDescription(call.offer as any));
+        await pc.setRemoteDescription(new (RTCSessionDescription as any)(call.offer as any));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
       }
 
       // Subscribe to answer + ICE
@@ -172,14 +174,14 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
         }
         if (updated.status === 'active' && updated.answer && pc.signalingState !== 'stable') {
           try {
-            await pc.setRemoteDescription(new RTCSessionDescription(updated.answer as any));
+            await pc.setRemoteDescription(new (RTCSessionDescription as any)(updated.answer as any));
           } catch (e) { console.error('setRemoteDescription failed:', e); }
         }
       });
 
       iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, async (candidate) => {
         if (pc.remoteDescription) {
-          try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+          try { await pc.addIceCandidate(new (RTCIceCandidate as any)(candidate)); } catch {}
         }
       });
     })();
@@ -194,13 +196,13 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     setCallState('connecting');
 
     const pc = await setupPeerConnection();
-    await pc.setRemoteDescription(new RTCSessionDescription(call.offer as any));
+    await pc.setRemoteDescription(new (RTCSessionDescription as any)(call.offer as any));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await answerCall(call.id, answer);
 
     iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, async (candidate) => {
-      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+      try { await pc.addIceCandidate(new (RTCIceCandidate as any)(candidate)); } catch {}
     });
 
     callChannelRef.current = subscribeToCall(call.id, (updated) => {

@@ -55,7 +55,10 @@
       "Bash(findstr -v \"^total\")",
       "Bash(powershell -Command \"\\(Get-Content 'screens\\\\LiveScreen.tsx' | Measure-Object -Line\\).Lines\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\#iamhashtag\\\\Desktop\\\\UniGram\\\\UniGramMobile\" -Recurse -Filter \"*.tsx\" -o Name)",
-      "Bash(Select-Object -First 20)"
+      "Bash(Select-Object -First 20)",
+      "Bash(curl *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('dependencies',{}\\).get\\('@shopify/flash-list','not found'\\)\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('version'\\)\\)\")"
     ]
   }
 }

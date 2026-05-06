@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Image, TouchableOpacity,
-  StyleSheet, Dimensions, Modal, FlatList,
+  StyleSheet, Dimensions, Modal,
   StatusBar, RefreshControl, Animated, Alert, Share,
   TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
   TextInput, InteractionManager, AppState,
@@ -65,6 +65,8 @@ import { LiveScreen } from './LiveScreen';
 import { TrendingScreen } from './TrendingScreen';
 import { PopupButton } from '../components/PremiumPopup';
 import { FeedPost, ReelPreview, timeAgo, fmtCount, type PostProfile, type Post, type FeedPostProps } from '../components/FeedPost';
+import { AnimatedFlashList as _AnimatedFlashList } from '@shopify/flash-list';
+const AnimatedFlashList = _AnimatedFlashList as React.ComponentType<any>;
 
 const { width, height: screenHeight } = Dimensions.get('window');
 
@@ -173,6 +175,7 @@ const StoryBarInternal: React.FC<{
       ))}
       
       <TouchableOpacity 
+        key="your-story"
         style={styles.storyItem} 
         onPress={() => hasOwnStories ? onStoryPress(ownGroupIdx) : onYourStoryPress()}
       >
@@ -838,7 +841,7 @@ interface FeedScreenProps {
   setIsMuted: (m: boolean) => void;
 }
 
-export const FeedScreen: React.FC<FeedScreenProps> = ({ 
+export const FeedScreen = React.memo(({ 
   refreshKey = 0, 
   isVisible = true, 
   onCreateStory, 
@@ -851,7 +854,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   onUserPress, 
   isMuted, 
   setIsMuted 
-}) => {
+}: FeedScreenProps) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { showPopup } = usePopup();
@@ -874,6 +877,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const [currentUserId, setCurrentUserId] = useState('');
   const currentUserIdRef = useRef('');
   useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
+  const feedItemsRef = useRef<any[]>([]);
   const [currentProfile, setCurrentProfile] = useState<any>(cachedCurrentProfile);
   const [pendingStoryUri, setPendingStoryUri] = useState<string | null>(null);
   const [showStoryLinkModal, setShowStoryLinkModal] = useState(false);
@@ -890,6 +894,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   const pageRef = useRef(0);
   const lastLoadedRef = useRef(0);
   const appStateRef = useRef(AppState.currentState);
+  const [pendingPosts, setPendingPosts] = useState<any[]>([]);
+  const flatListRef = useRef<any>(null);
+  const pillAnim = useRef(new Animated.Value(-120)).current; // Increased offset
 
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 70,
@@ -938,6 +945,24 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         }
       });
     }
+
+    // Prefetch images for the next 5 posts ahead of the last visible item
+    if (viewableItems.length > 0) {
+      const lastVisible = viewableItems[viewableItems.length - 1];
+      const startIdx = (lastVisible.index ?? 0) + 1;
+      const items = feedItemsRef.current;
+      const urls: string[] = [];
+      for (let i = startIdx; i < Math.min(startIdx + 5, items.length); i++) {
+        const it = items[i];
+        if (!it || it._type) continue;
+        if (it.media_urls?.length) urls.push(it.media_urls[0]);
+        else if (it.media_url) urls.push(it.media_url);
+        if (it.profiles?.avatar_url) urls.push(it.profiles.avatar_url);
+      }
+      if (urls.length) {
+        try { require('expo-image').Image.prefetch(urls, 'memory-disk'); } catch {}
+      }
+    }
   }).current;
 
   const lastScrollY = useRef(0);
@@ -957,6 +982,34 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   };
 
   const headerTranslateY = headerVisible.interpolate({ inputRange: [0, 1], outputRange: [-HEADER_HEIGHT, 0] });
+
+  useEffect(() => {
+    Animated.spring(pillAnim, {
+      toValue: pendingPosts.length > 0 ? 0 : -120,
+      tension: 58, friction: 11, useNativeDriver: true,
+    }).start();
+  }, [pendingPosts.length]);
+
+
+  const flushPendingPosts = useCallback(() => {
+    if (pendingPosts.length === 0) return;
+    setPosts((prev: any[]) => {
+      const existingIds = new Set(prev.map((p: any) => p.id));
+      const newOnes = pendingPosts.filter((p: any) => !existingIds.has(p.id));
+      return [...newOnes, ...prev];
+    });
+    setPendingPosts([]);
+    // Ensure scroll happens after the list updates its data
+    setTimeout(() => {
+      if (flatListRef.current) {
+        // Handle both AnimatedFlashList and standard refs
+        const list = flatListRef.current.scrollToOffset 
+          ? flatListRef.current 
+          : flatListRef.current.getNode?.();
+        list?.scrollToOffset({ offset: 0, animated: true });
+      }
+    }, 100);
+  }, [pendingPosts]);
   const borderOpacity = scrollY.interpolate({
     inputRange: [0, 15],
     outputRange: [0, 1],
@@ -1088,8 +1141,16 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
               .eq('id', payload.new.post_id)
               .single()
               .then(({ data: post }) => {
-                if (post) {
+                if (!post) return;
+                if (lastScrollY.current < 80) {
+                  // Near the top — prepend directly, no pill needed
                   setPosts((prev: any[]) => {
+                    if (prev.find((p: any) => p.id === post.id)) return prev;
+                    return [post, ...prev];
+                  });
+                } else {
+                  // Scrolled down — queue for pill
+                  setPendingPosts((prev: any[]) => {
                     if (prev.find((p: any) => p.id === post.id)) return prev;
                     return [post, ...prev];
                   });
@@ -1263,6 +1324,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
   }, []);
 
   const handleRefresh = useCallback(() => {
+    setPendingPosts([]);
     setRefreshing(true);
     load(true);
   }, [load]);
@@ -1290,6 +1352,8 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
     });
     return items;
   }, [posts, previewReels, suggestedUsers, campusEvents, followCount]);
+
+  useEffect(() => { feedItemsRef.current = feedItems; }, [feedItems]);
 
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
@@ -1385,19 +1449,73 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       </Animated.View>
 
 
-      <Animated.FlatList
+      {/* ── New Posts Pill ─────────────────────────────────────────────── */}
+      <Animated.View
+        pointerEvents={pendingPosts.length > 0 ? 'box-none' : 'none'}
+        style={{
+          position: 'absolute',
+          top: insets.top + 72, // Moved slightly up from insets.top + 80
+          left: 0, right: 0,
+          alignItems: 'center',
+          zIndex: 200,
+          transform: [{ translateY: pillAnim }],
+          opacity: pillAnim.interpolate({
+            inputRange: [-60, 0],
+            outputRange: [0, 1],
+            extrapolate: 'clamp'
+          })
+        }}
+      >
+        <TouchableOpacity
+          onPress={flushPendingPosts}
+          activeOpacity={0.88}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            backgroundColor: '#111',
+            borderRadius: 24, paddingVertical: 9, paddingHorizontal: 14,
+            shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.35, shadowRadius: 12, elevation: 12,
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+          }}
+        >
+          {/* Overlapping avatars */}
+          {(() => {
+            const avatarPosts = pendingPosts.slice(0, 3).filter(p => p.profiles?.avatar_url);
+            if (avatarPosts.length === 0) return null;
+            const w = 14 * (avatarPosts.length - 1) + 24;
+            return (
+              <View style={{ width: w, height: 24, position: 'relative' }}>
+                {avatarPosts.map((p, i) => (
+                  <Image
+                    key={p.id}
+                    source={{ uri: p.profiles.avatar_url }}
+                    style={{
+                      position: 'absolute',
+                      left: i * 14,
+                      width: 24, height: 24, borderRadius: 12,
+                      borderWidth: 1.5, borderColor: '#111',
+                    }}
+                  />
+                ))}
+              </View>
+            );
+          })()}
+          <Ionicons name="arrow-up" size={13} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
+            {pendingPosts.length === 1 ? '1 new post' : `${pendingPosts.length} new posts`}
+          </Text>
+        </TouchableOpacity>
+      </Animated.View>
+
+      <AnimatedFlashList
+        ref={flatListRef}
         data={loading ? [] : feedItems}
-        keyExtractor={p => p.id}
+        keyExtractor={(p: any) => p.id}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true, listener: handleScroll }
         )}
         scrollEventThrottle={16}
-        windowSize={5}
-        maxToRenderPerBatch={4}
-        updateCellsBatchingPeriod={50}
-        initialNumToRender={5}
-        removeClippedSubviews
         decelerationRate="normal"
         ListHeaderComponent={useMemo(() => (
           <>
@@ -1434,7 +1552,12 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
                 onFindPeople={() => onUserPress?.({ _openDiscover: true })}
               />
             )}
-            {loading && <><FeedPostSkeleton /><FeedPostSkeleton /></>}
+            {loading && (
+              <View>
+                <FeedPostSkeleton key="skel-1" />
+                <FeedPostSkeleton key="skel-2" />
+              </View>
+            )}
           </>
         // eslint-disable-next-line react-hooks/exhaustive-deps
         ), [loading, storyGroups, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT, followCount])}
@@ -1510,8 +1633,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={loadingMore ? (
-          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color="#6366f1" />
+          <View>
+            <FeedPostSkeleton key="skel-footer-1" />
+            <FeedPostSkeleton key="skel-footer-2" />
           </View>
         ) : null}
         refreshControl={
@@ -1652,7 +1776,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = ({
       )}
     </View>
   );
-};
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({

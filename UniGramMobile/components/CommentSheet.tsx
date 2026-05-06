@@ -50,8 +50,8 @@ function renderMentions(text: string, colors: any): React.ReactNode {
   if (!text?.includes('@')) return text;
   return text.split(/(@\w+)/g).map((part, i) =>
     part.startsWith('@')
-      ? <Text key={i} style={{ color: '#818cf8', fontWeight: '700' }}>{part}</Text>
-      : <Text key={i}>{part}</Text>
+      ? <Text key={`mention-${i}-${part}`} style={{ color: '#818cf8', fontWeight: '700' }}>{part}</Text>
+      : <Text key={`text-${i}`}>{part}</Text>
   );
 }
 
@@ -908,7 +908,7 @@ export const CommentSheet: React.FC<Props> = ({
                   </Text>
                 ) : (
                   aiHighlights.map((h, i) => (
-                    <View key={i} style={styles.aiHighlightRow}>
+                    <View key={`ai-h-${i}`} style={styles.aiHighlightRow}>
                       <View style={[styles.aiDot, { backgroundColor: colors.accent }]} />
                       <Text style={[styles.aiText, { color: colors.textSub, fontStyle: 'normal' }]}>{h}</Text>
                     </View>

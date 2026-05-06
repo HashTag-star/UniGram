@@ -8,7 +8,6 @@ import React, {
 import {
   View,
   Text,
-  FlatList,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
@@ -21,6 +20,9 @@ import {
   Share,
   Image,
 } from 'react-native';
+import { FlashList as _FlashList } from '@shopify/flash-list';
+const FlashList = _FlashList as React.ComponentType<any>;
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -852,7 +854,7 @@ interface MarketScreenProps {
   isSuspended?: boolean;
 }
 
-export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVisible, isSuspended }) => {
+export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended }: MarketScreenProps) => {
   const { colors, isDark } = useTheme();
   const { showPopup } = usePopup();
   const { showToast } = useToast();
@@ -1107,11 +1109,31 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
 
   const openSell = useCallback(() => {
     if (isSuspended) {
-      showPopup({ title: 'Account Restricted', message: 'Your account cannot create new listings at this time.', icon: 'lock-closed-outline', iconColor: '#ef4444', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ 
+        title: 'Account Restricted', 
+        message: 'Your account cannot create new listings at this time.', 
+        icon: 'lock-closed-outline', 
+        iconColor: '#ef4444', 
+        buttons: [{ text: 'OK', onPress: () => {} }] 
+      });
       return;
     }
     setEditItem(null); setShowSell(true);
   }, [isSuspended, showPopup]);
+
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      const lastVisible = viewableItems[viewableItems.length - 1];
+      const startIdx = (lastVisible.index ?? 0) + 1;
+      const urls: string[] = [];
+      const items = activeData;
+      for (let i = startIdx; i < Math.min(startIdx + 10, items.length); i++) {
+        const it = items[i];
+        if (it?.image_url) urls.push(it.image_url);
+      }
+      if (urls.length) ExpoImage.prefetch(urls, 'memory-disk').catch(() => {});
+    }
+  }, [activeData]);
 
   return (
     <View style={[scr.root, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
@@ -1160,33 +1182,36 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
 
       {/* ── Category chips (Browse) ── */}
       {activeTab === 'browse' && (
-        <ScrollView
-          horizontal showsHorizontalScrollIndicator={false}
-          style={scr.catScroll}
-          contentContainerStyle={{ paddingHorizontal: H_PAD, gap: 7 }}
-        >
-          {CATEGORIES.map(cat => {
-            const active = category === cat.id;
-            return (
-              <TouchableOpacity
-                key={cat.id}
-                style={[
-                  scr.catChip,
-                  {
-                    backgroundColor: active ? colors.accent + '18' : colors.bg2,
-                    borderColor: active ? colors.accent + '55' : colors.border,
-                  },
-                ]}
-                onPress={() => setCategory(cat.id)}
-              >
-                <Text style={scr.catChipEmoji}>{cat.icon}</Text>
-                <Text style={[scr.catChipLabel, { color: active ? colors.accent : colors.textMuted, fontWeight: active ? '700' : '500' }]}>
-                  {cat.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+        <View style={scr.catScrollWrap}>
+          <ScrollView
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={scr.catScroll}
+            contentContainerStyle={scr.catScrollContent}
+          >
+            {CATEGORIES.map(cat => {
+              const active = category === cat.id;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    scr.catChip,
+                    {
+                      backgroundColor: active ? colors.accent + '18' : colors.bg2,
+                      borderColor: active ? colors.accent + '55' : colors.border,
+                    },
+                  ]}
+                  onPress={() => setCategory(cat.id)}
+                >
+                  <Text style={scr.catChipEmoji}>{cat.icon}</Text>
+                  <Text style={[scr.catChipLabel, { color: active ? colors.accent : colors.textMuted, fontWeight: active ? '700' : '500' }]}>
+                    {cat.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
       )}
 
       {/* ── Search bar (Browse) ── */}
@@ -1214,26 +1239,24 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
       {/* ── Content ── */}
       {isInitialLoading ? (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={scr.listPad}>
-          <MarketSkeleton cardWidth={STUB_CARD_W} />
-          <MarketSkeleton cardWidth={STUB_CARD_W} />
+          <MarketSkeleton key="skeleton-1" cardWidth={STUB_CARD_W} />
+          <MarketSkeleton key="skeleton-2" cardWidth={STUB_CARD_W} />
         </ScrollView>
       ) : (
-        <FlatList
+        <FlashList
           key={activeTab}
           data={activeData}
-          keyExtractor={item => item.id}
+          keyExtractor={(item: any) => item.id}
           numColumns={2}
-          columnWrapperStyle={scr.colWrapper}
           contentContainerStyle={[scr.listPad, { paddingBottom: insets.bottom + 90 }]}
+          estimatedItemSize={250}
           showsVerticalScrollIndicator={false}
-          windowSize={5}
-          maxToRenderPerBatch={6}
-          initialNumToRender={6}
-          removeClippedSubviews
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#6366f1" colors={['#6366f1']} />
           }
           renderItem={activeRender}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
           onEndReached={activeTab === 'browse' ? loadMoreBrowse : undefined}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
@@ -1296,7 +1319,7 @@ export const MarketScreen: React.FC<MarketScreenProps> = ({ onMessagePress, isVi
       )}
     </View>
   );
-};
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -1336,14 +1359,32 @@ const scr = StyleSheet.create({
   },
   tabLabel: { fontSize: 12 },
 
-  catScroll: { marginBottom: 8 },
-  catChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    borderWidth: 1, borderRadius: 20,
-    paddingHorizontal: 11, paddingVertical: 5,
+  catScrollWrap: {
+    height: 48,
+    justifyContent: 'center',
   },
-  catChipEmoji: { fontSize: 12 },
-  catChipLabel: { fontSize: 12 },
+  catScroll: {
+    flexGrow: 0,
+    marginBottom: 4,
+  },
+  catScrollContent: {
+    paddingHorizontal: H_PAD,
+    gap: 7,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  catChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    height: 32,
+  },
+  catChipEmoji: { fontSize: 13 },
+  catChipLabel: { fontSize: 13 },
 
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',

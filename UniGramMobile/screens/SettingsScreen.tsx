@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { EditProfileModal } from './EditProfileModal';
+import { AdManagerScreen } from './AdManagerScreen';
 import { deleteUserAccount } from '../services/profiles';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
@@ -472,6 +473,7 @@ export const SettingsScreen: React.FC<Props> = ({
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
+  const [showAdManager, setShowAdManager] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const { showPopup } = usePopup();
@@ -687,6 +689,13 @@ export const SettingsScreen: React.FC<Props> = ({
               label="Major"
               sublabel={profile?.major ?? 'Not set'}
               onPress={() => setShowEditProfile(true)}
+            />
+            <Row
+              icon="megaphone-outline"
+              iconColor="#f59e0b"
+              label="Promote on Campus"
+              sublabel="Create and manage campus ad campaigns"
+              onPress={() => setShowAdManager(true)}
               noBorder
             />
           </Section>
@@ -737,6 +746,7 @@ export const SettingsScreen: React.FC<Props> = ({
         onProfileUpdated={onProfileUpdated}
       />
       <BlockedModal visible={showBlockedModal} profile={profile} onClose={() => setShowBlockedModal(false)} />
+      <AdManagerScreen visible={showAdManager} profile={profile} onClose={() => setShowAdManager(false)} />
     </Modal>
   );
 };

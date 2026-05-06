@@ -815,6 +815,8 @@ const ivStyles = StyleSheet.create({
 
 // Session-scoped cache so we never re-fetch AI context for a post we've already seen
 const _aiContextCache = new Map<string, AIContextResult>();
+// Shared cache for iTunes song preview URLs to avoid redundant fetches and reduce lag
+const _songUrlCache = new Map<string, string>();
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
 export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress, onPostPress }) => {
@@ -920,7 +922,35 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     } else {
       songPlayer.pause();
     }
-  }, [isActive]);
+  }, [isActive, songPlayer]);
+
+  // Proactive song pre-fetching: fetch the preview URL as soon as the post is mounted
+  // so it's ready by the time the user scrolls to it.
+  useEffect(() => {
+    if (post.song && !songPreviewUrl) {
+      const cached = _songUrlCache.get(post.song);
+      if (cached) {
+        setSongPreviewUrl(cached);
+      } else {
+        // We fetch even if not active, but with a small delay to prioritize more critical UI
+        const timer = setTimeout(() => {
+          fetch(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(post.song!)}&media=music&entity=song&limit=1`
+          )
+            .then(res => res.json())
+            .then(json => {
+              const url = json.results?.[0]?.previewUrl ?? null;
+              if (url) {
+                _songUrlCache.set(post.song!, url);
+                setSongPreviewUrl(url);
+              }
+            })
+            .catch(() => {});
+        }, 800); // 800ms delay to avoid flooding iTunes API during rapid scrolling
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [post.song]);
 
   useEffect(() => {
     if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
@@ -1353,7 +1383,14 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             aspectRatio={post.aspect_ratio}
           />
           {(post.type === 'video' || post.song) && (
-            <TouchableOpacity style={styles.muteOverlayBtn} onPress={() => setIsMuted?.(!isMuted)} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.muteOverlayBtn} 
+              onPress={() => {
+                selection();
+                setIsMuted?.(!isMuted);
+              }} 
+              activeOpacity={0.8}
+            >
               <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={16} color="#fff" />
             </TouchableOpacity>
           )}
@@ -1380,16 +1417,32 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
             </Animated.View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => onOpenComments?.(post.id, post.user_id)}>
+          <TouchableOpacity 
+            style={styles.actionBtn} 
+            onPress={() => {
+              selection();
+              onOpenComments?.(post.id, post.user_id);
+            }}
+          >
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowRepostSheet(true)}>
+          <TouchableOpacity 
+            style={styles.actionBtn} 
+            onPress={() => {
+              selection();
+              setShowRepostSheet(true);
+            }}
+          >
             <Ionicons name="repeat" size={25} color={reposted ? '#22c55e' : colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={async () => {
-            setShowShare(true);
-            try { await recordShare(post.id, post.user_id, currentUserId); } catch {}
-          }}>
+          <TouchableOpacity 
+            style={styles.actionBtn} 
+            onPress={async () => {
+              selection();
+              setShowShare(true);
+              try { await recordShare(post.id, post.user_id, currentUserId); } catch {}
+            }}
+          >
             <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
           </TouchableOpacity>
         </View>

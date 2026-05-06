@@ -47,9 +47,10 @@ interface Props {
   onShowPrivacy?: () => void;
   onShowTerms?: () => void;
   onShowGuidelines?: () => void;
+  refreshKey?: number;
 }
 
-export const ProfileScreen: React.FC<Props> = ({
+export const ProfileScreen = React.memo<Props>(({
   userId: propUserId,
   isOwn: propIsOwn,
   isVisible,
@@ -59,6 +60,7 @@ export const ProfileScreen: React.FC<Props> = ({
   onShowPrivacy,
   onShowTerms,
   onShowGuidelines,
+  refreshKey,
 }) => {
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
@@ -160,7 +162,7 @@ export const ProfileScreen: React.FC<Props> = ({
     }
   }, [propUserId, propIsOwn]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   useEffect(() => {
     if (isOwn) {
@@ -701,7 +703,7 @@ export const ProfileScreen: React.FC<Props> = ({
       />
     </View>
   );
-};
+});
 
 // ── Analytics helpers ─────────────────────────────────────────────────────────
 
