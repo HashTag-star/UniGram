@@ -362,7 +362,7 @@ function AppShell() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { setNotifBadge, setMessageBadge, setProfileRefreshKey, setFeedRefreshKey } = useAppState();
-  const { selection, medium, success } = useAppHaptics();
+  const haptics = useAppHaptics();
   const [session, setSession] = useState<any>(undefined);
   const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
   const [, startTransition] = useTransition();
@@ -423,9 +423,9 @@ function AppShell() {
     }, 1200); // Start preloading 1.2s after mount (likely after splash is gone)
 
     // Centralized haptic listeners for pre-emptive feedback
-    const hS = DeviceEventEmitter.addListener('haptic_selection', selection);
-    const hM = DeviceEventEmitter.addListener('haptic_medium', medium);
-    const hSu = DeviceEventEmitter.addListener('haptic_success', success);
+    const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
+    const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);
+    const hSu = DeviceEventEmitter.addListener('haptic_success', haptics.success);
 
     return () => {
       listener.subscription.unsubscribe();
@@ -435,7 +435,7 @@ function AppShell() {
       hM.remove();
       hSu.remove();
     };
-  }, [selection, medium, success]);
+  }, [haptics]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -483,13 +483,13 @@ function AppShell() {
   }, [session?.user?.id]);
 
   const handleTabChange = useCallback((tab: Tab) => {
-    selection(); // Immediate haptic feedback
+    haptics.selection(); // Immediate haptic feedback
     setActiveTabVisual(tab);
     setHideTabBar(false);
     setActiveTab(prev => { if (tab === 'reels') setPrevTab(prev); return tab; });
     if (tab !== 'profile') setViewedUserId(null);
     setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
-  }, [selection]);
+  }, [haptics]);
 
   const navigateToMessages = useCallback((convId: string, otherProfile: any) => {
     setInitialConv({ convId, otherProfile });

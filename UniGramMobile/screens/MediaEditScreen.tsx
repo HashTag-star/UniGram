@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Dimensions, TouchableOpacity,
   Image, ScrollView, TextInput, KeyboardAvoidingView,
-  Platform, Animated, PanResponder, Alert, StatusBar, FlatList
+  Platform, Animated, PanResponder, Alert, StatusBar, FlatList, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,7 +12,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { BlurView } from 'expo-blur';
 import { MusicPicker } from '../components/MusicPicker';
-import { SafeBlur } from './CreatePostModal';
+import { SafeBlur } from '../components/SafeBlur';
+import { SafeModules } from '../lib/SafeModules';
 
 const { width, height } = Dimensions.get('window');
 
@@ -60,6 +61,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
 
   const [showFilters, setShowFilters] = useState(false);
   const [showMusicPicker, setShowMusicPicker] = useState(false);
+  const [showCrop, setShowCrop] = useState(false);
   const [isAddingText, setIsAddingText] = useState(false);
   const [currentText, setCurrentText] = useState('');
 
@@ -156,6 +158,11 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
           <TouchableOpacity onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, showFilters && styles.activeTool]}>
             <Ionicons name="color-filter" size={26} color="#fff" />
           </TouchableOpacity>
+          {currentItem.type === 'image' && (
+            <TouchableOpacity onPress={() => setShowCrop(true)} style={styles.iconBtn}>
+              <Ionicons name="crop" size={26} color="#fff" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity 
             style={[styles.iconBtn, currentItem.music && { backgroundColor: colors.accent + '30' }]} 
             onPress={() => setShowMusicPicker(true)}
@@ -257,6 +264,18 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
           haptics.success();
         }}
       />
+
+      {showCrop && currentItem.type === 'image' && (
+        <CropModal 
+          uri={currentItem.uri}
+          onClose={() => setShowCrop(false)}
+          onCrop={(newUri) => {
+            updateCurrentItem({ uri: newUri });
+            setShowCrop(false);
+            haptics.success();
+          }}
+        />
+      )}
     </View>
   );
 };
@@ -407,4 +426,231 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 4,
   }
+});
+
+// ─── Flexible Crop Modal ──────────────────────────────────────────────────────
+
+const CropModal = ({ uri, onClose, onCrop }: { uri: string; onClose: () => void; onCrop: (uri: string) => void }) => {
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+  const [layoutSize, setLayoutSize] = useState({ w: 0, h: 0 });
+  
+  const boxX = useRef(new Animated.Value(50)).current;
+  const boxY = useRef(new Animated.Value(50)).current;
+  const boxW = useRef(new Animated.Value(200)).current;
+  const boxH = useRef(new Animated.Value(200)).current;
+
+  const [boxState, setBoxState] = useState({ x: 50, y: 50, w: 200, h: 200 });
+
+  useEffect(() => {
+    Image.getSize(uri, (w, h) => setImgSize({ w, h }));
+  }, [uri]);
+
+  const onLayout = (e: any) => {
+    const { width: lw, height: lh } = e.nativeEvent.layout;
+    setLayoutSize({ w: lw, h: lh });
+    // Default crop box: center 70%
+    const dw = lw * 0.7;
+    const dh = lh * 0.7;
+    const dx = (lw - dw) / 2;
+    const dy = (lh - dh) / 2;
+    boxX.setValue(dx);
+    boxY.setValue(dy);
+    boxW.setValue(dw);
+    boxH.setValue(dh);
+    setBoxState({ x: dx, y: dy, w: dw, h: dh });
+  };
+
+  const createResizer = (side: 'tl' | 'tr' | 'bl' | 'br') => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderMove: (_, gesture) => {
+      const { x, y, w, h } = boxState;
+      let nx = x, ny = y, nw = w, nh = h;
+      
+      if (side === 'tl') {
+        nx = Math.max(0, x + gesture.dx);
+        ny = Math.max(0, y + gesture.dy);
+        nw = Math.max(50, w - (nx - x));
+        nh = Math.max(50, h - (ny - y));
+      } else if (side === 'tr') {
+        ny = Math.max(0, y + gesture.dy);
+        nw = Math.max(50, w + gesture.dx);
+        nh = Math.max(50, h - (ny - y));
+      } else if (side === 'bl') {
+        nx = Math.max(0, x + gesture.dx);
+        nw = Math.max(50, w - (nx - x));
+        nh = Math.max(50, h + gesture.dy);
+      } else if (side === 'br') {
+        nw = Math.max(50, w + gesture.dx);
+        nh = Math.max(50, h + gesture.dy);
+      }
+      
+      // Boundary checks
+      if (nx + nw > layoutSize.w) nw = layoutSize.w - nx;
+      if (ny + nh > layoutSize.h) nh = layoutSize.h - ny;
+
+      boxX.setValue(nx);
+      boxY.setValue(ny);
+      boxW.setValue(nw);
+      boxH.setValue(nh);
+    },
+    onPanResponderRelease: () => {
+      setBoxState({
+        x: (boxX as any)._value,
+        y: (boxY as any)._value,
+        w: (boxW as any)._value,
+        h: (boxH as any)._value
+      });
+    }
+  });
+
+  const panResizer = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderMove: (_, gesture) => {
+      let nx = boxState.x + gesture.dx;
+      let ny = boxState.y + gesture.dy;
+      
+      nx = Math.max(0, Math.min(nx, layoutSize.w - boxState.w));
+      ny = Math.max(0, Math.min(ny, layoutSize.h - boxState.h));
+      
+      boxX.setValue(nx);
+      boxY.setValue(ny);
+    },
+    onPanResponderRelease: () => {
+      setBoxState(prev => ({
+        ...prev,
+        x: (boxX as any)._value,
+        y: (boxY as any)._value
+      }));
+    }
+  });
+
+  const handleApply = async () => {
+    if (!imgSize.w || !layoutSize.w) return;
+    
+    // Convert layout coords to actual image pixels
+    const scale = imgSize.w / layoutSize.w;
+    const crop = {
+      originX: boxState.x * scale,
+      originY: boxState.y * scale,
+      width: boxState.w * scale,
+      height: boxState.h * scale,
+    };
+
+    try {
+      const Manipulator = SafeModules.manipulator;
+      if (!Manipulator) {
+        Alert.alert('Module Missing', 'The cropping module is not loaded. Please restart your dev client or run "npx expo run:android" to rebuild.');
+        return;
+      }
+
+      const result = await Manipulator.manipulateAsync(
+        uri,
+        [{ crop }],
+        { compress: 0.9, format: Manipulator.SaveFormat.JPEG }
+      );
+      onCrop(result.uri);
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Crop Error', 'Failed to crop image');
+    }
+  };
+
+  const animatedStyle = {
+    transform: [{ translateX: boxX }, { translateY: boxY }],
+    width: boxW,
+    height: boxH,
+  };
+
+  return (
+    <Modal visible transparent animationType="fade">
+      <View style={cropStyles.container}>
+        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+        
+        <View style={cropStyles.header}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={cropStyles.btnText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={cropStyles.title}>Crop Image</Text>
+          <TouchableOpacity onPress={handleApply}>
+            <Text style={[cropStyles.btnText, { color: '#6366f1' }]}>Apply</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={cropStyles.cropArea} onLayout={onLayout}>
+          {layoutSize.w > 0 && (
+            <View style={{ width: layoutSize.w, height: layoutSize.h }}>
+              <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]} />
+              
+              <Animated.View style={[cropStyles.cropBox, animatedStyle]} {...panResizer.panHandlers}>
+                {/* Mask - showing original image through box */}
+                <View style={cropStyles.maskContainer}>
+                   <Image 
+                     source={{ uri }} 
+                     style={{ 
+                       width: layoutSize.w, 
+                       height: layoutSize.h,
+                       transform: [
+                         { translateX: Animated.multiply(boxX, -1) }, 
+                         { translateY: Animated.multiply(boxY, -1) }
+                       ]
+                     }} 
+                     resizeMode="contain" 
+                   />
+                </View>
+
+                {/* Handles */}
+                <View style={[cropStyles.handle, cropStyles.tl]} {...createResizer('tl').panHandlers} />
+                <View style={[cropStyles.handle, cropStyles.tr]} {...createResizer('tr').panHandlers} />
+                <View style={[cropStyles.handle, cropStyles.bl]} {...createResizer('bl').panHandlers} />
+                <View style={[cropStyles.handle, cropStyles.br]} {...createResizer('br').panHandlers} />
+                
+                {/* Grid */}
+                <View style={cropStyles.gridV} />
+                <View style={[cropStyles.gridV, { left: '66%' }]} />
+                <View style={cropStyles.gridH} />
+                <View style={[cropStyles.gridH, { top: '66%' }]} />
+              </Animated.View>
+            </View>
+          )}
+        </View>
+        
+        <View style={cropStyles.footer}>
+           <Text style={cropStyles.hint}>Drag handles to resize. Drag box to move.</Text>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+const cropStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)' },
+  header: { 
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20 
+  },
+  title: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  cropArea: { flex: 1, margin: 20, justifyContent: 'center', alignItems: 'center' },
+  cropBox: {
+    borderWidth: 2, borderColor: '#fff',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  maskContainer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+  },
+  handle: {
+    position: 'absolute', width: 30, height: 30,
+    backgroundColor: 'transparent',
+  },
+  tl: { top: -15, left: -15, borderTopWidth: 4, borderLeftWidth: 4, borderColor: '#fff' },
+  tr: { top: -15, right: -15, borderTopWidth: 4, borderRightWidth: 4, borderColor: '#fff' },
+  bl: { bottom: -15, left: -15, borderBottomWidth: 4, borderLeftWidth: 4, borderColor: '#fff' },
+  br: { bottom: -15, right: -15, borderBottomWidth: 4, borderRightWidth: 4, borderColor: '#fff' },
+  gridV: { position: 'absolute', top: 0, bottom: 0, left: '33%', width: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
+  gridH: { position: 'absolute', left: 0, right: 0, top: '33%', height: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
+  footer: { paddingBottom: 60, alignItems: 'center' },
+  hint: { color: 'rgba(255,255,255,0.6)', fontSize: 13 },
 });

@@ -26,14 +26,9 @@ import { useToast } from '../context/ToastContext';
 import { useTheme } from '../context/ThemeContext';
 import { getCaptionSuggestions, checkKeywordFilter, CaptionSuggestion } from '../services/aiEngine';
 import { getTrendingHashtags } from '../services/algorithm';
+import { MediaEditScreen } from './MediaEditScreen';
 
-export const SafeBlur = ({ intensity, tint, style, children }: any) => {
-  if (SafeModules.hasBlur()) {
-    const { BlurView } = require('expo-blur');
-    return <BlurView intensity={intensity} tint={tint} style={style}>{children}</BlurView>;
-  }
-  return <View style={[style, { backgroundColor: tint === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)' }]}>{children}</View>;
-};
+import { SafeBlur } from '../components/SafeBlur';
 
 const { width } = Dimensions.get('window');
 type PostType = 'post' | 'thread' | 'story' | 'reel';
@@ -72,7 +67,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { showToast } = useToast();
-  const [step, setStep] = useState<'type' | 'compose'>('type');
+  const [step, setStep] = useState<'type' | 'edit' | 'compose'>('type');
   const [postType, setPostType] = useState<PostType>(initialType ?? 'post');
   const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
@@ -124,8 +119,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
         if (preCapturedMedia[0].song) setSong(preCapturedMedia[0].song);
         if (preCapturedMedia[0].songPreviewUrl) setSongPreviewUrl(preCapturedMedia[0].songPreviewUrl);
-
-        setStep('compose');
+        setStep('edit');
       }
     }
   }, [visible, userId, preCapturedMedia, initialType]);
@@ -300,7 +294,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     if (!result.canceled && result.assets?.length > 0) {
       setMediaAssets(result.assets);
       setSelectedMediaIdx(0);
-      setStep('compose');
+      setStep('edit');
     }
   };
 
@@ -532,8 +526,20 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         style={[styles.container, { paddingTop: insets.top || 16 }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Header */}
-        <SafeBlur intensity={20} tint="dark" style={styles.header}>
+        {step === 'edit' && mediaAssets.length > 0 ? (
+          <MediaEditScreen 
+            items={mediaAssets.map(a => ({ uri: a.uri, type: (a.type === 'video' || (a as any).duration) ? 'video' : 'image' }))}
+            mode={postType.toUpperCase() as any}
+            onNext={(edited) => {
+              setMediaAssets(edited.map(e => ({ ...mediaAssets[0], uri: e.uri, type: e.type })));
+              setStep('compose');
+            }}
+            onCancel={() => setStep('type')}
+          />
+        ) : (
+          <>
+            {/* Header */}
+            <SafeBlur intensity={20} tint="dark" style={styles.header}>
           <TouchableOpacity
             onPress={step === 'compose' && postType !== 'thread' ? () => { setStep('type'); setMediaAssets([]); } : handleClose}
             style={styles.headerSide}
@@ -825,6 +831,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             <View style={styles.divider} />
           </ScrollView>
         )}
+      </>
+    )}
       </KeyboardAvoidingView>
 
       <MusicPicker

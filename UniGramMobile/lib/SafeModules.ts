@@ -25,6 +25,11 @@ export const SafeModules = {
     return !!NativeModules.ExpoHaptics;
   },
 
+  hasImageManipulator: () => {
+    // expo-image-manipulator check
+    return !!NativeModules.ExpoImageManipulator;
+  },
+
   // Safe library getters
   get thumbnails() {
     try {
@@ -45,6 +50,13 @@ export const SafeModules = {
       if (this.hasBlur()) return require('expo-blur');
     } catch (e) { /* ignore */ }
     return null;
+  },
+
+  get manipulator() {
+    try {
+      if (this.hasImageManipulator()) return require('expo-image-manipulator');
+    } catch (e) { /* ignore */ }
+    return null;
   }
 };
 
@@ -56,5 +68,6 @@ export const logModuleStatus = () => {
   console.log('Video (New):', SafeModules.hasVideo() ? '✅' : '❌ (Warning: expo-av fallback removed)');
   console.log('Thumbnails:', SafeModules.hasThumbnails() ? '✅' : '❌ (Skipping)');
   console.log('Blur:', SafeModules.hasBlur() ? '✅' : '❌ (Fallback to View)');
+  console.log('Image Manipulator:', SafeModules.hasImageManipulator() ? '✅' : '❌');
   console.log('---------------------------');
 };
