@@ -57,7 +57,7 @@ import { enqueueInteraction, flushInteractions } from '../hooks/usePostTracker';
 import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { isProActive } from '../services/pro';
-import { getActiveFeedAds, recordCampusAdImpression } from '../services/campusAds';
+import { getActiveFeedAds, getActiveAdsForPlacement, recordCampusAdImpression, recordCampusAdClick, adFrequencyInterval } from '../services/campusAds';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -417,9 +417,13 @@ const StoryViewer: React.FC<{
 
   useEffect(() => {
     if (!visible || !story) return;
-    markStoryViewed(story.id, currentUserId).catch(() => {});
-    onViewed(story.id);
-    fetchStats();
+    if (!story._isAd) {
+      markStoryViewed(story.id, currentUserId).catch(() => {});
+      onViewed(story.id);
+      fetchStats();
+    } else {
+      recordCampusAdImpression(story.ad.id).catch(() => {});
+    }
     startProgress();
     return () => { progressAnim.current?.stop(); };
   }, [story?.id, visible]);
@@ -494,8 +498,9 @@ const StoryViewer: React.FC<{
 
   if (!visible || !group || !story) return null;
 
-  const isOwner = group.profile.id === currentUserId;
-  const isReshared = story.caption?.startsWith('Shared from @') ?? false;
+  const isAdStory = !!(story._isAd);
+  const isOwner = !isAdStory && group.profile.id === currentUserId;
+  const isReshared = !isAdStory && (story.caption?.startsWith('Shared from @') ?? false);
   const originalUsername = story.caption?.match(/^Shared from @([\w.]+)/)?.[1] ?? null;
   const isVideoStory = !!(story.media_url?.match(/\.(mp4|mov|m3u8)/i));
 
@@ -506,7 +511,17 @@ const StoryViewer: React.FC<{
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={[sv.bg, isReshared && { backgroundColor: '#0f0f0f' }]}>
         <StatusBar hidden />
-        {!isReshared && (
+        {isAdStory && story.ad?.media_url && (
+          <Image source={{ uri: story.ad.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        )}
+        {isAdStory && !story.ad?.media_url && (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1e1b4b', alignItems: 'center', justifyContent: 'center', padding: 30 }]}>
+            <Ionicons name="megaphone" size={48} color="#6366f1" />
+            {story.ad?.headline ? <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'center', marginTop: 16 }}>{story.ad.headline}</Text> : null}
+            {story.ad?.body ? <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 15, textAlign: 'center', marginTop: 8, lineHeight: 22 }}>{story.ad.body}</Text> : null}
+          </View>
+        )}
+        {!isAdStory && !isReshared && (
           <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
         )}
         {isReshared && (
@@ -546,20 +561,39 @@ const StoryViewer: React.FC<{
 
         <View style={[sv.header, { top: insets.top + 20 }]}>
           <View style={sv.headerLeft}>
-            <TouchableOpacity onPress={() => { setPaused(true); onUserPress?.(group.profile); }}>
-              {group.profile.avatar_url
-                ? <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
-                : <View style={[sv.avatar, { backgroundColor: '#333' }]} />}
+            <TouchableOpacity onPress={() => { if (!isAdStory) { setPaused(true); onUserPress?.(group.profile); } }}>
+              {isAdStory ? (
+                <View style={[sv.avatar, { backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="megaphone" size={18} color="#fff" />
+                </View>
+              ) : group.profile.avatar_url ? (
+                <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
+              ) : (
+                <View style={[sv.avatar, { backgroundColor: '#333' }]} />
+              )}
             </TouchableOpacity>
             <View style={{ marginLeft: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={sv.username}>{isOwner ? 'Your story' : group.profile.username}</Text>
-                <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
+                <Text style={sv.username}>
+                  {isAdStory
+                    ? (story.ad?.profiles?.full_name || story.ad?.profiles?.username || story.ad?.name || 'Sponsored')
+                    : isOwner ? 'Your story' : group.profile.username}
+                </Text>
+                {isAdStory ? (
+                  <View style={{ backgroundColor: 'rgba(99,102,241,0.8)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }}>
+                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>AD</Text>
+                  </View>
+                ) : (
+                  <Text style={sv.time}>{timeAgo(story.created_at)}</Text>
+                )}
               </View>
-              {isReshared && (
+              {isAdStory && (
+                <Text style={[sv.time, { marginTop: 2 }]}>Sponsored</Text>
+              )}
+              {!isAdStory && isReshared && (
                 <Text style={sv.reshareSubtitle}>Watch full {isVideoStory ? 'reel' : 'post'}</Text>
               )}
-              {!isReshared && story.song && (
+              {!isAdStory && !isReshared && story.song && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
                   <Ionicons name="musical-note" size={10} color="#fff" />
                   <Text style={sv.songText} numberOfLines={1}>{story.song}</Text>
@@ -568,9 +602,11 @@ const StoryViewer: React.FC<{
             </View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={12}>
-              <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
-            </TouchableOpacity>
+            {!isAdStory && (
+              <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={12}>
+                <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={onClose} style={sv.iconBtn} hitSlop={12}>
               <Ionicons name="close" size={26} color="#fff" />
             </TouchableOpacity>
@@ -602,7 +638,7 @@ const StoryViewer: React.FC<{
           </View>
         )}
 
-        {story.link_url ? (
+        {!isAdStory && story.link_url ? (
           <TouchableOpacity
             style={[sv.visitLinkBtn, { bottom: insets.bottom + 88 }]}
             onPress={() => Linking.openURL(story.link_url)}
@@ -615,7 +651,19 @@ const StoryViewer: React.FC<{
         ) : null}
 
         <View style={[sv.replyRow, { paddingBottom: insets.bottom + 16 }]}>
-          {!isOwner ? (
+          {isAdStory ? (
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#6366f1', borderRadius: 14, paddingVertical: 13 }}
+              onPress={() => {
+                recordCampusAdClick(story.ad.id).catch(() => {});
+                if (story.ad?.link) Linking.openURL(story.ad.link).catch(() => {});
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{story.ad?.cta || 'Learn More'}</Text>
+              <Ionicons name="arrow-forward" size={15} color="#fff" />
+            </TouchableOpacity>
+          ) : !isOwner ? (
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
               <BlurView intensity={25} tint="dark" style={sv.replyBlurPill}>
                 <TextInput
@@ -894,6 +942,7 @@ export const FeedScreen = React.memo(({
   const [followCount, setFollowCount] = useState(999);
   const [campusEvents, setCampusEvents] = useState<CampusEvent[]>([]);
   const [feedAds, setFeedAds] = useState<any[]>([]);
+  const [storyAds, setStoryAds] = useState<any[]>([]);
   const adImpressionsRef = useRef(new Set<string>());
   const pageRef = useRef(0);
   const lastLoadedRef = useRef(0);
@@ -1062,8 +1111,9 @@ export const FeedScreen = React.memo(({
         getCampusEvents(prof.university, 4).then(setCampusEvents).catch(() => {});
       }
 
-      // Fire-and-forget: load sponsored ads for feed injection
+      // Fire-and-forget: load sponsored ads for feed + story injection
       getActiveFeedAds(prof?.university ?? null, user.id).then(setFeedAds).catch(() => {});
+      getActiveAdsForPlacement('stories', prof?.university ?? null, user.id).then(setStoryAds).catch(() => {});
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
@@ -1357,8 +1407,9 @@ export const FeedScreen = React.memo(({
         const ev = campusEvents[eventIdx++];
         items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
       }
-      // Inject an ad after post index 3, then every 5 posts thereafter
-      if (feedAds.length > 0 && (i === 3 || (i > 3 && (i - 3) % 5 === 0))) {
+      // Inject an ad after post index 3, then every N posts (N = budget-based interval)
+      const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60) : 5;
+      if (feedAds.length > 0 && (i === 3 || (i > 3 && (i - 3) % feedAdInterval === 0))) {
         const ad = feedAds[adIdx % feedAds.length];
         adIdx++;
         items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
@@ -1368,6 +1419,27 @@ export const FeedScreen = React.memo(({
   }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds]);
 
   useEffect(() => { feedItemsRef.current = feedItems; }, [feedItems]);
+
+  // Inject sponsored story "groups" between real story groups
+  const storyGroupsWithAds = React.useMemo(() => {
+    if (!storyAds.length || storyGroups.length < 2) return storyGroups;
+    const interval = adFrequencyInterval(storyAds[0]?.budget ?? 60);
+    const result = [...storyGroups];
+    let adIdx = 0;
+    // Insert from end so earlier splice positions stay valid
+    for (let i = result.length - 1; i >= 1; i--) {
+      if (i % interval === 0) {
+        const ad = storyAds[adIdx % storyAds.length];
+        adIdx++;
+        result.splice(i, 0, {
+          _isAdGroup: true,
+          profile: { id: `__story_ad_${ad.id}__`, username: ad.profiles?.full_name || ad.name || 'Sponsored', avatar_url: ad.profiles?.avatar_url ?? null },
+          stories: [{ id: `__story_ad_story_${ad.id}__`, _isAd: true, ad, created_at: ad.created_at }],
+        });
+      }
+    }
+    return result;
+  }, [storyGroups, storyAds]);
 
   const handleYourStory = async () => {
     if (onCreateStory) { onCreateStory(); return; }
@@ -1696,7 +1768,7 @@ export const FeedScreen = React.memo(({
         <StoryViewer
           visible
           groupIndex={storyIdx}
-          storyGroups={storyGroups}
+          storyGroups={storyGroupsWithAds}
           currentUserId={currentUserId}
           onClose={() => setStoryIdx(null)}
           onViewed={id => setViewedIds(prev => {
@@ -1704,6 +1776,7 @@ export const FeedScreen = React.memo(({
             return prev;
           })}
           onDeleted={id => {
+            if (id.startsWith('__story_ad_')) return; // synthetic ad story
             setStoryGroups(prev => prev.map(g => ({
               ...g,
               stories: g.stories.filter((s: any) => s.id !== id)

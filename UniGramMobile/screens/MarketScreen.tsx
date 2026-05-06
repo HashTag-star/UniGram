@@ -50,6 +50,8 @@ import { type BoostType, BOOST_TIERS } from '../services/payments';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
+import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
+import { SponsoredAdCard } from '../components/SponsoredAdCard';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -861,6 +863,8 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
   const insets = useSafeAreaInsets();
 
   const [currentUserId, setCurrentUserId] = useState('');
+  const [marketAds, setMarketAds] = useState<any[]>([]);
+  const adImpressionsRef = useRef(new Set<string>());
   const [activeTab, setActiveTab] = useState<Tab>('browse');
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
@@ -905,7 +909,10 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     setBrowseLoading(true);
     try {
       const cat = category === 'all' ? undefined : category;
-      const raw = await getMarketItems(cat, debouncedSearch, PAGE_SIZE, 0);
+      const [raw, profData] = await Promise.all([
+        getMarketItems(cat, debouncedSearch, PAGE_SIZE, 0),
+        supabase.from('profiles').select('university').eq('id', currentUserId).single().then(r => r.data),
+      ]);
       const data = sortByBoost(raw);
       setBrowseItems(data);
       setBrowseOffset(raw.length);
@@ -918,6 +925,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
         setSavedIds(savedSet);
         _cachedSavedIds = savedSet;
       }
+      getActiveAdsForPlacement('market', profData?.university ?? null, currentUserId).then(setMarketAds).catch(() => {});
     } catch (e: any) {
       showToast(e?.message || 'Failed to load market.', 'error');
     } finally {
@@ -1082,10 +1090,27 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
   }, []);
 
   // ── Render cards ──
-  const renderBrowseCard = useCallback(({ item }: { item: MarketItem }) => (
-    <ItemCard item={item} currentUserId={currentUserId} isSaved={savedIds.has(item.id)}
-      onToggleSave={handleToggleSave} onPress={setSelectedItem} />
-  ), [currentUserId, savedIds, handleToggleSave]);
+  const renderBrowseCard = useCallback(({ item }: { item: any }) => {
+    if (item._type === 'sponsored_ad') {
+      return (
+        <View style={{ width: '100%' }}>
+          <SponsoredAdCard
+            ad={item.ad}
+            onImpression={(adId) => {
+              if (!adImpressionsRef.current.has(adId)) {
+                adImpressionsRef.current.add(adId);
+                recordCampusAdImpression(adId).catch(() => {});
+              }
+            }}
+          />
+        </View>
+      );
+    }
+    return (
+      <ItemCard item={item} currentUserId={currentUserId} isSaved={savedIds.has(item.id)}
+        onToggleSave={handleToggleSave} onPress={setSelectedItem} />
+    );
+  }, [currentUserId, savedIds, handleToggleSave]);
 
   const renderSavedCard = useCallback(({ item }: { item: MarketItem }) => (
     <ItemCard item={item} currentUserId={currentUserId} isSaved
@@ -1098,7 +1123,24 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
       onMarkSold={handleSoldFromCard} onDelete={handleDeleteFromCard} onEdit={handleOpenEdit} />
   ), [currentUserId, savedIds, handleToggleSave, handleSoldFromCard, handleDeleteFromCard, handleOpenEdit]);
 
-  const activeData   = activeTab === 'browse' ? browseItems : activeTab === 'saved' ? savedItems : myItems;
+  // Inject sponsored ads into the browse grid (every N items, first at index 4)
+  const mixedBrowseItems = React.useMemo(() => {
+    if (!marketAds.length || activeTab !== 'browse') return browseItems;
+    const interval = adFrequencyInterval(marketAds[0]?.budget ?? 60);
+    const result: any[] = [];
+    let adIdx = 0;
+    browseItems.forEach((item, i) => {
+      result.push(item);
+      if (i === 3 || (i > 3 && (i - 3) % interval === 0)) {
+        const ad = marketAds[adIdx % marketAds.length];
+        adIdx++;
+        result.push({ id: `__market_ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+      }
+    });
+    return result;
+  }, [browseItems, marketAds, activeTab]);
+
+  const activeData   = activeTab === 'browse' ? mixedBrowseItems : activeTab === 'saved' ? savedItems : myItems;
   const activeRender = activeTab === 'browse' ? renderBrowseCard : activeTab === 'saved' ? renderSavedCard : renderMyCard;
   const isInitialLoading =
     (activeTab === 'browse' && browseLoading && browseItems.length === 0) ||
@@ -1248,6 +1290,9 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
           data={activeData}
           keyExtractor={(item: any) => item.id}
           numColumns={2}
+          overrideItemLayout={(layout: any, item: any) => {
+            if (item._type === 'sponsored_ad') layout.span = 2;
+          }}
           contentContainerStyle={[scr.listPad, { paddingBottom: insets.bottom + 90 }]}
           estimatedItemSize={250}
           showsVerticalScrollIndicator={false}

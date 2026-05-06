@@ -15,6 +15,8 @@ import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
 import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
+import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
+import { ReelAdCard } from '../components/ReelAdCard';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
@@ -1022,22 +1024,32 @@ export const ReelsScreen: React.FC<{
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [reelAds, setReelAds] = useState<any[]>([]);
+  const adImpressionsRef = useRef(new Set<string>());
+  const reelsListRef = useRef<any>(null);
 
-  // Build mixed feed: inject live cards every LIVE_INTERVAL reels
+  // Build mixed feed: inject live cards + sponsored reel ads
   const LIVE_INTERVAL = 5;
   const reels = React.useMemo(() => {
-    if (!liveSessions.length) return rawReels;
     const result: any[] = [];
     let liveIdx = 0;
+    let adIdx = 0;
+    // Derive inject interval from the first ad's budget (or default 6)
+    const adInterval = reelAds.length > 0 ? adFrequencyInterval(reelAds[0].budget ?? 60) : 6;
+
     rawReels.forEach((reel, i) => {
       result.push(reel);
-      // Insert a live card after every LIVE_INTERVAL reels (if sessions remain)
-      if ((i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
+      if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
+      }
+      if (reelAds.length > 0 && (i + 1) % adInterval === 0) {
+        const ad = reelAds[adIdx % reelAds.length];
+        adIdx++;
+        result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
       }
     });
     return result;
-  }, [rawReels, liveSessions]);
+  }, [rawReels, liveSessions, reelAds]);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
   // 65 %: new reel is clearly dominant on screen before we switch active state.
@@ -1063,7 +1075,7 @@ export const ReelsScreen: React.FC<{
       if (!user) return;
       setCurrentUserId(user.id);
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-      const [reelsData, likedData, likedPostData, followingData, liveData] = await Promise.all([
+      const [reelsData, likedData, likedPostData, followingData, liveData, profData] = await Promise.all([
         getPersonalizedReels(user.id, 10, 0),
         getLikedReelIds(user.id),
         getLikedPostIds(user.id),
@@ -1073,12 +1085,14 @@ export const ReelsScreen: React.FC<{
           .select('*, profiles(id, username, avatar_url, university)')
           .eq('status', 'live')
           .gt('created_at', twelveHoursAgo)
-          .neq('creator_id', user.id), // don't show your own live in reels
+          .neq('creator_id', user.id),
+        supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data),
       ]);
       setLikedIds(new Set(likedData));
       setLikedPostIds(new Set(likedPostData));
       setFollowingIds(new Set(followingData.map((p: any) => p.id)));
       setLiveSessions(liveData.data ?? []);
+      getActiveAdsForPlacement('reels', profData?.university ?? null, user.id).then(setReelAds).catch(() => {});
       setRawReels(prev => {
         const combined = prev.length ? [...prev, ...reelsData.filter((r: any) => !prev.some(p => p.id === r.id))] : reelsData;
         setOffset(reelsData.length);
@@ -1182,8 +1196,9 @@ export const ReelsScreen: React.FC<{
         onLayout={e => setContainerHeight(e.nativeEvent.layout.height)}
       >
         <FlatList
+          ref={reelsListRef}
           data={reels}
-          keyExtractor={r => `${r._type === 'live' ? 'live-' : ''}${r.id}`}
+          keyExtractor={r => `${r._type === 'live' ? 'live-' : r._type === 'reel_ad' ? 'ad-' : ''}${r.id}`}
           renderItem={({ item, index }) => {
             if (item._type === 'live') {
               return (
@@ -1191,6 +1206,24 @@ export const ReelsScreen: React.FC<{
                   session={item}
                   itemHeight={containerHeight}
                   onJoin={(sessionId) => setActiveLiveSessionId(sessionId)}
+                />
+              );
+            }
+            if (item._type === 'reel_ad') {
+              return (
+                <ReelAdCard
+                  ad={item.ad}
+                  isActive={index === activeIndex && isAppActive}
+                  itemHeight={containerHeight}
+                  onSkip={() => {
+                    try { reelsListRef.current?.scrollToIndex({ index: index + 1, animated: true }); } catch {}
+                  }}
+                  onImpression={(adId) => {
+                    if (!adImpressionsRef.current.has(adId)) {
+                      adImpressionsRef.current.add(adId);
+                      recordCampusAdImpression(adId).catch(() => {});
+                    }
+                  }}
                 />
               );
             }
