@@ -23,7 +23,7 @@ async function applyAdPayment(supabase: any, payment: any) {
   const endDate   = new Date(Date.now() + durationDays * 86_400_000).toISOString();
   await supabase
     .from('campus_ads')
-    .update({ start_date: startDate, end_date: endDate })
+    .update({ status: 'active', start_date: startDate, end_date: endDate })
     .eq('id', payment.product_id);
 }
 

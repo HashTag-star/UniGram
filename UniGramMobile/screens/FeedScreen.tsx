@@ -57,6 +57,8 @@ import { enqueueInteraction, flushInteractions } from '../hooks/usePostTracker';
 import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { isProActive } from '../services/pro';
+import { getActiveFeedAds, recordCampusAdImpression } from '../services/campusAds';
+import { SponsoredAdCard } from '../components/SponsoredAdCard';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
@@ -891,6 +893,8 @@ export const FeedScreen = React.memo(({
   const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
   const [followCount, setFollowCount] = useState(999);
   const [campusEvents, setCampusEvents] = useState<CampusEvent[]>([]);
+  const [feedAds, setFeedAds] = useState<any[]>([]);
+  const adImpressionsRef = useRef(new Set<string>());
   const pageRef = useRef(0);
   const lastLoadedRef = useRef(0);
   const appStateRef = useRef(AppState.currentState);
@@ -1057,6 +1061,9 @@ export const FeedScreen = React.memo(({
       if ((fc ?? 999) < 5 && prof?.university) {
         getCampusEvents(prof.university, 4).then(setCampusEvents).catch(() => {});
       }
+
+      // Fire-and-forget: load sponsored ads for feed injection
+      getActiveFeedAds(prof?.university ?? null, user.id).then(setFeedAds).catch(() => {});
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
@@ -1331,12 +1338,13 @@ export const FeedScreen = React.memo(({
 
   const onRefresh = handleRefresh;
 
-  // Inject reel strip (after 3rd post) and suggestion cards (after 8th post)
+  // Inject reel strip (after 3rd post), suggestion cards (after 8th post), and sponsored ads
   const feedItems = React.useMemo(() => {
     if (!posts.length) return posts;
     const items: any[] = [];
     const eventSlots = followCount < 5 ? [1, 4, 8] : [];
     let eventIdx = 0;
+    let adIdx = 0;
     posts.forEach((p, i) => {
       items.push(p);
       if (i === 2 && previewReels.length > 0) {
@@ -1349,9 +1357,15 @@ export const FeedScreen = React.memo(({
         const ev = campusEvents[eventIdx++];
         items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
       }
+      // Inject an ad after post index 3, then every 5 posts thereafter
+      if (feedAds.length > 0 && (i === 3 || (i > 3 && (i - 3) % 5 === 0))) {
+        const ad = feedAds[adIdx % feedAds.length];
+        adIdx++;
+        items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+      }
     });
     return items;
-  }, [posts, previewReels, suggestedUsers, campusEvents, followCount]);
+  }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds]);
 
   useEffect(() => { feedItemsRef.current = feedItems; }, [feedItems]);
 
@@ -1590,6 +1604,19 @@ export const FeedScreen = React.memo(({
           }
           if (item._type === 'campus_event') {
             return <CampusEventCard event={item.event} />;
+          }
+          if (item._type === 'sponsored_ad') {
+            return (
+              <SponsoredAdCard
+                ad={item.ad}
+                onImpression={(adId) => {
+                  if (!adImpressionsRef.current.has(adId)) {
+                    adImpressionsRef.current.add(adId);
+                    recordCampusAdImpression(adId).catch(() => {});
+                  }
+                }}
+              />
+            );
           }
           return (
             <FeedPost

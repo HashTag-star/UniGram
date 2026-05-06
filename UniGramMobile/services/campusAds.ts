@@ -112,6 +112,32 @@ export async function openAdCheckout(
   }
 }
 
+export async function getActiveFeedAds(university: string | null, userId: string): Promise<any[]> {
+  // RLS returns: active ads for everyone + all of the owner's own ads regardless of status
+  const { data } = await supabase
+    .from('campus_ads')
+    .select('*, profiles:user_id(id, username, full_name, avatar_url)')
+    .contains('placements', ['feed'])
+    .order('created_at', { ascending: false })
+    .limit(15);
+
+  if (!data) return [];
+
+  return (data as any[])
+    .map(a => {
+      if (a.status === 'active') return a;
+      // Creator's own non-active ads shown as a preview so they can see how it looks
+      if (a.user_id === userId) return { ...a, _isPreview: true };
+      return null;
+    })
+    .filter((a): a is any => {
+      if (!a) return false;
+      // University targeting: skip ads aimed at a different campus
+      if (a.university && university && a.university !== university) return false;
+      return true;
+    });
+}
+
 export async function recordCampusAdImpression(adId: string): Promise<void> {
   await supabase.rpc('record_campus_ad_impression', { p_ad_id: adId });
 }
