@@ -195,8 +195,7 @@ const VideoPost: React.FC<{
 }> = React.memo(({ uri, isMuted, isActive, aspectRatio }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
-    p.muted = isMuted ?? true; // default muted so we never steal focus on mount
-    // Start mixing — won't interrupt background music until user explicitly unmutes
+    p.muted = isMuted ?? true;
     p.audioMixingMode = 'mixWithOthers';
     if (isActive) p.play();
   });
@@ -204,8 +203,6 @@ const VideoPost: React.FC<{
   useEffect(() => {
     if (!player) return;
     player.muted = isMuted ?? true;
-    // When user unmutes: duck (lower) background music instead of killing it.
-    // When muted again: go back to silent mixing so background music resumes at full volume.
     player.audioMixingMode = isMuted !== false ? 'mixWithOthers' : 'duckOthers';
   }, [player, isMuted]);
 
@@ -215,12 +212,13 @@ const VideoPost: React.FC<{
     else player.pause();
   }, [player, isActive]);
 
-  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : width;
+  // Premium Height: 4:5 is ideal for portrait (IG standard), but we allow up to 1.35x width
+  const containerHeight = aspectRatio 
+    ? Math.min(width * 1.45, width / aspectRatio) 
+    : width;
 
   return (
-    <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
-      {/* Dark gradient background — keeps the frame filled behind letterbox bars */}
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111' }]} />
+    <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#000' }}>
       {!isActive && (
         <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
           <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
@@ -230,7 +228,7 @@ const VideoPost: React.FC<{
         <VideoView
           player={player}
           style={StyleSheet.absoluteFill}
-          contentFit="contain"
+          contentFit="cover"
           nativeControls={false}
         />
       )}
@@ -239,6 +237,7 @@ const VideoPost: React.FC<{
 });
 
 // ─── Post Meta Cycler ─────────────────────────────────────────────────────────
+
 const PostMetaCycler: React.FC<{ location?: string; song?: string; onSongPress?: () => void; onLocationPress?: () => void }> = React.memo(({ location, song, onSongPress, onLocationPress }) => {
   const { colors } = useTheme();
   const [index, setIndex] = useState(0);
@@ -295,12 +294,15 @@ const MediaCarousel: React.FC<{
 }> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive, aspectRatio }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentIdxRef = useRef(0);
-  // Adaptive height: respect aspect ratio, cap portrait at 4:5 (Instagram standard)
-  const containerHeight = aspectRatio ? Math.min(width * 1.25, width / aspectRatio) : width;
+  
+  // Premium Height: 4:5 is ideal for portrait (IG standard), but we allow up to 1.45x width for immersion
+  // If no aspect ratio provided, default to 1:1 (square)
+  const containerHeight = aspectRatio 
+    ? Math.min(width * 1.45, width / aspectRatio) 
+    : width;
 
   // Gesture State
   const isSwiping = useSharedValue(false);
-  const translateX = useSharedValue(0);
 
   const tapGesture = Gesture.Tap()
     .numberOfTaps(1)
@@ -319,7 +321,7 @@ const MediaCarousel: React.FC<{
   const composedGesture = Gesture.Exclusive(doubleTapGesture, tapGesture);
 
   return (
-    <View style={{ height: containerHeight }}>
+    <View style={{ height: containerHeight, backgroundColor: '#000' }}>
       <FlatList
         data={mediaUrls}
         horizontal
@@ -356,22 +358,11 @@ const MediaCarousel: React.FC<{
               {type === 'video' ? (
                 <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={aspectRatio} />
               ) : (
-                // Blurred cover background + sharp contain foreground
-                // Shows the full image without cropping while filling the frame
-                <View style={{ width: '100%', height: '100%' }}>
-                  <Image
-                    source={{ uri: item }}
-                    style={StyleSheet.absoluteFill}
-                    resizeMode="cover"
-                    blurRadius={22}
-                  />
-                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.28)' }]} />
-                  <CachedImage
-                    uri={item}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode="contain"
-                  />
-                </View>
+                <CachedImage
+                  uri={item}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover" // 'cover' provides the premium, immersive edge-to-edge feel
+                />
               )}
             </View>
           </GestureDetector>
@@ -1518,22 +1509,26 @@ const styles = StyleSheet.create({
   postCard: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 8, overflow: 'hidden' },
   postHeader: { 
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
-    paddingHorizontal: 12, height: 56, backgroundColor: 'transparent' 
+    paddingHorizontal: 12, height: 60, backgroundColor: 'transparent' 
   },
   postUserRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatarRing: { width: 42, height: 42, borderRadius: 21, padding: 2, backgroundColor: '#ff6b35', overflow: 'hidden' },
-  postAvatar: { width: 38, height: 38, borderRadius: 19 },
-  postUsername: { fontSize: 13, fontWeight: 'bold', color: '#fff' },
-  postMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 },
-  postMedia: { height: 360, backgroundColor: '#111' },
+  avatarRing: { 
+    width: 38, height: 38, borderRadius: 19, padding: 1.5, 
+    backgroundColor: '#ff6b35', overflow: 'hidden' 
+  },
+  postAvatar: { width: 35, height: 35, borderRadius: 17.5 },
+  postUsername: { fontSize: 13.5, fontWeight: '700', color: '#fff', letterSpacing: -0.1 },
+  postMeta: { fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 0.5 },
+  postMedia: { height: 400, backgroundColor: '#111' },
   videoPlayOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: 'rgba(0,0,0,0.15)',
   },
   heartOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center', justifyContent: 'center',
+    zIndex: 50,
   },
   threadBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingVertical: 6 },
   threadLabel: { fontSize: 10, color: 'rgba(255,255,255,0.3)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
@@ -1549,15 +1544,15 @@ const styles = StyleSheet.create({
   threadCardMore: { fontSize: 14, color: '#6366f1', fontWeight: '600', marginTop: 4 },
   repostBanner: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingTop: 4, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth },
   repostBannerText: { fontSize: 12, fontWeight: '500' },
-  postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 6 },
-  actionBtn: { padding: 6 },
-  postInfo: { paddingHorizontal: 14, paddingBottom: 14 },
-  likesText: { fontSize: 13, fontWeight: 'bold' },
-  captionText: { fontSize: 13, lineHeight: 18, marginBottom: 4, marginTop: 2 },
-  timeText: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+  postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 8 },
+  actionBtn: { padding: 4 },
+  postInfo: { paddingHorizontal: 14, paddingBottom: 16 },
+  likesText: { fontSize: 13, fontWeight: '700' },
+  captionText: { fontSize: 13.5, lineHeight: 19, marginBottom: 4, marginTop: 3 },
+  timeText: { fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5, marginTop: 6 },
   carouselIndicator: {
     position: 'absolute', top: 12, right: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12,
     paddingHorizontal: 8, paddingVertical: 4,
   },
   indicatorText: { color: '#fff', fontSize: 10, fontWeight: '700' },
@@ -1568,9 +1563,9 @@ const styles = StyleSheet.create({
   dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.4)' },
   dotActive: { backgroundColor: '#fff', width: 12 },
   muteOverlayBtn: {
-    position: 'absolute', bottom: 40, right: 12,
-    backgroundColor: 'rgba(0,0,0,0.5)', width: 28, height: 28,
-    borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    position: 'absolute', bottom: 12, right: 12,
+    backgroundColor: 'rgba(0,0,0,0.6)', width: 26, height: 26,
+    borderRadius: 13, alignItems: 'center', justifyContent: 'center',
     zIndex: 10,
   },
 });

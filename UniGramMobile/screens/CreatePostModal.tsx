@@ -465,6 +465,14 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           postData.media_urls = uris;
           postData.song = song || null;
           postData.location = location || null;
+          
+          // Save aspect ratio for immersive feed layout
+          if (mediaAssets.length > 0) {
+            const { width: w, height: h } = mediaAssets[0];
+            if (w && h) {
+              postData.aspect_ratio = parseFloat((w / h).toFixed(4));
+            }
+          }
         }
 
         const { error: dbError } = await supabase
