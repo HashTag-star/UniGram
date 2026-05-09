@@ -948,6 +948,18 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         pointerEvents="none"
       />
 
+      {/* Top bar - back button only */}
+      <View style={[styles.topBar, { top: insets.top + 4, zIndex: 50 }]}>
+        <TouchableOpacity
+          onPress={onBack}
+          style={[styles.topBarBtn, !onBack && { opacity: 0 }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          disabled={!onBack}
+        >
+          <Ionicons name="arrow-back" size={22} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
       {/* Right actions */}
       <Animated.View style={[skeletonStyles.rightActions, { bottom: COMMENT_BAR_HEIGHT + insets.bottom + 80, opacity }]}>
         {[{ sz: 30, w: 32 }, { sz: 28, w: 28 }, { sz: 26, w: 26 }, { sz: 24, w: 0 }, { sz: 24, w: 0 }].map((item, i) => (
@@ -1087,7 +1099,7 @@ export const ReelsScreen: React.FC<{
           .eq('status', 'live')
           .gt('created_at', twelveHoursAgo)
           .neq('creator_id', user.id),
-        supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data).catch(() => null),
+        supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data, () => null),
       ]);
       setLikedIds(new Set(likedData));
       setLikedPostIds(new Set(likedPostData));

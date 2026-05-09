@@ -174,18 +174,41 @@ const ReelVideoLayer: React.FC<{ videoUrl: string }> = ({ videoUrl }) => {
   );
 };
 
-export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => (
-  <View style={StyleSheet.absoluteFill}>
-    {reel.thumbnail_url ? (
-      <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
-    ) : (
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-        <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.15)" />
-      </View>
-    )}
-    {isActive && reel.video_url && <ReelVideoLayer videoUrl={reel.video_url} />}
-  </View>
-));
+export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => {
+  const player = useVideoPlayer(reel.video_url, p => {
+    p.loop = true;
+    p.muted = true;
+    p.audioMixingMode = 'mixWithOthers';
+    if (isActive) p.play();
+  });
+
+  useEffect(() => {
+    if (isActive) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, player]);
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      {/* Fallback while video first frame loads */}
+      {reel.thumbnail_url ? (
+        <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.1)" />
+        </View>
+      )}
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        nativeControls={false}
+      />
+    </View>
+  );
+});
 
 const VideoPost: React.FC<{ 
   uri: string; 
@@ -193,6 +216,8 @@ const VideoPost: React.FC<{
   isActive?: boolean;
   aspectRatio?: number;
 }> = React.memo(({ uri, isMuted, isActive, aspectRatio }) => {
+  const [dynamicRatio, setDynamicRatio] = useState<number | null>(aspectRatio ?? null);
+
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = isMuted ?? true;
@@ -214,8 +239,8 @@ const VideoPost: React.FC<{
 
   // Dynamic Height: allow the card to size itself naturally based on aspect ratio,
   // uncapped up to 9:16 portrait (1.78x width) to ensure maximum immersion.
-  const containerHeight = aspectRatio 
-    ? Math.min(width * 1.78, width / aspectRatio) 
+  const containerHeight = dynamicRatio 
+    ? Math.min(width * 1.78, width / dynamicRatio) 
     : width * 1.25;
 
   return (
@@ -229,7 +254,7 @@ const VideoPost: React.FC<{
         <VideoView
           player={player}
           style={StyleSheet.absoluteFill}
-          contentFit="contain"
+          contentFit="cover"
           nativeControls={false}
         />
       )}
@@ -295,11 +320,12 @@ const MediaCarousel: React.FC<{
 }> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive, aspectRatio }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentIdxRef = useRef(0);
+  const [dynamicRatio, setDynamicRatio] = useState<number | null>(aspectRatio ?? null);
   
   // Dynamic Height: allow the card to size itself naturally based on aspect ratio,
   // uncapped up to 9:16 portrait (1.78x width) to ensure maximum immersion.
-  const containerHeight = aspectRatio 
-    ? Math.min(width * 1.78, width / aspectRatio) 
+  const containerHeight = dynamicRatio 
+    ? Math.min(width * 1.78, width / dynamicRatio) 
     : width * 1.25;
 
   // Gesture State
@@ -357,12 +383,21 @@ const MediaCarousel: React.FC<{
           <GestureDetector gesture={composedGesture}>
             <View style={{ width, height: containerHeight, overflow: 'hidden' }}>
               {type === 'video' ? (
-                <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={aspectRatio} />
+                <VideoPost uri={item} isMuted={isMuted} isActive={isActive && currentIdx === index} aspectRatio={dynamicRatio ?? undefined} />
               ) : (
                 <CachedImage
                   uri={item}
                   style={{ width: '100%', height: '100%' }}
-                  resizeMode="contain" // 'contain' prevents cropping of important text/flyers while remaining edge-to-edge if aspectRatio is accurate
+                  resizeMode="cover" // 'cover' provides the premium, immersive edge-to-edge feel
+                  onLoad={(e) => {
+                    // For old posts lacking aspect ratio data, dynamically measure the image
+                    // so the container correctly expands to fit the flyer edge-to-edge without cropping
+                    if (!dynamicRatio && e.source) {
+                      const w = e.source.width;
+                      const h = e.source.height;
+                      if (w && h) setDynamicRatio(w / h);
+                    }
+                  }}
                 />
               )}
             </View>

@@ -754,9 +754,9 @@ const StoryViewer: React.FC<{
 
 // ─── Reel Preview ─────────────────────────────────────────────────────────────
 
-const REEL_THUMB_W = 118;
-const REEL_THUMB_GAP = 8;
-const REEL_THUMB_H = 182;
+const REEL_THUMB_W = 140;
+const REEL_THUMB_GAP = 12;
+const REEL_THUMB_H = 250;
 
 const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?: (reelId: string) => void; colors: any }> = React.memo(({ reels, onSeeAll, onReelPress, colors }) => {
   const [activeId, setActiveId] = useState<string | null>(reels[0]?.id ?? null);
@@ -787,7 +787,7 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?
         }
         return viewableIds[idx + 1];
       });
-    }, 3000);
+    }, 10000);
     return () => clearInterval(timer);
   }, [viewableIds]);
 

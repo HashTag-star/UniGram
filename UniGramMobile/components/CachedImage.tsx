@@ -15,11 +15,12 @@ interface Props {
   priority?: 'low' | 'normal' | 'high';
   recyclingKey?: string;
   blurhash?: string;
+  onLoad?: (e: any) => void;
 }
 
 export const CachedImage: React.FC<Props> = React.memo(({
   uri, style, resizeMode = 'cover', placeholder, containerStyle,
-  priority = 'normal', recyclingKey, blurhash,
+  priority = 'normal', recyclingKey, blurhash, onLoad
 }) => {
   if (!uri) {
     return <View style={[style as ViewStyle, containerStyle]} />;
@@ -42,9 +43,10 @@ export const CachedImage: React.FC<Props> = React.memo(({
         priority={priority}
         recyclingKey={recyclingKey ?? uri}
         allowDownscaling
+        onLoad={onLoad}
       />
     );
   }
 
-  return <Image source={{ uri }} style={style as any} resizeMode={resizeMode} />;
+  return <Image source={{ uri }} style={style as any} resizeMode={resizeMode} onLoad={onLoad} />;
 });
