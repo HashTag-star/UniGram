@@ -2,6 +2,36 @@ import { supabase } from '../lib/supabase';
 import { getUserInterests } from './onboarding';
 import { INTERESTS } from '../data/interests';
 import { Cache, TTL } from '../lib/cache';
+import { getBlockedUserIds } from './profiles';
+
+// ─── Module-level caches (lost on app kill, persist across re-renders) ─────────
+const _blockedCache = new Map<string, { ids: string[]; at: number }>();
+const _reportsCache = new Map<string, { counts: Record<string, number>; at: number }>();
+const BLOCKED_TTL = 5 * 60 * 1000;  // 5 min
+const REPORTS_TTL = 2 * 60 * 1000;  // 2 min
+
+async function getCachedBlockedIds(userId: string): Promise<string[]> {
+  const c = _blockedCache.get(userId);
+  if (c && Date.now() - c.at < BLOCKED_TTL) return c.ids;
+  const ids = await getBlockedUserIds().catch(() => [] as string[]);
+  _blockedCache.set(userId, { ids, at: Date.now() });
+  return ids;
+}
+
+async function getCachedReportCounts(postIds: string[]): Promise<Record<string, number>> {
+  const key = postIds.slice(0, 5).join(',');
+  const c = _reportsCache.get(key);
+  if (c && Date.now() - c.at < REPORTS_TTL) return c.counts;
+  const { data } = await supabase
+    .from('reports')
+    .select('target_id')
+    .in('target_id', postIds)
+    .eq('status', 'pending');
+  const counts: Record<string, number> = {};
+  (data || []).forEach((r: any) => { counts[r.target_id] = (counts[r.target_id] || 0) + 1; });
+  _reportsCache.set(key, { counts, at: Date.now() });
+  return counts;
+}
 
 // ─── Engagement weights ────────────────────────────────────────────────────────
 // Likes (+2), comments (+5), follows (+15), saves (+8) are handled automatically
@@ -16,20 +46,16 @@ import { Cache, TTL } from '../lib/cache';
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
 export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0) {
-  // 1. Get blocked users to hide their content
-  let blockedIds: string[] = [];
-  try {
-    const { getBlockedUserIds } = require('./profiles');
-    blockedIds = await getBlockedUserIds(userId);
-  } catch (err) {
-    console.warn('Failed to fetch blocked IDs for feed filtering', err);
-  }
+  // Run blocked-IDs fetch in parallel with the main RPC so neither waits on the other.
+  const [feedResult, blockedResult] = await Promise.allSettled([
+    supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset }),
+    getCachedBlockedIds(userId),
+  ]);
 
-  const { data, error } = await supabase.rpc('get_hybrid_campus_feed', {
-    p_user_id: userId,
-    p_limit: limit,
-    p_offset: offset,
-  });
+  const { data, error } = feedResult.status === 'fulfilled'
+    ? feedResult.value
+    : { data: null, error: { message: 'Feed RPC failed' } as any };
+  const blockedIds: string[] = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
 
   let results = data ?? [];
 
@@ -66,48 +92,20 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     results = fallback ?? [];
   }
 
-  // DEV: the RPC excludes the current user's own posts; inject them so they
-  // appear in the feed during development. Remove this block before production.
-  {
-    const { data: ownPosts } = await supabase
-      .from('posts')
-      .select(`
-        id, user_id, caption, type, media_url, media_urls,
-        likes_count, comments_count, location, song, tagged_users,
-        repost_of, quote_of, created_at,
-        profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(20);
-    if (ownPosts?.length) {
-      const existingIds = new Set(results.map((p: any) => p.id));
-      results = [...(ownPosts.filter((p: any) => !existingIds.has(p.id))), ...results];
-    }
-  }
-
   if (results.length === 0) return [];
 
-  // 2. Batch check for moderated content to avoid N+1 queries
+  // 2. Batch check for moderated content — cached per 2 min to avoid a DB round-trip on every feed refresh
   const postIds = results.map((p: any) => p.id);
-  const { data: reportsData } = await supabase
-    .from('reports')
-    .select('target_id')
-    .in('target_id', postIds)
-    .eq('status', 'pending');
-  
-  const reportCounts: Record<string, number> = {};
-  (reportsData || []).forEach(r => {
-    reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
-  });
+  const reportCounts = await getCachedReportCounts(postIds);
 
   // 3. Client-side filtering + soft-hide annotation (Final safety layer)
   const HARD_HIDE_THRESHOLD = 10;  // full removal
   const SOFT_HIDE_THRESHOLD = 5;   // blurred with warning, user can reveal
+  const blockedSet = new Set(blockedIds);
 
   const filtered = results
     .filter((post: any) => {
-      if (blockedIds.includes(post.user_id)) return false;
+      if (blockedSet.has(post.user_id)) return false;
       if ((reportCounts[post.id] || 0) >= HARD_HIDE_THRESHOLD) return false;
       return true;
     })
@@ -311,14 +309,8 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   const asyncHit = await Cache.get<any[]>(cacheKey, TTL.discover);
   if (asyncHit) return asyncHit;
 
-  // 1. Get blocked users to hide them from suggestions
-  let blockedIds: string[] = [];
-  try {
-    const { getBlockedUserIds } = require('./profiles');
-    blockedIds = await getBlockedUserIds(userId);
-  } catch (err) {
-    console.warn('Failed to fetch blocked IDs for suggestion filtering', err);
-  }
+  // 1. Get blocked users to hide them from suggestions (cached)
+  const blockedIds = await getCachedBlockedIds(userId);
 
   // 2. Fetch directly from robust RPC written in advanced algorithm migration
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_suggested_users', {
@@ -327,8 +319,9 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   });
   
   if (!rpcError && rpcData?.length) {
+    const blockedSet = new Set(blockedIds);
     return rpcData
-      .filter((u: any) => !blockedIds.includes(u.id))
+      .filter((u: any) => !blockedSet.has(u.id))
       .map((u: any) => ({
         ...u,
         mutual_follows: u.mutual_friends ?? 0,
@@ -345,7 +338,7 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   // Client-side fallback
   const [profileResult, followingResult] = await Promise.all([
     supabase.from('profiles').select('university').eq('id', userId).single(),
-    supabase.from('follows').select('following_id').eq('follower_id', userId),
+    supabase.from('follows').select('following_id').eq('follower_id', userId).limit(500),
   ]);
 
   const userUniversity = profileResult.data?.university ?? null;
@@ -362,9 +355,9 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   if (myFollowIds.length > 0) {
     const [fofFollowing, fofFollowers] = await Promise.all([
       // Who the people I follow also follow
-      supabase.from('follows').select('following_id').in('follower_id', myFollowIds),
+      supabase.from('follows').select('following_id').in('follower_id', myFollowIds).limit(300),
       // Who follows the people I follow
-      supabase.from('follows').select('follower_id').in('following_id', myFollowIds),
+      supabase.from('follows').select('follower_id').in('following_id', myFollowIds).limit(300),
     ]);
 
     (fofFollowing.data ?? []).forEach((r: any) => {
@@ -471,19 +464,14 @@ function _buildReason(u: {
  * and user interests. Replaces the raw chronological getReels query.
  */
 export async function getPersonalizedReels(userId: string, limit = 20, offset = 0) {
-  let blockedIds: string[] = [];
-  try {
-    const { getBlockedUserIds } = require('./profiles');
-    blockedIds = await getBlockedUserIds(userId);
-  } catch {}
-
-  const [reelsResult, followingResult, interests, feedbackResult] = await Promise.all([
+  const [blockedIds, reelsResult, followingResult, interests, feedbackResult] = await Promise.all([
+    getCachedBlockedIds(userId).catch(() => [] as string[]),
     supabase
       .from('reels')
-      .select('*, profiles!reels_user_id_fkey(*)')
+      .select('*, profiles!reels_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type, university)')
       .order('created_at', { ascending: false })
       .range(0, limit * 3 - 1),
-    supabase.from('follows').select('following_id').eq('follower_id', userId),
+    supabase.from('follows').select('following_id').eq('follower_id', userId).limit(500),
     getUserInterests(userId).catch(() => [] as string[]),
     supabase
       .from('user_feedback')
@@ -491,7 +479,6 @@ export async function getPersonalizedReels(userId: string, limit = 20, offset = 
       .eq('user_id', userId)
       .eq('target_type', 'reel'),
   ]);
-
   const reels = reelsResult.data ?? [];
   if (!reels.length) return [];
 
@@ -521,10 +508,11 @@ export async function getPersonalizedReels(userId: string, limit = 20, offset = 
     reportCounts[r.target_id] = (reportCounts[r.target_id] ?? 0) + 1;
   });
 
+  const blockedSet = new Set(blockedIds);
   const now = Date.now();
   const scored = reels
     .filter((r: any) =>
-      !blockedIds.includes(r.user_id) &&
+      !blockedSet.has(r.user_id) &&
       !notInterestedIds.has(r.id) &&
       (reportCounts[r.id] ?? 0) < 5
     )

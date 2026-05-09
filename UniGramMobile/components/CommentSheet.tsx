@@ -867,11 +867,17 @@ export const CommentSheet: React.FC<Props> = ({
       android_keyboardInputMode="adjustPan"
     >
       <View style={{ flex: 1 }}>
-        <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
-          {!loading && totalCount > 0 && (
-            <Text style={[styles.countLabel, { color: colors.textMuted }]}>{totalCount}</Text>
-          )}
+        <View style={[styles.sheetHeader, { borderBottomColor: colors.border, justifyContent: 'space-between' }]}>
+          <View style={{ width: 32 }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
+            {!loading && totalCount > 0 && (
+              <Text style={[styles.countLabel, { color: colors.textMuted }]}>{totalCount}</Text>
+            )}
+          </View>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={20} color={colors.textMuted} />
+          </TouchableOpacity>
         </View>
 
         {/* keyboardShouldPersistTaps="handled" lets swipe-scroll work while keyboard is open */}

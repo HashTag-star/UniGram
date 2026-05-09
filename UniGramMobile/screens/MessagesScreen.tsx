@@ -191,6 +191,7 @@ const VoicePlayer: React.FC<{ uri: string; duration?: number }> = ({ uri, durati
   const player = useAudioPlayer(uri);
 
   const toggle = () => {
+    if (!player) return;
     if (playing) player.pause();
     else player.play();
     setPlaying(!playing);
@@ -281,8 +282,14 @@ const ChatView: React.FC<{
   const profile = otherProfile?.is_group ? null : otherProfile;
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    getMessages(convId, 60).then(data => { setMessages(data.reverse()); setLoading(false); markMessagesRead(convId, currentUserId); });
+    getMessages(convId, 60).then(data => {
+      if (!active) return;
+      setMessages(data.reverse());
+      setLoading(false);
+      markMessagesRead(convId, currentUserId);
+    });
     const sub = subscribeToMessages(
       convId,
       (nm) => {
@@ -296,8 +303,8 @@ const ChatView: React.FC<{
       }
     );
     const typingChannel = supabase.channel(`typing-${convId}`).on('broadcast', { event: 'typing' }, ({ payload }) => { if (payload.userId !== currentUserId) setIsOtherTyping(payload.typing); }).on('broadcast', { event: 'recording' }, ({ payload }) => { if (payload.userId !== currentUserId) setIsOtherRecording(payload.recording); }).subscribe();
-    return () => { sub.unsubscribe(); supabase.removeChannel(typingChannel); };
-  }, [convId]);
+    return () => { active = false; sub.unsubscribe(); supabase.removeChannel(typingChannel); };
+  }, [convId, currentUserId]);
 
   const handleSend = async () => {
     if (!text.trim()) return;
@@ -305,7 +312,7 @@ const ChatView: React.FC<{
     const tempId = 'temp-' + Date.now();
     const nm = { id: tempId, text: t, sender_id: currentUserId, created_at: new Date().toISOString(), type: 'text', reply_to: replyingTo?.id, reply_to_msg: replyingTo };
     setMessages(p => [nm, ...p]);
-    try { await sendMessage(convId, currentUserId, t, replyingTo?.id); } catch { setMessages(p => p.filter(m => m.id !== tempId)); }
+    try { await sendMessage(convId, currentUserId, t, replyingTo?.id); } catch { setMessages(p => p.filter(m => m.id !== tempId)); Alert.alert('Failed to send', 'Your message could not be delivered.'); }
   };
 
   const handleAttachment = async () => {
@@ -377,7 +384,18 @@ export const MessagesScreen = memo<MessagesScreenProps>(({ onChatStateChange, in
 
   useEffect(() => { if (initialConv) { setActiveConv(initialConv); setScreenState('chat'); onChatStateChange?.(true); } }, [initialConv]);
   const [conversations, setConversations] = useState<any[]>([]); const [loading, setLoading] = useState(true);
-  const loadConversations = useCallback(async () => { if (!currentUserId) return; setLoading(true); const data = await getConversations(currentUserId); setConversations(data); setLoading(false); }, [currentUserId]);
+  const loadConversations = useCallback(async () => {
+    if (!currentUserId) return;
+    setLoading(true);
+    try {
+      const data = await getConversations(currentUserId);
+      setConversations(data);
+    } catch {
+      // silent fail — show empty state
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUserId]);
   useEffect(() => { loadConversations(); const sub = subscribeToConversationList(currentUserId, loadConversations); return () => { sub.unsubscribe(); }; }, [currentUserId, loadConversations]);
 
   const onConvPress = (conv: any) => { setActiveConv({ convId: conv.id, otherProfile: conv.other_profile }); setScreenState('chat'); onChatStateChange?.(true); };

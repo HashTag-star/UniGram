@@ -1067,41 +1067,44 @@ export const ReelsScreen: React.FC<{
         return prev;
       });
     }
-  }, []);
+  }, [impactLight]);
 
   const load = useCallback(async () => {
+    const safetyTimer = setTimeout(() => setLoading(false), 15000);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       const [reelsData, likedData, likedPostData, followingData, liveData, profData] = await Promise.all([
-        getPersonalizedReels(user.id, 10, 0),
-        getLikedReelIds(user.id),
-        getLikedPostIds(user.id),
-        getFollowing(user.id),
+        getPersonalizedReels(user.id, 10, 0).catch(() => getReels(10, 0).catch(() => [])),
+        getLikedReelIds(user.id).catch(() => [] as string[]),
+        getLikedPostIds(user.id).catch(() => [] as string[]),
+        getFollowing(user.id).catch(() => [] as any[]),
         supabase
           .from('live_sessions')
           .select('*, profiles(id, username, avatar_url, university)')
           .eq('status', 'live')
           .gt('created_at', twelveHoursAgo)
           .neq('creator_id', user.id),
-        supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data),
+        supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data).catch(() => null),
       ]);
       setLikedIds(new Set(likedData));
       setLikedPostIds(new Set(likedPostData));
-      setFollowingIds(new Set(followingData.map((p: any) => p.id)));
+      setFollowingIds(new Set((followingData ?? []).map((p: any) => p?.id).filter(Boolean)));
       setLiveSessions(liveData.data ?? []);
       getActiveAdsForPlacement('reels', profData?.university ?? null, user.id).then(setReelAds).catch(() => {});
+      const newReels: any[] = reelsData ?? [];
       setRawReels(prev => {
-        const combined = prev.length ? [...prev, ...reelsData.filter((r: any) => !prev.some(p => p.id === r.id))] : reelsData;
-        setOffset(reelsData.length);
-        setHasMore(reelsData.length === 10);
+        const combined = prev.length ? [...prev, ...newReels.filter((r: any) => !prev.some(p => p.id === r.id))] : newReels;
         return combined;
       });
+      setOffset(newReels.length);
+      setHasMore(newReels.length === 10);
     } catch (err) {
       console.error('Reels load error:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [initialReelId, initialReels]);

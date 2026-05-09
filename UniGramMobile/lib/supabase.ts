@@ -66,11 +66,24 @@ const SecureStoreAdapter = {
   },
 };
 
+// Prevent fetch from hanging indefinitely. 20s is generous for data queries
+// while still allowing most operations to complete on slow connections.
+// If the caller already supplies a signal (e.g., realtime), we leave it alone.
+const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response> => {
+  if (options.signal) return fetch(url, options);
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), 20000);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+};
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     storage: SecureStoreAdapter,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+  },
+  global: {
+    fetch: fetchWithTimeout as unknown as typeof fetch,
   },
 });

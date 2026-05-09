@@ -703,7 +703,7 @@ export const SettingsScreen: React.FC<Props> = ({
           <Section title="Legal & Compliance">
             <Row icon="document-text-outline" label="Privacy Policy" onPress={onShowPrivacy} />
             <Row icon="reader-outline" label="Terms of Service" onPress={onShowTerms} />
-            <Row icon="checkmark-shield-outline" label="Community Guidelines" onPress={onShowGuidelines} noBorder />
+            <Row icon="shield-checkmark-outline" label="Community Guidelines" onPress={onShowGuidelines} noBorder />
           </Section>
 
           <Section title="Support">

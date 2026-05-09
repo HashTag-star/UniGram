@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
-import * as WebBrowser from 'expo-web-browser';
+import { AppState } from 'react-native';
+import * as Linking from 'expo-linking';
 
 export interface CampusAd {
   id: string;
@@ -90,11 +91,13 @@ export async function initAdPayment(
 ): Promise<{ authorization_url: string; reference: string }> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user?.email) throw new Error('Account email required for payment');
+  const callbackUrl = Linking.createURL('payment-callback');
   return callEdgeFunction('paystack-init', {
     amount_ghs: budgetGhs,
     email: user.email,
     product_type: 'ad_payment',
     product_id: campaignId,
+    callback_url: callbackUrl,
     metadata: { duration_days: durationDays },
   }) as Promise<{ authorization_url: string; reference: string }>;
 }
@@ -103,13 +106,32 @@ export async function openAdCheckout(
   authorizationUrl: string,
   reference: string,
 ): Promise<boolean> {
-  await WebBrowser.openAuthSessionAsync(authorizationUrl, 'unigram://payment-callback');
-  try {
-    const data = await callEdgeFunction('paystack-verify', { reference });
-    return data.status === 'success';
-  } catch {
-    return false;
-  }
+  return new Promise<boolean>((resolve) => {
+    let wentBackground = false;
+    let settled = false;
+
+    const settle = async () => {
+      if (settled) return;
+      settled = true;
+      sub.remove();
+      try {
+        const data = await callEdgeFunction('paystack-verify', { reference });
+        resolve(data.status === 'success');
+      } catch {
+        resolve(false);
+      }
+    };
+
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        wentBackground = true;
+      } else if (nextState === 'active' && wentBackground) {
+        settle();
+      }
+    });
+
+    Linking.openURL(authorizationUrl).catch(() => settle());
+  });
 }
 
 /** How often to inject an ad (every N items). Higher budget → more frequent. */
@@ -150,6 +172,21 @@ export async function getActiveAdsForPlacement(
 
 export async function getActiveFeedAds(university: string | null, userId: string): Promise<any[]> {
   return getActiveAdsForPlacement('feed', university, userId);
+}
+
+export async function pauseCampaign(id: string): Promise<void> {
+  const { error } = await supabase.from('campus_ads').update({ status: 'paused' }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function resumeCampaign(id: string): Promise<void> {
+  const { error } = await supabase.from('campus_ads').update({ status: 'active' }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteCampaign(id: string): Promise<void> {
+  const { error } = await supabase.from('campus_ads').delete().eq('id', id);
+  if (error) throw error;
 }
 
 export async function recordCampusAdImpression(adId: string): Promise<void> {

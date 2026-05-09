@@ -74,7 +74,7 @@ export const ConvSkeleton: React.FC = () => (
 );
 
 export const MarketSkeleton: React.FC<{ cardWidth: number }> = ({ cardWidth }) => (
-  <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, gap: 8, justifyContent: 'space-between' }}>
+  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
     {[1, 2, 3, 4].map(i => (
       <View key={i} style={{ width: cardWidth, borderRadius: 16, overflow: 'hidden', gap: 0 }}>
         <Skeleton height={cardWidth} borderRadius={0} />

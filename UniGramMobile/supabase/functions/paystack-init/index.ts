@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
     );
     if (authErr || !user) throw new Error('Unauthorized');
 
-    const { amount_ghs, email, product_type, product_id, metadata } = await req.json();
+    const { amount_ghs, email, product_type, product_id, callback_url, metadata } = await req.json();
     if (!amount_ghs || !email || !product_type) throw new Error('amount_ghs, email and product_type are required');
 
     const amount_pesewas = Math.round(amount_ghs * 100);
@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
         email,
         reference,
         currency: 'GHS',
-        callback_url: 'unigram://payment-callback',
+        callback_url: callback_url ?? 'unigram://payment-callback',
         metadata: {
           ...(metadata ?? {}),
           product_type,

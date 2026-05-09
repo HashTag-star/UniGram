@@ -129,7 +129,7 @@ export async function unlikeReel(reelId: string, userId: string) {
 }
 
 export async function getLikedReelIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from('reel_likes').select('reel_id').eq('user_id', userId);
+  const { data } = await supabase.from('reel_likes').select('reel_id').eq('user_id', userId).limit(500).order('created_at', { ascending: false });
   return data?.map((r: any) => r.reel_id) ?? [];
 }
 

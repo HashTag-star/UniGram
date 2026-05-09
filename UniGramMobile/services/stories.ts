@@ -14,6 +14,7 @@ export async function getActiveStories() {
   const grouped: Record<string, { profile: any; stories: any[] }> = {};
   for (const story of data ?? []) {
     const uid = story.user_id;
+    if (!story.profiles?.id) continue; // skip orphaned stories from deleted users
     if (!grouped[uid]) grouped[uid] = { profile: story.profiles, stories: [] };
     grouped[uid].stories.push(story);
   }

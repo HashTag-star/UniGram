@@ -59,7 +59,7 @@ export async function getMarketItems(
 ): Promise<MarketItem[]> {
   let query = supabase
     .from('market_items')
-    .select('*, profiles(*)')
+    .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
     .eq('is_sold', false)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -84,9 +84,10 @@ export async function getMarketItems(
 export async function getMyListings(userId: string): Promise<MarketItem[]> {
   const { data, error } = await supabase
     .from('market_items')
-    .select('*, profiles(*)')
+    .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
     .eq('seller_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(100);
   if (error) throw error;
   return (data as MarketItem[]) ?? [];
 }
@@ -97,9 +98,10 @@ export async function getMyListings(userId: string): Promise<MarketItem[]> {
 export async function getSavedItems(userId: string): Promise<MarketItem[]> {
   const { data, error } = await supabase
     .from('market_saves')
-    .select('item_id, market_items(*, profiles(*))')
+    .select('item_id, market_items(*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university))')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(100);
   if (error) throw error;
   return (data ?? [])
     .map((row: any) => row.market_items)
@@ -151,7 +153,7 @@ export async function createMarketItem(
       is_sold: false,
       views_count: 0,
     })
-    .select('*, profiles(*)')
+    .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
     .single();
 
   if (error) throw error;
@@ -195,7 +197,7 @@ export async function updateMarketItem(
       image_url,
     })
     .eq('id', itemId)
-    .select('*, profiles(*)')
+    .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
     .single();
 
   if (error) throw error;

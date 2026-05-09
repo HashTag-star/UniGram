@@ -1012,7 +1012,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
           id: sellerId,
           full_name: item?.profiles?.full_name ?? 'Seller',
           username: item?.profiles?.username ?? 'seller',
-          avatar_url: item?.profiles?.avatar_url,
+          avatar_url: item?.profiles?.avatar_url ?? null,
           is_verified: item?.profiles?.is_verified ?? false,
         };
       }
@@ -1093,7 +1093,15 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
   const renderBrowseCard = useCallback(({ item }: { item: any }) => {
     if (item._type === 'sponsored_ad') {
       return (
-        <View style={{ width: '100%' }}>
+        <View style={{ 
+          width: '100%', 
+          borderRadius: 16, 
+          overflow: 'hidden', 
+          backgroundColor: colors.bg2, 
+          borderWidth: 1, 
+          borderColor: colors.border,
+          marginBottom: 2 
+        }}>
           <SponsoredAdCard
             ad={item.ad}
             onImpression={(adId) => {
@@ -1110,7 +1118,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
       <ItemCard item={item} currentUserId={currentUserId} isSaved={savedIds.has(item.id)}
         onToggleSave={handleToggleSave} onPress={setSelectedItem} />
     );
-  }, [currentUserId, savedIds, handleToggleSave]);
+  }, [currentUserId, savedIds, handleToggleSave, colors]);
 
   const renderSavedCard = useCallback(({ item }: { item: MarketItem }) => (
     <ItemCard item={item} currentUserId={currentUserId} isSaved
@@ -1147,7 +1155,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     (activeTab === 'saved'  && savedLoading  && savedItems.length === 0) ||
     (activeTab === 'mine'   && myLoading     && myItems.length === 0);
 
-  const STUB_CARD_W = (width - 28) / 2;
+  const STUB_CARD_W = CARD_W;
 
   const openSell = useCallback(() => {
     if (isSuspended) {
@@ -1293,6 +1301,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
           overrideItemLayout={(layout: any, item: any) => {
             if (item._type === 'sponsored_ad') layout.span = 2;
           }}
+          columnWrapperStyle={scr.colWrapper}
           contentContainerStyle={[scr.listPad, { paddingBottom: insets.bottom + 90 }]}
           estimatedItemSize={250}
           showsVerticalScrollIndicator={false}
@@ -1440,8 +1449,8 @@ const scr = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 14 },
 
-  colWrapper: { gap: CARD_GAP, paddingHorizontal: H_PAD },
-  listPad: { paddingTop: 6, gap: CARD_GAP },
+  colWrapper: { gap: CARD_GAP },
+  listPad: { paddingTop: 6, gap: CARD_GAP, paddingHorizontal: H_PAD },
 
   empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: 80, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 17, fontWeight: '700', marginTop: 14 },
@@ -1599,4 +1608,4 @@ const sell = StyleSheet.create({
   },
   bannedTitle: { fontSize: 20, fontWeight: '700', marginTop: 16 },
   bannedSub: { fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
-});
+});

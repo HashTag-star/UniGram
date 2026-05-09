@@ -1,5 +1,6 @@
 import './global.css';
 import React, { useState, useEffect, useRef, useTransition, useCallback, memo, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
@@ -9,7 +10,7 @@ import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
+import * as Font from 'expo-font';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { FeedScreen } from './screens/FeedScreen';
@@ -113,30 +114,33 @@ const LoadingScreen: React.FC = () => {
 
   useEffect(() => {
     Animated.sequence([
+      // Phase 1 — logo pops in (300ms)
       Animated.parallel([
-        Animated.spring(logoScale, { toValue: 1, tension: 55, friction: 8, useNativeDriver: true }),
-        Animated.timing(logoOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
-        Animated.timing(bgOrbAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.spring(logoScale, { toValue: 1, tension: 100, friction: 10, useNativeDriver: true }),
+        Animated.timing(logoOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(bgOrbAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
       ]),
-      Animated.stagger(120, [
+      // Phase 2 — rings expand in quick succession (300ms)
+      Animated.stagger(50, [
         Animated.parallel([
-          Animated.spring(ring1Scale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
-          Animated.timing(ring1Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.spring(ring1Scale, { toValue: 1, tension: 90, friction: 12, useNativeDriver: true }),
+          Animated.timing(ring1Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
         ]),
         Animated.parallel([
-          Animated.spring(ring2Scale, { toValue: 1, tension: 35, friction: 10, useNativeDriver: true }),
-          Animated.timing(ring2Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.spring(ring2Scale, { toValue: 1, tension: 85, friction: 12, useNativeDriver: true }),
+          Animated.timing(ring2Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
         ]),
         Animated.parallel([
-          Animated.spring(ring3Scale, { toValue: 1, tension: 30, friction: 10, useNativeDriver: true }),
-          Animated.timing(ring3Opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.spring(ring3Scale, { toValue: 1, tension: 80, friction: 12, useNativeDriver: true }),
+          Animated.timing(ring3Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
         ]),
       ]),
+      // Phase 3 — text slides up (200ms)
       Animated.parallel([
-        Animated.spring(textSlide, { toValue: 0, tension: 70, friction: 12, useNativeDriver: true }),
-        Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.spring(textSlide, { toValue: 0, tension: 130, friction: 14, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]),
-      Animated.timing(indicatorOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.timing(indicatorOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
     ]).start();
 
     setTimeout(() => {
@@ -146,7 +150,7 @@ const LoadingScreen: React.FC = () => {
           Animated.timing(ring3Scale, { toValue: 1, duration: 2000, useNativeDriver: true }),
         ])
       ).start();
-    }, 1200);
+    }, 700);
 
     Animated.loop(
       Animated.sequence([
@@ -385,6 +389,7 @@ function AppShell() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [minSplashDone, setMinSplashDone] = useState(false);
+  const [fontsReady, setFontsReady] = useState(false);
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
   const [initialConv, setInitialConv] = useState<any>(null);
@@ -398,36 +403,75 @@ function AppShell() {
 
   useLastSeen(session?.user?.id ?? null);
 
+  // Tracks the currently authenticated user ID so auth-change events don't
+  // reset onboardingDone on token refreshes for the same user.
+  const activeUidRef = useRef<string | null>(null);
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    let cancelled = false;
+
+    // ── Fast startup: fonts + session + onboarding cache all in parallel ──
+    const startup = async () => {
+      // All three kick off simultaneously — none waits on the others
+      const [, { data: { session: initialSession } }] = await Promise.all([
+        // Fonts: bundled assets, typically < 80ms
+        Font.loadAsync({ ...Ionicons.font, ...AntDesign.font, ...MaterialIcons.font, ...FontAwesome.font })
+          .then(() => { if (!cancelled) setFontsReady(true); })
+          .catch(() => { if (!cancelled) setFontsReady(true); }), // never block on font errors
+        // Session: reads from SecureStore, typically < 50ms
+        supabase.auth.getSession(),
+        // Audio pre-warm: fire-and-forget
+        setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'doNotMix', shouldRouteThroughEarpiece: false })
+          .catch(() => {}),
+      ]);
+      if (cancelled) return;
+
+      setSession(initialSession);
+      const uid = initialSession?.user?.id ?? null;
+      activeUidRef.current = uid;
+
+      if (uid) {
+        // Check local cache first — this is a sub-millisecond read vs a network round-trip
+        try {
+          const cached = await AsyncStorage.getItem(`ug_onboard:${uid}`);
+          if (!cancelled && cached === 'true') {
+            setOnboardingDone(true); // Show main app immediately for returning users
+          }
+        } catch {}
+      }
+    };
+
+    startup();
+
+    // Auth state changes: sign-in, sign-out, token refresh, etc.
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
+      const newUid = sess?.user?.id ?? null;
       setSession(sess);
-      setOnboardingDone(null);
+      // Only reset onboardingDone when the user actually changes, not on token refresh
+      if (newUid !== activeUidRef.current) {
+        activeUidRef.current = newUid;
+        setOnboardingDone(null);
+      }
     });
-    const splashTimer = setTimeout(() => setMinSplashDone(true), 1800);
 
-    // Pre-warm audio engine to reduce startup lag
-    setAudioModeAsync({
-      playsInSilentMode: true,
-      interruptionMode: 'doNotMix',
-      shouldRouteThroughEarpiece: false,
-    }).catch(err => console.log('Audio pre-warm error:', err));
+    // Splash shows briefly — 350ms is enough to feel intentional without blocking
+    const splashTimer = setTimeout(() => setMinSplashDone(true), 350);
 
-    // Staggered preloading of tabs to ensure they are ready when switched to
+    // Preload other tabs early so first switch is instant
     const preloadTimer = setTimeout(() => {
       setMountedTabs(prev => {
         const next = new Set(prev);
         ['explore', 'reels', 'market', 'messages', 'profile'].forEach(t => next.add(t as Tab));
         return next;
       });
-    }, 1200); // Start preloading 1.2s after mount (likely after splash is gone)
+    }, 400);
 
-    // Centralized haptic listeners for pre-emptive feedback
     const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
     const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);
     const hSu = DeviceEventEmitter.addListener('haptic_success', haptics.success);
 
     return () => {
+      cancelled = true;
       listener.subscription.unsubscribe();
       clearTimeout(splashTimer);
       clearTimeout(preloadTimer);
@@ -437,14 +481,23 @@ function AppShell() {
     };
   }, [haptics]);
 
+  // Background profile fetch: runs after onboarding gate is already satisfied from cache.
+  // Narrows select to only fields the shell needs — full profile data is fetched by ProfileScreen.
   useEffect(() => {
     if (!session?.user?.id) return;
     const uid = session.user.id;
     const fetchProfile = async () => {
-      const { data } = await supabase.from('profiles').select('*').eq('id', uid).single();
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned')
+        .eq('id', uid)
+        .single();
       if (data) {
         setUserProfile(data);
-        setOnboardingDone(data.onboarding_completed ?? false);
+        const done = data.onboarding_completed ?? false;
+        setOnboardingDone(done);
+        // Cache onboarding status so next launch doesn't need a DB round-trip
+        if (done) AsyncStorage.setItem(`ug_onboard:${uid}`, 'true').catch(() => {});
         AccountService.registerAccount(data, session).catch(() => {});
       } else {
         setOnboardingDone(true);
@@ -476,8 +529,13 @@ function AppShell() {
       setMessageBadge(total);
     };
     refresh();
+    // Subscribe to conversation_participants (filtered to this user) instead of the
+    // unfiltered messages table — fires only when this user's unread_count changes.
     const msgChannel = supabase.channel(`app-msg-badge-${uid}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, refresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversation_participants', filter: `user_id=eq.${uid}` }, (payload: any) => {
+        const delta = (payload.new.unread_count ?? 0) - (payload.old.unread_count ?? 0);
+        if (delta !== 0) setMessageBadge((b: number) => Math.max(0, b + delta));
+      })
       .subscribe();
     return () => { supabase.removeChannel(msgChannel); };
   }, [session?.user?.id]);
@@ -531,7 +589,7 @@ function AppShell() {
   const onTrendingPress = useCallback(() => setShowTrending(true), []);
   const onCameraOpen = useCallback(() => pagerRef.current?.setPage(0), []);
 
-  if (!minSplashDone || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
+  if (!minSplashDone || !fontsReady || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
   if (!session) {
     if (authScreen === 'signup') return (
       <View style={{ flex: 1 }}>
@@ -609,8 +667,6 @@ function AppShell() {
 }
 
 export default function App() {
-  const [fontsLoaded] = useFonts({ ...Ionicons.font, ...AntDesign.font, ...MaterialIcons.font, ...FontAwesome.font });
-  if (!fontsLoaded) return <LoadingScreen />;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>

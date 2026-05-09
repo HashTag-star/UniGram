@@ -13,6 +13,7 @@ import { useToast } from '../context/ToastContext';
 import {
   getCampaigns, createCampaignDraft, setPaymentRef,
   uploadAdMedia, initAdPayment, openAdCheckout,
+  pauseCampaign, resumeCampaign, deleteCampaign,
   type CampusAd,
 } from '../services/campusAds';
 
@@ -157,12 +158,36 @@ const StepBar: React.FC<{ step: number; total: number }> = ({ step, total }) => 
 
 // ─── Campaign Card ────────────────────────────────────────────────────────────
 
-const CampaignCard: React.FC<{ campaign: Campaign }> = ({ campaign: c }) => {
+const CampaignCard: React.FC<{
+  campaign: Campaign;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onDelete: (id: string) => void;
+}> = ({ campaign: c, onPause, onResume, onDelete }) => {
   const { colors } = useTheme();
   const ctr      = c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(1) : '0.0';
   const progress = Math.min(c.spent / c.budget, 1);
   const { color, label } = STATUS_CONFIG[c.status];
   const obj = OBJECTIVES.find(o => o.key === c.objective);
+
+  const showActions = () => {
+    const actions: Array<{ text: string; style?: 'destructive' | 'cancel'; onPress: () => void }> = [];
+    if (c.status === 'active') {
+      actions.push({ text: 'Pause Campaign', onPress: () => onPause(c.id) });
+    }
+    if (c.status === 'paused') {
+      actions.push({ text: 'Resume Campaign', onPress: () => onResume(c.id) });
+    }
+    if (c.status === 'pending' && c.payment_ref) {
+      // Payment was completed but activation didn't fire (e.g. old campaigns before this fix)
+      actions.push({ text: 'Activate Now', onPress: () => onResume(c.id) });
+    }
+    if (c.status === 'pending' || c.status === 'ended') {
+      actions.push({ text: 'Delete Campaign', style: 'destructive', onPress: () => onDelete(c.id) });
+    }
+    actions.push({ text: 'Cancel', style: 'cancel', onPress: () => {} });
+    Alert.alert(c.name, 'Choose an action for this campaign', actions);
+  };
 
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -177,9 +202,16 @@ const CampaignCard: React.FC<{ campaign: Campaign }> = ({ campaign: c }) => {
             <Text style={[styles.cardMetaText, { color: obj?.color ?? '#6366f1' }]}>{obj?.label}</Text>
           </View>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: color + '20' }]}>
-          <View style={[styles.statusDot, { backgroundColor: color }]} />
-          <Text style={[styles.statusText, { color }]}>{label}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={[styles.statusBadge, { backgroundColor: color + '20' }]}>
+            <View style={[styles.statusDot, { backgroundColor: color }]} />
+            <Text style={[styles.statusText, { color }]}>{label}</Text>
+          </View>
+          {(c.status === 'active' || c.status === 'paused' || c.status === 'pending' || c.status === 'ended') && (
+            <TouchableOpacity onPress={showActions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="ellipsis-horizontal" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -390,7 +422,14 @@ const CreateCampaignSheet: React.FC<{
       const success = await openAdCheckout(authorization_url, reference);
 
       if (success) {
-        showToast('Your ad is now in review! It goes live within 24 hours.', 'success');
+        // Payment verified — activate the campaign immediately
+        const now = new Date().toISOString().split('T')[0];
+        const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        await supabase
+          .from('campus_ads')
+          .update({ status: 'active', start_date: now, end_date: endDate })
+          .eq('id', draft.id);
+        showToast('Your campaign is live!', 'success');
       } else {
         showToast('Campaign saved. Complete payment to go live.', 'info');
       }
@@ -698,7 +737,12 @@ const CreateCampaignSheet: React.FC<{
                   <Ionicons name="bar-chart-outline" size={15} color="#6366f1" />
                   <Text style={[styles.pacingText, { color: colors.textSub }]}>
                     {duration
-                      ? `${dailySpend(budget, duration)}/day · ~${dailyReach(BUDGET_TIERS.find(t => t.amount === budget)!.reach, duration)} impressions/day`
+                      ? (() => {
+                          const tier = BUDGET_TIERS.find(t => t.amount === budget);
+                          return tier
+                            ? `${dailySpend(budget, duration)}/day · ~${dailyReach(tier.reach, duration)} impressions/day`
+                            : `${dailySpend(budget, duration)}/day`;
+                        })()
                       : `Total budget: GHS ${budget} · Select a duration to see daily spend`
                     }
                   </Text>
@@ -733,7 +777,8 @@ const CreateCampaignSheet: React.FC<{
 
               {/* Summary */}
               {canGoNext && (() => {
-                const tier = BUDGET_TIERS.find(t => t.amount === budget)!;
+                const tier = BUDGET_TIERS.find(t => t.amount === budget);
+                if (!tier) return null;
                 return (
                   <View style={[styles.summaryBox, { backgroundColor: '#6366f110', borderColor: '#6366f130' }]}>
                     <Ionicons name="checkmark-circle-outline" size={18} color="#6366f1" style={{ marginTop: 1 }} />
@@ -811,6 +856,7 @@ interface AdManagerProps {
 
 export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, profile }) => {
   const { colors } = useTheme();
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   const [showCreate, setShowCreate] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -827,6 +873,61 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
       setLoading(false);
     }
   }, []);
+
+  const handlePause = useCallback((id: string) => {
+    Alert.alert('Pause Campaign', 'Your ad will stop showing until you resume it.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Pause',
+        onPress: async () => {
+          try {
+            await pauseCampaign(id);
+            setCampaigns(prev => prev.map(c => c.id === id ? { ...c, status: 'paused' } : c));
+            showToast('Campaign paused.', 'info');
+          } catch {
+            showToast('Failed to pause campaign.', 'error');
+          }
+        },
+      },
+    ]);
+  }, [showToast]);
+
+  const handleResume = useCallback((id: string) => {
+    Alert.alert('Resume Campaign', 'Your ad will start showing again.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Resume',
+        onPress: async () => {
+          try {
+            await resumeCampaign(id);
+            setCampaigns(prev => prev.map(c => c.id === id ? { ...c, status: 'active' } : c));
+            showToast('Campaign resumed.', 'success');
+          } catch {
+            showToast('Failed to resume campaign.', 'error');
+          }
+        },
+      },
+    ]);
+  }, [showToast]);
+
+  const handleDelete = useCallback((id: string) => {
+    Alert.alert('Delete Campaign', 'This cannot be undone. The campaign and its data will be permanently removed.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteCampaign(id);
+            setCampaigns(prev => prev.filter(c => c.id !== id));
+            showToast('Campaign deleted.', 'info');
+          } catch {
+            showToast('Failed to delete campaign.', 'error');
+          }
+        },
+      },
+    ]);
+  }, [showToast]);
 
   useEffect(() => {
     if (visible) loadCampaigns();
@@ -891,7 +992,15 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
               </TouchableOpacity>
             </View>
           ) : (
-            campaigns.map(c => <CampaignCard key={c.id} campaign={c} />)
+            campaigns.map(c => (
+              <CampaignCard
+                key={c.id}
+                campaign={c}
+                onPause={handlePause}
+                onResume={handleResume}
+                onDelete={handleDelete}
+              />
+            ))
           ) }
 
           <View style={[styles.infoBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>

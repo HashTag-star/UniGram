@@ -22,6 +22,8 @@ import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
+import { getActiveAdsForPlacement, recordCampusAdImpression } from '../services/campusAds';
+import { SponsoredAdCard } from '../components/SponsoredAdCard';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 3) / 3;
@@ -212,6 +214,8 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [isMuted, setIsMuted] = useState(true);
+  const [exploreAds, setExploreAds] = useState<any[]>([]);
+  const exploreAdImpressionsRef = useRef(new Set<string>());
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -222,27 +226,36 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
       const uid = data.user.id;
       setCurrentUserId(uid);
 
-      const [posts, liked, saved, follows, sugg] = await Promise.all([
-        getPersonalizedExplorePosts(uid, 18, 0),
-        getLikedPostIds(uid),
-        getSavedPostIds(uid),
-        getFollowing(uid),
-        getFollowSuggestions(uid, 10).catch(() => [] as any[]),
-      ]);
-      setGridPosts(posts);
-      setLikedIds(new Set(liked));
-      setSavedIds(new Set(saved));
-      const followingSet = new Set(follows.map((f: any) => f.id));
-      setFollowingIds(followingSet);
-
-      // Filter out already-following users from suggestions
-      setSuggested(sugg.filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
+      let profData: { university?: string | null } | null = null;
+      try {
+        const [posts, liked, saved, follows, sugg, prof] = await Promise.all([
+          getPersonalizedExplorePosts(uid, 18, 0),
+          getLikedPostIds(uid).catch(() => [] as string[]),
+          getSavedPostIds(uid).catch(() => [] as string[]),
+          getFollowing(uid).catch(() => [] as any[]),
+          getFollowSuggestions(uid, 10).catch(() => [] as any[]),
+          supabase.from('profiles').select('university').eq('id', uid).single().then(r => r.data ?? null).catch(() => null),
+        ]);
+        profData = prof;
+        setGridPosts(posts);
+        setLikedIds(new Set(liked));
+        setSavedIds(new Set(saved));
+        const followingSet = new Set(follows.map((f: any) => f.id));
+        setFollowingIds(followingSet);
+        setSuggested(sugg.filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
+      } catch (e) {
+        console.warn('ExploreScreen initial load failed:', e);
+      }
 
       getTrendingHashtags(8, uid).then(tags => {
         if (tags.length > 0) {
           setTrendingTags(tags.map((t: any) => ({ tag: t.tag, posts: Number(t.post_count) })));
         }
       }).catch(() => {});
+
+      getActiveAdsForPlacement('explore', profData?.university ?? null, uid)
+        .then(setExploreAds)
+        .catch(() => {});
     });
   }, []);
 
@@ -303,7 +316,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
       SocialSync.emit('FOLLOW_CHANGE', { targetId, isActive: isNowFollowing });
     }
     selection();
-  }, [currentUserId, followingIds, selection]);
+  }, [currentUserId, selection]);
 
   // ── Hashtag filter ────────────────────────────────────────────────────────
   const openHashtag = useCallback(async (tag: string) => {
@@ -644,6 +657,19 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
                     ))}
                   </ScrollView>
                 </View>
+              )}
+
+              {/* Campus sponsored ad — shown between suggestions and the photo grid */}
+              {exploreAds.length > 0 && (
+                <SponsoredAdCard
+                  ad={exploreAds[0]}
+                  onImpression={(adId) => {
+                    if (!exploreAdImpressionsRef.current.has(adId)) {
+                      exploreAdImpressionsRef.current.add(adId);
+                      recordCampusAdImpression(adId).catch(() => {});
+                    }
+                  }}
+                />
               )}
 
               {/* Explore photo grid — plain View grid (all items visible, no virtualization needed) */}

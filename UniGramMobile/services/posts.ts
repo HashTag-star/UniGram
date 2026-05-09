@@ -273,7 +273,7 @@ export async function unsavePost(postId: string, userId: string) {
 }
 
 export async function getLikedPostIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from('post_likes').select('post_id').eq('user_id', userId);
+  const { data } = await supabase.from('post_likes').select('post_id').eq('user_id', userId).limit(500).order('created_at', { ascending: false });
   return data?.map((r: any) => r.post_id) ?? [];
 }
 
@@ -323,7 +323,7 @@ export async function unrepostPost(postId: string, userId: string): Promise<void
 }
 
 export async function getRepostedPostIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from('post_reposts').select('post_id').eq('user_id', userId);
+  const { data } = await supabase.from('post_reposts').select('post_id').eq('user_id', userId).limit(500).order('created_at', { ascending: false });
   return data?.map((r: any) => r.post_id) ?? [];
 }
 
@@ -399,7 +399,7 @@ export async function getPostLikers(postId: string): Promise<any[]> {
 }
 
 export async function getSavedPostIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from('post_saves').select('post_id').eq('user_id', userId);
+  const { data } = await supabase.from('post_saves').select('post_id').eq('user_id', userId).limit(500).order('created_at', { ascending: false });
   return data?.map((r: any) => r.post_id) ?? [];
 }
 
