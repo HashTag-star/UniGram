@@ -454,17 +454,17 @@ function AppShell() {
       }
     });
 
-    // Splash shows briefly — 350ms is enough to feel intentional without blocking
-    const splashTimer = setTimeout(() => setMinSplashDone(true), 350);
+    // Splash shows briefly — 50ms to ensure a smooth transition
+    const splashTimer = setTimeout(() => setMinSplashDone(true), 50);
 
-    // Preload other tabs early so first switch is instant
+    // Preload other tabs after the feed has had time to fully load (2 seconds)
     const preloadTimer = setTimeout(() => {
       setMountedTabs(prev => {
         const next = new Set(prev);
         ['explore', 'reels', 'market', 'messages', 'profile'].forEach(t => next.add(t as Tab));
         return next;
       });
-    }, 400);
+    }, 2000);
 
     const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
     const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);

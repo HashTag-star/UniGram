@@ -212,10 +212,11 @@ const VideoPost: React.FC<{
     else player.pause();
   }, [player, isActive]);
 
-  // Premium Height: 4:5 is ideal for portrait (IG standard), but we allow up to 1.35x width
+  // Dynamic Height: allow the card to size itself naturally based on aspect ratio,
+  // uncapped up to 9:16 portrait (1.78x width) to ensure maximum immersion.
   const containerHeight = aspectRatio 
-    ? Math.min(width * 1.45, width / aspectRatio) 
-    : width;
+    ? Math.min(width * 1.78, width / aspectRatio) 
+    : width * 1.25;
 
   return (
     <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#000' }}>
@@ -228,7 +229,7 @@ const VideoPost: React.FC<{
         <VideoView
           player={player}
           style={StyleSheet.absoluteFill}
-          contentFit="cover"
+          contentFit="contain"
           nativeControls={false}
         />
       )}
@@ -295,11 +296,11 @@ const MediaCarousel: React.FC<{
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentIdxRef = useRef(0);
   
-  // Premium Height: 4:5 is ideal for portrait (IG standard), but we allow up to 1.45x width for immersion
-  // If no aspect ratio provided, default to 1:1 (square)
+  // Dynamic Height: allow the card to size itself naturally based on aspect ratio,
+  // uncapped up to 9:16 portrait (1.78x width) to ensure maximum immersion.
   const containerHeight = aspectRatio 
-    ? Math.min(width * 1.45, width / aspectRatio) 
-    : width;
+    ? Math.min(width * 1.78, width / aspectRatio) 
+    : width * 1.25;
 
   // Gesture State
   const isSwiping = useSharedValue(false);
@@ -361,7 +362,7 @@ const MediaCarousel: React.FC<{
                 <CachedImage
                   uri={item}
                   style={{ width: '100%', height: '100%' }}
-                  resizeMode="cover" // 'cover' provides the premium, immersive edge-to-edge feel
+                  resizeMode="contain" // 'contain' prevents cropping of important text/flyers while remaining edge-to-edge if aspectRatio is accurate
                 />
               )}
             </View>
@@ -1506,7 +1507,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
 
 const styles = StyleSheet.create({
-  postCard: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 8, overflow: 'hidden' },
+  postCard: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.1)', marginBottom: 0, overflow: 'hidden' },
   postHeader: { 
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
     paddingHorizontal: 12, height: 60, backgroundColor: 'transparent' 

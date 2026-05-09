@@ -101,7 +101,7 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
 
       {/* Video Ad — thumbnail with play overlay; tap opens link */}
       {ad.format === 'video' && (
-        <TouchableOpacity onPress={handleCTA} activeOpacity={0.92}>
+        <TouchableOpacity onPress={handleCTA} activeOpacity={0.95}>
           {ad.media_url ? (
             <CachedImage uri={ad.media_url} style={styles.creativeImage} resizeMode="cover" />
           ) : (
@@ -109,9 +109,21 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
           )}
           <View style={styles.playOverlay}>
             <View style={styles.playBtn}>
-              <Ionicons name="play" size={28} color="#fff" />
+              <Ionicons name="play" size={32} color="#fff" />
             </View>
           </View>
+        </TouchableOpacity>
+      )}
+
+      {/* ── Premium CTA Bar ─────────────────────────────────────────────── */}
+      {ad.format !== 'carousel' && ad.format !== 'text' && (
+        <TouchableOpacity
+          style={[styles.premiumCta, { backgroundColor: colors.bg === '#000000' || colors.bg === '#121212' ? '#1c1c1e' : '#f4f5f7' }]}
+          onPress={handleCTA}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.premiumCtaText, { color: colors.text }]}>{ad.cta || 'Learn more'}</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.text} />
         </TouchableOpacity>
       )}
 
@@ -204,18 +216,6 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
             ) : null}
           </>
         )}
-
-        {/* CTA button */}
-        {ad.format !== 'carousel' && (
-          <TouchableOpacity
-            style={[styles.ctaBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-            onPress={handleCTA}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.ctaBtnText, { color: colors.text }]}>{ad.cta || 'Learn More'}</Text>
-            <Ionicons name="arrow-forward" size={14} color="#6366f1" />
-          </TouchableOpacity>
-        )}
       </View>
 
     </View>
@@ -260,26 +260,33 @@ const styles = StyleSheet.create({
   adBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
 
   // Creative
-  creativeImage: { width: '100%', height: 280 },
-  videoPlaceholder: { height: 280 },
+  creativeImage: { width: width, height: width * 1.25 }, // 4:5 aspect ratio for immersive feel
+  videoPlaceholder: { width: width, height: width * 1.25 },
   playOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
   },
   playBtn: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center', justifyContent: 'center',
   },
+  
+  // Premium CTA Bar
+  premiumCta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 12,
+  },
+  premiumCtaText: { fontSize: 14, fontWeight: '600' },
 
   // Carousel
   carouselCard: {
-    width: width * 0.6,
+    width: width * 0.75,
     borderRadius: 14, borderWidth: 1,
     overflow: 'hidden',
   },
-  carouselImage: { width: '100%', height: 160 },
-  carouselInfo: { padding: 10, gap: 4 },
+  carouselImage: { width: '100%', aspectRatio: 1 },
+  carouselInfo: { padding: 12, gap: 6 },
   carouselTitle: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
   carouselPrice: { fontSize: 14, fontWeight: '800' },
   carouselCTAWrap: {

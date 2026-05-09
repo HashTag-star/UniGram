@@ -1694,6 +1694,7 @@ export const FeedScreen = React.memo(({
       <AnimatedFlashList
         ref={flatListRef}
         data={loading ? [] : feedItems}
+        estimatedItemSize={600}
         keyExtractor={(p: any) => p.id}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
