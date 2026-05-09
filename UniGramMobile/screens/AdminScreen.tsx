@@ -399,50 +399,6 @@ const agentStyles = StyleSheet.create({
 });
 
 
-const SectionHeader: React.FC<{ title: string; onSeeAll?: () => void; count?: number }> = ({ title, onSeeAll, count }) => (
-  <View style={styles.sectionHeader}>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {count !== undefined && (
-        <View style={styles.countBadge}><Text style={styles.countBadgeText}>{count}</Text></View>
-      )}
-    </View>
-    {onSeeAll && (
-      <TouchableOpacity onPress={onSeeAll}>
-        <Text style={styles.seeAllText}>See All</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-);
-
-const HorizontalItem: React.FC<{ 
-  image?: string; 
-  title: string; 
-  subtitle: string; 
-  onPress?: () => void;
-  badge?: string;
-  badgeColor?: string;
-}> = ({ image, title, subtitle, onPress, badge, badgeColor }) => (
-  <TouchableOpacity style={styles.hItem} onPress={onPress}>
-    {image ? (
-      <Image source={{ uri: image }} style={styles.hItemImage} />
-    ) : (
-      <View style={[styles.hItemImage, { backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' }]}>
-        <Ionicons name="image-outline" size={20} color="rgba(255,255,255,0.2)" />
-      </View>
-    )}
-    {badge && (
-      <View style={[styles.hItemBadge, { backgroundColor: badgeColor || '#6366f1' }]}>
-        <Text style={styles.hItemBadgeText}>{badge}</Text>
-      </View>
-    )}
-    <View style={styles.hItemInfo}>
-      <Text style={styles.hItemTitle} numberOfLines={1}>{title}</Text>
-      <Text style={styles.hItemSub} numberOfLines={1}>{subtitle}</Text>
-    </View>
-  </TouchableOpacity>
-);
-
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
 const OverviewTab: React.FC<{ 
