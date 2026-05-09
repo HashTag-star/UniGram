@@ -75,7 +75,7 @@ interface AdminMarketItem {
   profiles: { username: string } | null;
 }
 
-type AdminTab = 'overview' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce' | 'ads';
+type AdminTab = 'overview' | 'agent' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce' | 'ads';
 type PostFilter = 'all' | 'flagged';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -88,6 +88,316 @@ function timeAgo(ts: string) {
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
+
+const SectionHeader: React.FC<{ title: string; onSeeAll?: () => void; count?: number }> = ({ title, onSeeAll, count }) => (
+  <View style={styles.sectionHeader}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {count !== undefined && (
+        <View style={styles.countBadge}><Text style={styles.countBadgeText}>{count}</Text></View>
+      )}
+    </View>
+    {onSeeAll && (
+      <TouchableOpacity onPress={onSeeAll}>
+        <Text style={styles.seeAllText}>See All</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+const HorizontalItem: React.FC<{ 
+  image?: string; 
+  title: string; 
+  subtitle: string; 
+  onPress?: () => void;
+  badge?: string;
+  badgeColor?: string;
+}> = ({ image, title, subtitle, onPress, badge, badgeColor }) => (
+  <TouchableOpacity style={styles.hItem} onPress={onPress}>
+    {image ? (
+      <Image source={{ uri: image }} style={styles.hItemImage} />
+    ) : (
+      <View style={[styles.hItemImage, { backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="image-outline" size={20} color="rgba(255,255,255,0.2)" />
+      </View>
+    )}
+    {badge && (
+      <View style={[styles.hItemBadge, { backgroundColor: badgeColor || '#6366f1' }]}>
+        <Text style={styles.hItemBadgeText}>{badge}</Text>
+      </View>
+    )}
+    <View style={styles.hItemInfo}>
+      <Text style={styles.hItemTitle} numberOfLines={1}>{title}</Text>
+      <Text style={styles.hItemSub} numberOfLines={1}>{subtitle}</Text>
+    </View>
+  </TouchableOpacity>
+);
+
+// ─── Agent Tab ────────────────────────────────────────────────────────────────
+
+interface AgentAction {
+  name: string;
+  args: any;
+  status: 'pending' | 'approved' | 'declined' | 'executed';
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+const AgentTab: React.FC = () => {
+  const [messages, setMessages] = useState<Message[]>([
+    { role: 'assistant', content: "Hello! I'm your UniGram Admin Agent. I can help you manage users, reports, and content. You can give me commands like 'Ban @user' or ask me for a platform health check." }
+  ]);
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [proposals, setProposals] = useState<AgentAction[]>([]);
+  const { showPopup } = usePopup();
+
+  const handleSend = async (customQuery?: string) => {
+    const text = customQuery || query.trim();
+    if (!text || loading) return;
+    
+    const newMessages: Message[] = [...messages, { role: 'user', content: text }];
+    if (!customQuery) {
+      setMessages(newMessages);
+      setQuery('');
+    }
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-ai-chat', {
+        body: { messages: newMessages }
+      });
+
+      if (error) throw error;
+      
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Agent Error: ${data.error}` }]);
+        return;
+      }
+
+      if (data.answer) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.answer }]);
+      }
+
+      if (data.actions) {
+        // If the backend executed them, mark as executed
+        setProposals(prev => [...prev, ...data.actions.map((a: any) => ({ ...a, status: 'executed' }))]);
+      }
+
+      if (data.proposals) {
+        // Suggested actions for admin to approve
+        setProposals(prev => [...prev, ...data.proposals.map((p: any) => ({ ...p, status: 'pending' }))]);
+      }
+    } catch (e: any) {
+      showPopup({
+        title: 'Agent Error',
+        message: e.message ?? 'Failed to communicate with agent.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const executeProposal = async (index: number) => {
+    const p = proposals[index];
+    setLoading(true);
+    try {
+      // We simulate execution by calling the agent with a specific "Approve" message
+      await handleSend(`APPROVED: Execute ${p.name} with ${JSON.stringify(p.args)}`);
+      setProposals(prev => prev.map((item, i) => i === index ? { ...item, status: 'executed' } : item));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <View style={styles.tabContent}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+      >
+        <ScrollView 
+          style={{ flex: 1 }} 
+          contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
+          ref={(r) => r?.scrollToEnd({ animated: true })}
+        >
+          {/* Proactive Tools */}
+          <View style={agentStyles.toolsRow}>
+            <TouchableOpacity 
+              style={agentStyles.toolBtn} 
+              onPress={() => handleSend("Perform a platform health check and look for issues.")}
+              disabled={loading}
+            >
+              <Ionicons name="search" size={16} color="#fff" />
+              <Text style={agentStyles.toolBtnText}>Scan Issues</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={agentStyles.toolBtn} 
+              onPress={() => handleSend("Summarize recent reports and suggest moderation actions.")}
+              disabled={loading}
+            >
+              <Ionicons name="flag" size={16} color="#fff" />
+              <Text style={agentStyles.toolBtnText}>Mod Suggestions</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Proposals & Actions */}
+          {proposals.length > 0 && (
+            <View style={agentStyles.proposalsCard}>
+              <View style={agentStyles.proposalHeader}>
+                <Ionicons name="flash" size={16} color="#fbbf24" />
+                <Text style={agentStyles.proposalTitle}>Agent Proposals & Actions</Text>
+              </View>
+              {proposals.slice(-5).reverse().map((p, i) => (
+                <View key={i} style={agentStyles.proposalItemWrap}>
+                  <View style={agentStyles.proposalItem}>
+                    <Ionicons 
+                      name={p.status === 'executed' ? 'checkmark-circle' : 'time-outline'} 
+                      size={14} 
+                      color={p.status === 'executed' ? '#22c55e' : '#fbbf24'} 
+                    />
+                    <Text style={agentStyles.proposalText}>
+                      <Text style={{ fontWeight: '700' }}>{p.name.replace('_', ' ')}</Text>
+                      {p.status === 'pending' ? ' suggested' : ' executed'}
+                    </Text>
+                  </View>
+                  {p.status === 'pending' && (
+                    <TouchableOpacity 
+                      style={agentStyles.approveBtn} 
+                      onPress={() => executeProposal(proposals.length - 1 - i)}
+                    >
+                      <Text style={agentStyles.approveBtnText}>Approve</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {messages.map((m, i) => (
+            <View 
+              key={i} 
+              style={[
+                agentStyles.messageWrap, 
+                m.role === 'user' ? agentStyles.userMessageWrap : agentStyles.botMessageWrap
+              ]}
+            >
+              {m.role === 'assistant' && (
+                <View style={agentStyles.botIcon}>
+                  <Ionicons name="sparkles" size={12} color="#fff" />
+                </View>
+              )}
+              <View style={[
+                agentStyles.messageBox,
+                m.role === 'user' ? agentStyles.userMessageBox : agentStyles.botMessageBox
+              ]}>
+                <Text style={agentStyles.messageText}>{m.content}</Text>
+              </View>
+            </View>
+          ))}
+          {loading && (
+            <View style={agentStyles.loadingWrap}>
+              <ActivityIndicator size="small" color="#6366f1" />
+              <Text style={agentStyles.loadingText}>Agent is thinking...</Text>
+            </View>
+          )}
+        </ScrollView>
+
+        <View style={agentStyles.inputArea}>
+          <TextInput
+            style={agentStyles.input}
+            placeholder="Tell the agent what to do..."
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={() => handleSend()}
+            multiline
+          />
+          <TouchableOpacity 
+            style={[agentStyles.sendBtn, !query.trim() && { opacity: 0.5 }]} 
+            onPress={() => handleSend()}
+            disabled={!query.trim() || loading}
+          >
+            <Ionicons name="arrow-up" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
+  );
+};
+
+const agentStyles = StyleSheet.create({
+  toolsRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  toolBtn: { 
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(99, 102, 241, 0.2)', paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  toolBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+
+  proposalsCard: {
+    backgroundColor: 'rgba(251, 191, 36, 0.05)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.2)',
+    padding: 12,
+    marginBottom: 20,
+  },
+  proposalHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  proposalTitle: { fontSize: 13, fontWeight: '700', color: '#fbbf24', textTransform: 'uppercase', letterSpacing: 0.5 },
+  proposalItemWrap: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  proposalItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  proposalText: { fontSize: 12, color: 'rgba(255,255,255,0.7)' },
+  approveBtn: { backgroundColor: '#22c55e', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  approveBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+
+  messageWrap: { flexDirection: 'row', marginBottom: 16, maxWidth: '85%' },
+  userMessageWrap: { alignSelf: 'flex-end' },
+  botMessageWrap: { alignSelf: 'flex-start' },
+  botIcon: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
+    marginRight: 8, marginTop: 4,
+  },
+  messageBox: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  userMessageBox: { backgroundColor: '#6366f1' },
+  botMessageBox: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  messageText: { color: '#fff', fontSize: 14, lineHeight: 20 },
+  
+  loadingWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 32 },
+  loadingText: { fontSize: 12, color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' },
+
+  inputArea: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: '#000',
+  },
+  input: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    color: '#fff',
+    fontSize: 14,
+    maxHeight: 100,
+  },
+  sendBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
+  }
+});
+
 
 const SectionHeader: React.FC<{ title: string; onSeeAll?: () => void; count?: number }> = ({ title, onSeeAll, count }) => (
   <View style={styles.sectionHeader}>
@@ -2086,6 +2396,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
 
   const TABS: { key: AdminTab; label: string; icon: string }[] = [
     { key: 'overview', label: 'Overview', icon: 'bar-chart' },
+    { key: 'agent', label: 'AI Agent', icon: 'sparkles' },
     { key: 'users', label: 'Users', icon: 'people' },
     { key: 'posts', label: 'Posts', icon: 'images' },
     { key: 'market', label: 'Market', icon: 'storefront' },
@@ -2140,6 +2451,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
         {activeTab === 'overview' && (
           <OverviewTab stats={stats} loading={statsLoading} onRefresh={loadStats} setActiveTab={setActiveTab} />
         )}
+        {activeTab === 'agent' && <AgentTab />}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'posts' && <PostsTab />}
         {activeTab === 'market' && <MarketTab />}

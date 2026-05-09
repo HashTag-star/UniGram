@@ -18,10 +18,25 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) return;
+      if (!session) {
+        router.push("/login");
+        return;
+      }
+      
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('username, full_name, is_admin')
+        .eq('id', session.user.id)
+        .single();
+
+      if (error || !profile?.is_admin) {
+        await supabase.auth.signOut();
+        router.push("/login");
+        return;
+      }
+
       setAdminEmail(session.user.email ?? null);
-      const { data: profile } = await supabase.from('profiles').select('username, full_name').eq('id', session.user.id).single();
-      if (profile) setAdminName(profile.full_name || profile.username || null);
+      setAdminName(profile.full_name || profile.username || null);
     });
   }, []);
 

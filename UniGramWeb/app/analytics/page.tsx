@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { TrendingUp, Users, FileText, ShieldCheck, AlertTriangle, Activity } from "lucide-react";
+import { TrendingUp, Users, FileText, ShieldCheck, AlertTriangle, Activity, Download } from "lucide-react";
 
 interface DailyBucket { date: string; users: number; }
 
@@ -29,35 +29,30 @@ export default function AnalyticsPage() {
       const d1   = new Date(now -      86400000).toISOString();
       const d5m  = new Date(now -    5 * 60000).toISOString();
 
-      const safe = (p: any) => p.then((r: any) => r.error ? { count: 0 } : r, () => ({ count: 0 }));
-
-      const [
-        { count: totalUsers },     { count: newUsers7d },       { count: newUsers30d },
-        { count: totalPosts },     { count: posts7d },
-        { count: totalReports },   { count: pendingReports },
-        { count: totalVer },       { count: approvedVer },      { count: pendingVer },
-        { count: onlineNow },      { count: activeToday },
-      ] = await Promise.all([
+      const results = await Promise.all([
         supabase.from("profiles").select("*", { count: "exact", head: true }),
         supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", d7),
         supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", d30),
-        safe(supabase.from("posts").select("*", { count: "exact", head: true })),
-        safe(supabase.from("posts").select("*", { count: "exact", head: true }).gte("created_at", d7)),
+        supabase.from("posts").select("*", { count: "exact", head: true }),
+        supabase.from("posts").select("*", { count: "exact", head: true }).gte("created_at", d7),
         supabase.from("reports").select("*", { count: "exact", head: true }),
         supabase.from("reports").select("*", { count: "exact", head: true }).eq("status", "pending"),
         supabase.from("verification_requests").select("*", { count: "exact", head: true }),
         supabase.from("verification_requests").select("*", { count: "exact", head: true }).eq("status", "approved"),
         supabase.from("verification_requests").select("*", { count: "exact", head: true }).eq("status", "pending"),
-        safe(supabase.from("profiles").select("*", { count: "exact", head: true }).gte("last_seen", d5m)),
-        safe(supabase.from("profiles").select("*", { count: "exact", head: true }).gte("last_seen", d1)),
+        supabase.from("profiles").select("*", { count: "exact", head: true }).gte("last_seen", d5m),
+        supabase.from("profiles").select("*", { count: "exact", head: true }).gte("last_seen", d1),
       ]);
 
+      const errors = results.filter(r => r.error);
+      if (errors.length > 0) console.error("Error fetching analytics:", errors);
+
       setStats({
-        totalUsers: totalUsers || 0, newUsers7d: newUsers7d || 0, newUsers30d: newUsers30d || 0,
-        totalPosts: totalPosts || 0, posts7d: posts7d || 0,
-        totalReports: totalReports || 0, pendingReports: pendingReports || 0,
-        totalVerifications: totalVer || 0, approvedVerifications: approvedVer || 0, pendingVerifications: pendingVer || 0,
-        onlineNow: onlineNow || 0, activeToday: activeToday || 0,
+        totalUsers: results[0].count || 0, newUsers7d: results[1].count || 0, newUsers30d: results[2].count || 0,
+        totalPosts: results[3].count || 0, posts7d: results[4].count || 0,
+        totalReports: results[5].count || 0, pendingReports: results[6].count || 0,
+        totalVerifications: results[7].count || 0, approvedVerifications: results[8].count || 0, pendingVerifications: results[9].count || 0,
+        onlineNow: results[10].count || 0, activeToday: results[11].count || 0,
       });
 
       // 7-day signup sparkline
@@ -79,6 +74,40 @@ export default function AnalyticsPage() {
     }
   };
 
+  const exportToCSV = () => {
+    if (!stats) return;
+    
+    const rows = [
+      ["Metric", "Value"],
+      ["Total Users", stats.totalUsers],
+      ["New Users (7d)", stats.newUsers7d],
+      ["New Users (30d)", stats.newUsers30d],
+      ["Total Posts", stats.totalPosts],
+      ["Posts (7d)", stats.posts7d],
+      ["Total Reports", stats.totalReports],
+      ["Pending Reports", stats.pendingReports],
+      ["Total Verifications", stats.totalVerifications],
+      ["Approved Verifications", stats.approvedVerifications],
+      ["Pending Verifications", stats.pendingVerifications],
+      ["Online Now", stats.onlineNow],
+      ["Active Today", stats.activeToday],
+      [],
+      ["Date", "New Signups"],
+      ...daily.map(d => [d.date, d.users])
+    ];
+
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + rows.map(e => e.join(",")).join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `unigram_analytics_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   if (loading) return (
     <div className="p-8 flex items-center justify-center h-96">
       <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -98,9 +127,17 @@ export default function AnalyticsPage() {
           </h1>
           <p className="text-white/50 mt-1">Platform growth, activity, and health metrics.</p>
         </div>
-        <button onClick={fetchAll} className="glass px-4 py-2 rounded-xl text-sm font-medium hover:bg-white/10 transition-colors text-white">
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={exportToCSV}
+            className="glass px-4 py-2 rounded-xl text-sm font-medium hover:bg-white/10 transition-colors text-white/70 flex items-center gap-2"
+          >
+            <Download size={16} /> Export CSV
+          </button>
+          <button onClick={fetchAll} className="glass px-4 py-2 rounded-xl text-sm font-medium hover:bg-white/10 transition-colors text-white">
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Live */}

@@ -9,6 +9,7 @@ import {
   BrainCircuit,
   Send,
   Loader2,
+  ChevronRight,
 } from "lucide-react";
 
 interface Stats {
@@ -53,29 +54,25 @@ export default function Home() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const [
-      { count: userCount },
-      { count: newUsers7d },
-      { count: pendingCount },
-      { count: reportCount },
-      { count: liveCount },
-      { count: postsCount },
-    ] = await Promise.all([
+    const results = await Promise.all([
       supabase.from('profiles').select('*', { count: 'exact', head: true }),
       supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
       supabase.from('verification_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('live_sessions').select('*', { count: 'exact', head: true }).eq('status', 'live'),
-      supabase.from('posts').select('*', { count: 'exact', head: true }).gte('created_at', oneDayAgo).then(res => res, () => ({ count: 0 })),
+      supabase.from('posts').select('*', { count: 'exact', head: true }).gte('created_at', oneDayAgo),
     ]);
 
+    const errors = results.filter(r => r.error);
+    if (errors.length > 0) console.error("Error fetching stats:", errors);
+
     setStats({
-      totalUsers: userCount || 0,
-      pendingVerifications: pendingCount || 0,
-      activeReports: reportCount || 0,
-      liveSessions: liveCount || 0,
-      newUsers7d: newUsers7d || 0,
-      posts24h: (postsCount as any) || 0,
+      totalUsers: results[0].count || 0,
+      newUsers7d: results[1].count || 0,
+      pendingVerifications: results[2].count || 0,
+      activeReports: results[3].count || 0,
+      liveSessions: results[4].count || 0,
+      posts24h: results[5].count || 0,
     });
   };
 
@@ -136,11 +133,16 @@ export default function Home() {
 
             <div className="relative space-y-6">
               <div>
-                <h2 className="text-2xl font-bold flex items-center gap-3">
-                  <BrainCircuit className="text-indigo-400" />
-                  How can I help you today?
-                </h2>
-                <p className="text-white/50 mt-2 max-w-lg text-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-2xl font-bold flex items-center gap-3">
+                    <BrainCircuit className="text-indigo-400" />
+                    How can I help you today?
+                  </h2>
+                  <a href="/agent" className="glass-button px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2 hover:bg-indigo-500/10">
+                    Open Agent Dashboard <ChevronRight size={12} />
+                  </a>
+                </div>
+                <p className="text-white/50 max-w-lg text-sm">
                   Ask me anything about the platform — reports, verifications, user trends, or anything else.
                 </p>
               </div>

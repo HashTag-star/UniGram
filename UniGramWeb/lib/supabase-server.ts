@@ -1,4 +1,4 @@
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { createBrowserClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,7 +12,7 @@ export function createSupabaseServerClient() {
   return createServerClient(url, anon, {
     cookies: {
       getAll()         { return cookieStore.getAll(); },
-      setAll(toSet)    { try { toSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options)); } catch {} },
+      setAll(toSet: { name: string; value: string; options: CookieOptions }[])    { try { toSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options as any)); } catch {} },
     },
   });
 }
@@ -22,7 +22,7 @@ export function createSupabaseMiddlewareClient(req: NextRequest, res: NextRespon
   return createServerClient(url, anon, {
     cookies: {
       getAll()         { return req.cookies.getAll(); },
-      setAll(toSet)    { toSet.forEach(({ name, value, options }) => { req.cookies.set(name, value); res.cookies.set(name, value, options); }); },
+      setAll(toSet: { name: string; value: string; options: CookieOptions }[])    { toSet.forEach(({ name, value, options }) => { req.cookies.set(name, value); res.cookies.set(name, value, options as any); }); },
     },
   });
 }
