@@ -760,17 +760,36 @@ const REEL_THUMB_H = 182;
 
 const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?: (reelId: string) => void; colors: any }> = React.memo(({ reels, onSeeAll, onReelPress, colors }) => {
   const [activeId, setActiveId] = useState<string | null>(reels[0]?.id ?? null);
+  const [viewableIds, setViewableIds] = useState<string[]>([]);
+
   const viewabilityConfigCallbackPairs = useRef([{
-    viewabilityConfig: { itemVisiblePercentThreshold: 60 },
+    viewabilityConfig: { itemVisiblePercentThreshold: 50 },
     onViewableItemsChanged: ({ viewableItems }: any) => {
       if (viewableItems.length > 0) {
-        const best = viewableItems.reduce((a: any, b: any) =>
-          (b.percentVisible ?? 0) > (a.percentVisible ?? 0) ? b : a
-        );
-        setActiveId(best.item?.id ?? null);
+        const ids = viewableItems.map((v: any) => v.item.id);
+        setViewableIds(ids);
+        setActiveId(prev => {
+          if (prev && ids.includes(prev)) return prev;
+          return ids[0];
+        });
       }
     },
   }]).current;
+
+  useEffect(() => {
+    if (viewableIds.length <= 1) return;
+    const timer = setInterval(() => {
+      setActiveId(current => {
+        if (!current) return viewableIds[0];
+        const idx = viewableIds.indexOf(current);
+        if (idx === -1 || idx === viewableIds.length - 1) {
+          return viewableIds[0];
+        }
+        return viewableIds[idx + 1];
+      });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [viewableIds]);
 
   return (
     <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
@@ -1207,8 +1226,7 @@ export const FeedScreen = React.memo(({
           .select('*, profiles(username, avatar_url)')
           .eq('status', 'live')
           .gt('created_at', twelveHoursAgo)
-          .then(r => r)
-          .catch(() => ({ data: [] })),
+          .then(r => r, () => ({ data: [] })),
         getPersonalizedReels(user.id, 6, 0).catch(() => []),
         getFollowSuggestions(user.id, 8).catch(() => []),
         getUserFollowCount(user.id).catch(() => 999),
