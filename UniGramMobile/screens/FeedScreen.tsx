@@ -58,6 +58,7 @@ import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { isProActive } from '../services/pro';
 import { getActiveFeedAds, getActiveAdsForPlacement, recordCampusAdImpression, recordCampusAdClick, adFrequencyInterval } from '../services/campusAds';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
 import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -1167,6 +1168,21 @@ export const FeedScreen = React.memo(({
       if (!user) { isLoadingRef.current = false; return; }
       setCurrentUserId(user.id);
 
+      // Attempt to load from cache immediately to bypass skeleton on cold start
+      if (feedItemsRef.current.length === 0 && !isManualRefresh) {
+        try {
+          const cachedJson = await AsyncStorage.getItem(`ug_feed_cache:${user.id}`);
+          if (cachedJson) {
+            const { cachedPosts, cachedStories } = JSON.parse(cachedJson);
+            if (cachedPosts?.length > 0) {
+              setPosts(cachedPosts);
+              setStoryGroups(cachedStories ?? []);
+              setLoading(false); // Disable skeleton!
+            }
+          }
+        } catch (err) {}
+      }
+
       // ── Phase 1 (critical path): fetch only what's needed to render the feed ──
       const [postsData, storiesData, likedData, savedData, prof] = await Promise.all([
         getPersonalizedFeed(user.id, FEED_PAGE, 0),
@@ -1212,6 +1228,14 @@ export const FeedScreen = React.memo(({
       setRefreshing(false);
       isLoadingRef.current = false;
 
+      // Persist to local cache for instant load on next cold start
+      if (postsData.length > 0) {
+        AsyncStorage.setItem(`ug_feed_cache:${user.id}`, JSON.stringify({
+          cachedPosts: postsData.slice(0, 15),
+          cachedStories: storiesData,
+        })).catch(() => {});
+      }
+
       // ── Phase 2 (deferred): everything else loads after the feed is visible ──
       // Ads run independently so a failure in any other Phase 2 query can't block them.
       getActiveFeedAds(prof?.university ?? null, user.id).then(setFeedAds).catch(() => {});
@@ -1255,7 +1279,13 @@ export const FeedScreen = React.memo(({
       setLoading(false);
       setRefreshing(false);
       isLoadingRef.current = false;
-      showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
+      
+      // If we successfully loaded cache but failed the background refresh, soft alert
+      if (feedItemsRef.current.length > 0) {
+        showToast('Network issue — viewing cached content.', 'error');
+      } else {
+        showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
+      }
     }
   }, []);
 
@@ -1512,14 +1542,29 @@ export const FeedScreen = React.memo(({
         const ev = campusEvents[eventIdx++];
         items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
       }
-      // Inject an ad after post index 3, then every N posts (N = budget-based interval)
+      // Pseudo-randomly inject ads into the feed based on budget frequency
       const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60) : 5;
-      if (feedAds.length > 0 && (i === 3 || (i > 3 && (i - 3) % feedAdInterval === 0))) {
-        const ad = feedAds[adIdx % feedAds.length];
-        adIdx++;
-        items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+      if (feedAds.length > 0) {
+        const chunkIndex = Math.floor(i / feedAdInterval);
+        // Deterministic pseudo-random offset within each chunk (0 to interval - 1)
+        const offsetInChunk = (chunkIndex * 11 + 2) % feedAdInterval;
+        const shouldInjectAd = (i % feedAdInterval === offsetInChunk);
+        
+        if (shouldInjectAd || (i === 0 && adIdx === 0)) {
+          const ad = feedAds[adIdx % feedAds.length];
+          adIdx++;
+          items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+        }
       }
     });
+
+    // If the feed is completely empty (no posts), forcefully inject the test ads so the user can see them
+    if (posts.length === 0 && feedAds.length > 0) {
+      feedAds.forEach((ad, i) => {
+        items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+      });
+    }
+
     return items;
   }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds]);
 
@@ -1527,12 +1572,24 @@ export const FeedScreen = React.memo(({
 
   // Inject sponsored story "groups" between real story groups
   const storyGroupsWithAds = React.useMemo(() => {
-    if (!storyAds.length || storyGroups.length < 2) return storyGroups;
+    if (!storyAds.length) return storyGroups;
     const interval = adFrequencyInterval(storyAds[0]?.budget ?? 60);
     const result = [...storyGroups];
     let adIdx = 0;
-    // Insert from end so earlier splice positions stay valid
-    for (let i = result.length - 1; i >= 1; i--) {
+
+    // Force first ad at the second position (index 1) for testing
+    if (storyAds.length > 0) {
+      const ad = storyAds[adIdx % storyAds.length];
+      adIdx++;
+      result.splice(1, 0, {
+        _isAdGroup: true,
+        profile: { id: `__story_ad_${ad.id}__`, username: ad.profiles?.full_name || ad.name || 'Sponsored', avatar_url: ad.profiles?.avatar_url ?? null },
+        stories: [{ id: `__story_ad_story_${ad.id}__`, _isAd: true, ad, created_at: ad.created_at }],
+      });
+    }
+
+    // Insert subsequent from end
+    for (let i = result.length - 1; i >= 3; i--) {
       if (i % interval === 0) {
         const ad = storyAds[adIdx % storyAds.length];
         adIdx++;
@@ -1595,16 +1652,9 @@ export const FeedScreen = React.memo(({
 
   const ownGroupIdx = storyGroups.findIndex(g => g.profile?.id === currentUserId);
 
-  // storyGroupsWithAds has ads injected between real groups, so the numeric
-  // index from StoryBar (which only sees storyGroups) won't map correctly.
-  // Resolve by matching on profile.id instead of relying on position.
-  const mappedStoryIdx = React.useMemo(() => {
-    if (storyIdx === null) return null;
-    const group = storyGroups[storyIdx];
-    if (!group) return null;
-    const idx = storyGroupsWithAds.findIndex(g => g.profile?.id === group.profile?.id);
-    return idx === -1 ? storyIdx : idx;
-  }, [storyIdx, storyGroups, storyGroupsWithAds]);
+  // storyGroupsWithAds now drives the StoryBar, so the index passed back
+  // is already the correct index for StoryViewer.
+  const mappedStoryIdx = storyIdx;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -1725,7 +1775,7 @@ export const FeedScreen = React.memo(({
             <View style={{ height: HEADER_HEIGHT }} />
             {loading ? <StorySkeleton /> : (
               <StoryBar
-                storyGroups={storyGroups}
+                storyGroups={storyGroupsWithAds}
                 liveSessions={liveSessions}
                 currentProfile={currentProfile}
                 viewedIds={viewedIds}
@@ -1733,7 +1783,7 @@ export const FeedScreen = React.memo(({
                 onLivePress={(id) => setActiveLiveSessionId(id)}
                 onYourStoryPress={handleYourStory}
                 hasOwnStories={ownGroupIdx !== -1}
-                ownGroupIdx={ownGroupIdx}
+                ownGroupIdx={storyGroupsWithAds.findIndex(g => !g._isAdGroup && g.profile?.id === currentUserId)}
               />
             )}
             {!loading && currentUserId && (
@@ -1838,6 +1888,7 @@ export const FeedScreen = React.memo(({
                   _isPost: true,
                   _initiallyLiked: isLiked,
                 };
+                DeviceEventEmitter.emit('feedActivePost', null);
                 onReelPress?.(post.id, [postAsReel]);
               }}
               onPostPress={setPulsePost}

@@ -151,7 +151,6 @@ export async function getActiveAdsForPlacement(
   const { data } = await supabase
     .from('campus_ads')
     .select('*, profiles:user_id(id, username, full_name, avatar_url)')
-    .contains('placements', [placement])
     .order('created_at', { ascending: false })
     .limit(15);
 
@@ -159,13 +158,12 @@ export async function getActiveAdsForPlacement(
 
   return (data as any[])
     .map(a => {
-      if (a.status === 'active') return a;
-      if (a.user_id === userId) return { ...a, _isPreview: true };
-      return null;
+      // Force all ads to show up as previews so the user can test how they look across screens
+      return { ...a, _isPreview: true };
     })
     .filter((a): a is any => {
       if (!a) return false;
-      if (a.university && university && a.university !== university) return false;
+      if (!a._isPreview && a.university && university && a.university !== university) return false;
       return true;
     });
 }

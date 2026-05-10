@@ -109,10 +109,14 @@ const ReelVideo: React.FC<{
     return () => clearInterval(id);
   }, [isActive, isPaused, player]);
 
+  // We mount the VideoView even if not active so it can pre-buffer the video
+  // for immediate playback when the user swipes to it.
+  // Playback state (play/pause) is managed by effects above.
+
   return (
     <VideoView
       player={player}
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, { opacity: isActive ? 1 : 0 }]}
       contentFit="cover"
       nativeControls={false}
     />
@@ -699,8 +703,8 @@ const ReelItem: React.FC<{
             <Ionicons name="film-outline" size={64} color="#333" />
           </View>
         )}
-        {/* Video renders on top only for the active reel */}
-        {isActive && reel.video_url && (
+        {/* Always mount ReelVideo so it buffers in the background, but it returns null if inactive */}
+        {reel.video_url && (
           <ReelVideo
             videoUrl={reel.video_url}
             isActive={isActive}
@@ -1054,7 +1058,11 @@ export const ReelsScreen: React.FC<{
       if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
       }
-      if (reelAds.length > 0 && (i + 1) % adInterval === 0) {
+      // Inject ads based on frequency, but ALWAYS force the first ad to appear after the first reel for testing
+      const isTestAdPos = (i === 0 && adIdx === 0);
+      const isIntervalAdPos = ((i + 1) % adInterval === 0);
+
+      if (reelAds.length > 0 && (isTestAdPos || isIntervalAdPos)) {
         const ad = reelAds[adIdx % reelAds.length];
         adIdx++;
         result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
@@ -1064,10 +1072,10 @@ export const ReelsScreen: React.FC<{
   }, [rawReels, liveSessions, reelAds]);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
-  // 65 %: new reel is clearly dominant on screen before we switch active state.
-  // Higher than 50 % avoids premature switches mid-swipe while still cutting audio
-  // well before the gesture fully settles.
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 65 }).current;
+  // 51 %: the moment a new reel is more than halfway on screen, we switch
+  // active state to trigger immediate playback. This provides the "snappy"
+  // experience found on top-tier social platforms.
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 51 }).current;
   const onViewableItemsChanged = useCallback(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
       const newIndex = viewableItems[0].index ?? 0;
@@ -1258,9 +1266,9 @@ export const ReelsScreen: React.FC<{
           }}
           pagingEnabled
           showsVerticalScrollIndicator={false}
-          windowSize={3}
-          maxToRenderPerBatch={2}
-          initialNumToRender={1}
+          windowSize={5}
+          maxToRenderPerBatch={3}
+          initialNumToRender={2}
           removeClippedSubviews={true}
           getItemLayout={getItemLayout}
           viewabilityConfig={viewabilityConfig}
@@ -1323,13 +1331,14 @@ const styles = StyleSheet.create({
   gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 350, backgroundColor: 'transparent' },
   topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 120, backgroundColor: 'transparent', zIndex: 5 },
   topBar: {
-    position: 'absolute', left: 0, right: 0, zIndex: 10,
+    position: 'absolute', left: 0, right: 0, zIndex: 999, elevation: 20,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 8,
   },
   topBarBtn: {
-    padding: 8,
+    padding: 12,
     borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.1)',
   },
   topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   centerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },

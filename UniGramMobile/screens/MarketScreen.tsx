@@ -1139,7 +1139,11 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     let adIdx = 0;
     browseItems.forEach((item, i) => {
       result.push(item);
-      if (i === 3 || (i > 3 && (i - 3) % interval === 0)) {
+      // Inject ads based on frequency, but ALWAYS force the first ad to appear after the first item for testing
+      const isTestAdPos = (i === 0 && adIdx === 0);
+      const isIntervalAdPos = (i === 3 || (i > 3 && (i - 3) % interval === 0));
+
+      if (isTestAdPos || isIntervalAdPos) {
         const ad = marketAds[adIdx % marketAds.length];
         adIdx++;
         result.push({ id: `__market_ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });

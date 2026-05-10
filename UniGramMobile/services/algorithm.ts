@@ -667,10 +667,12 @@ function assembleFeed(rankedPosts: any[]): any[] {
   const topicCount: Record<string, number> = {};
 
   for (const post of rankedPosts) {
-    if (seenAuthors.has(post.user_id)) continue;
+    // TEMPORARILY DISABLED for testing: allow consecutive posts from same author
+    // if (seenAuthors.has(post.user_id)) continue;
 
     const topic = derivePostTopic(post);
-    if ((topicCount[topic] ?? 0) >= 2) continue;
+    // TEMPORARILY DISABLED for testing: allow more than 2 posts per topic
+    // if ((topicCount[topic] ?? 0) >= 2) continue;
 
     feed.push(post);
     seenAuthors.add(post.user_id);

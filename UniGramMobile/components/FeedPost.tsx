@@ -192,7 +192,7 @@ export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.me
 
   return (
     <View style={StyleSheet.absoluteFill}>
-      {/* Fallback while video first frame loads */}
+      {/* Fallback while video first frame loads or when inactive */}
       {reel.thumbnail_url ? (
         <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
       ) : (
@@ -200,12 +200,14 @@ export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.me
           <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.1)" />
         </View>
       )}
-      <VideoView
-        player={player}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        nativeControls={false}
-      />
+      {isActive && (
+        <VideoView
+          player={player}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          nativeControls={false}
+        />
+      )}
     </View>
   );
 });
@@ -319,7 +321,7 @@ const MediaCarousel: React.FC<{
   aspectRatio?: number;
 }> = React.memo(({ mediaUrls, type, onDoubleTap, onSingleTap, isMuted, isActive, aspectRatio }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
-  const currentIdxRef = useRef(0);
+  const currentIdxShared = useSharedValue(0);
   const [dynamicRatio, setDynamicRatio] = useState<number | null>(aspectRatio ?? null);
   
   // Dynamic Height: allow the card to size itself naturally based on aspect ratio,
@@ -335,7 +337,7 @@ const MediaCarousel: React.FC<{
     .numberOfTaps(1)
     .onEnd(() => {
       if (!isSwiping.value) {
-        runOnJS(onSingleTap)(currentIdxRef.current);
+        runOnJS(onSingleTap)(currentIdxShared.value);
       }
     });
 
@@ -369,14 +371,18 @@ const MediaCarousel: React.FC<{
         onMomentumScrollEnd={e => {
           DeviceEventEmitter.emit('setPagerScroll', true);
           const idx = Math.round(e.nativeEvent.contentOffset.x / width);
-          setCurrentIdx(idx);
-          currentIdxRef.current = idx;
+          if (currentIdxShared.value !== idx) {
+            currentIdxShared.value = idx;
+            setCurrentIdx(idx);
+          }
         }}
         onScroll={e => {
           const x = e.nativeEvent.contentOffset.x;
           const idx = Math.round(x / width);
-          setCurrentIdx(idx);
-          currentIdxRef.current = idx;
+          if (currentIdxShared.value !== idx) {
+            currentIdxShared.value = idx;
+            setCurrentIdx(idx);
+          }
         }}
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item, index }) => (
@@ -866,8 +872,6 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     return () => sub.remove();
   }, []);
 
-  const isActive = (isActiveProp ?? isActiveInternal) && isAppActive;
-
   useEffect(() => {
     if (isActiveProp !== undefined) return; // Prop takes priority, skip listener
     const sub = DeviceEventEmitter.addListener('feedActivePost', (id: string | null) => {
@@ -894,6 +898,10 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [imageViewerUris, setImageViewerUris] = useState<string[]>([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
+
+  const isActive = (isActiveProp ?? isActiveInternal) && isAppActive && !fullVideoUri && !showImageViewer && !showComments && !showOptions && !showShare && !showRepostSheet && !showLikers;
+  const isActiveRef = useRef(isActive);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
   const [songLoading, setSongLoading] = useState(false);
   const [songPreviewUrl, setSongPreviewUrl] = useState<string | null>(null);
   // Pass null when there is no song — avoids activating the iOS audio session
@@ -944,12 +952,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   }, [songPlayer, isMuted]);
 
   useEffect(() => {
-    if (isActive) {
-      if (post.song) toggleSongPreview();
+    if (!songPlayer) return;
+    if (isActive && post.song) {
+      toggleSongPreview();
     } else {
       songPlayer.pause();
     }
-  }, [isActive, songPlayer]);
+  }, [isActive, songPlayer, post.song]);
 
   // Proactive song pre-fetching: fetch the preview URL as soon as the post is mounted
   // so it's ready by the time the user scrolls to it.
@@ -1006,10 +1015,13 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   }, [post.id]);
 
   const toggleSongPreview = async () => {
-    if (songPlayer.playing) {
+    if (!songPlayer) return;
+    if (songPlayer.playing && !isActiveRef.current) {
       songPlayer.pause();
       return;
     }
+    
+    if (songPlayer.playing) return; // Already playing correctly
     if (songLoading) return;
 
     if (!songPreviewUrl) {
@@ -1021,6 +1033,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         const json = await res.json();
         const url = json.results?.[0]?.previewUrl ?? null;
         if (url) {
+          _songUrlCache.set(post.song!, url);
           setSongPreviewUrl(url);
         }
       } catch {
@@ -1028,7 +1041,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         setSongLoading(false);
       }
     }
-    songPlayer.play();
+
+    // FINAL CHECK: ensure we are still the active post before starting audio
+    if (isActiveRef.current && !songPlayer.playing) {
+      songPlayer.play();
+    }
   };
 
   const bounceHeart = () => {
@@ -1361,21 +1378,41 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       />
 
       {/* Repost banner — shown when this post itself is a repost of another */}
-      {post.type === 'repost' && post.repost_post && (
-        <>
-          <View style={[styles.repostBanner, { borderColor: colors.border }]}>
-            <Ionicons name="repeat" size={13} color="#22c55e" />
-            <Text style={[styles.repostBannerText, { color: colors.textMuted }]}>
-              Repost of @{post.repost_post.profiles?.username ?? 'user'}
-            </Text>
-          </View>
-          <QuotePostCard post={post.repost_post} onPress={() => onPostPress?.(post.repost_post)} />
-        </>
+      {post.type === 'repost' && (
+        post.repost_post ? (
+          <>
+            <View style={[styles.repostBanner, { borderColor: colors.border }]}>
+              <Ionicons name="repeat" size={13} color="#22c55e" />
+              <Text style={[styles.repostBannerText, { color: colors.textMuted }]}>
+                Repost of @{post.repost_post.profiles?.username ?? 'user'}
+              </Text>
+            </View>
+            <QuotePostCard post={post.repost_post} onPress={() => onPostPress?.(post.repost_post)} />
+          </>
+        ) : post.repost_of ? (
+          <>
+            <View style={[styles.repostBanner, { borderColor: colors.border }]}>
+              <Ionicons name="repeat" size={13} color="#22c55e" />
+              <Text style={[styles.repostBannerText, { color: colors.textMuted }]}>Repost</Text>
+            </View>
+            <View style={[styles.deletedQuoteCard, { borderColor: colors.border, backgroundColor: colors.bg2 }]}>
+              <Ionicons name="trash-outline" size={20} color={colors.textMuted} />
+              <Text style={{ color: colors.textMuted, marginLeft: 8 }}>Original post is no longer available.</Text>
+            </View>
+          </>
+        ) : null
       )}
 
       {/* Quote card — shown below caption when this post quotes another */}
-      {post.type === 'quote' && post.quote_post && (
-        <QuotePostCard post={post.quote_post} onPress={() => onPostPress?.(post.quote_post)} />
+      {post.type === 'quote' && (
+        post.quote_post ? (
+          <QuotePostCard post={post.quote_post} onPress={() => onPostPress?.(post.quote_post)} />
+        ) : post.quote_of ? (
+          <View style={[styles.deletedQuoteCard, { borderColor: colors.border, backgroundColor: colors.bg2 }]}>
+            <Ionicons name="trash-outline" size={20} color={colors.textMuted} />
+            <Text style={{ color: colors.textMuted, marginLeft: 8 }}>Original post is no longer available.</Text>
+          </View>
+        ) : null
       )}
 
       {post.type !== 'thread' && post.type !== 'repost' && (post.media_url || (post.media_urls && post.media_urls.length > 0)) ? (
@@ -1580,6 +1617,11 @@ const styles = StyleSheet.create({
   threadCardMore: { fontSize: 14, color: '#6366f1', fontWeight: '600', marginTop: 4 },
   repostBanner: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingTop: 4, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth },
   repostBannerText: { fontSize: 12, fontWeight: '500' },
+  deletedQuoteCard: {
+    marginHorizontal: 14, marginVertical: 6,
+    padding: 16, borderRadius: 12, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center',
+  },
   postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 8 },
   actionBtn: { padding: 4 },
   postInfo: { paddingHorizontal: 14, paddingBottom: 16 },

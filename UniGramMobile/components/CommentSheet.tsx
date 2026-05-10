@@ -132,8 +132,8 @@ const CommentRow = React.memo(function CommentRow({
 
           <View style={{ flex: 1, marginLeft: depth > 0 ? 8 : 12 }}>
             <View style={styles.commentHeader}>
-              <Text style={[styles.commentUser, { color: colors.text, fontSize: depth > 0 ? 13 : 14 }]}>
-                {profile?.username ?? 'user'}
+              <Text style={[styles.commentUser, { color: item.isDeleted ? colors.textMuted : colors.text, fontSize: depth > 0 ? 13 : 14 }]}>
+                {item.isDeleted ? 'Deleted Comment' : (profile?.username ?? 'user')}
               </Text>
               {profile?.is_verified && (
                 <VerifiedBadge type={profile.verification_type} size="sm" />
@@ -148,11 +148,18 @@ const CommentRow = React.memo(function CommentRow({
               </Text>
             </View>
 
-            <Text style={[styles.commentText, { color: colors.textSub, fontSize: depth > 0 ? 13 : 14 }]}>
-              {renderMentions(item.text, colors)}
-            </Text>
+            {item.isDeleted ? (
+              <View style={[styles.deletedCommentBox, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+                <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+                <Text style={[styles.deletedCommentText, { color: colors.textMuted }]}>This comment was deleted.</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={[styles.commentText, { color: colors.textSub, fontSize: depth > 0 ? 13 : 14 }]}>
+                  {renderMentions(item.text, colors)}
+                </Text>
 
-            <View style={styles.commentActions}>
+                <View style={styles.commentActions}>
               <TouchableOpacity
                 onPress={() => onLike(item)}
                 style={styles.actionItem}
@@ -186,6 +193,8 @@ const CommentRow = React.memo(function CommentRow({
                 <Ionicons name="ellipsis-horizontal" size={14} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
+              </>
+            )}
 
             {replies.length > 0 && (
               <TouchableOpacity style={styles.repliesToggle} onPress={() => onToggleExpand(item.id)}>
@@ -770,6 +779,8 @@ export const CommentSheet: React.FC<Props> = ({
   const commentTree = useMemo(() => {
     const map: Record<string, any[]> = {};
     const roots: any[] = [];
+    const commentIds = new Set(comments.map(c => c.id));
+
     [...comments]
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       .forEach(c => {
@@ -780,6 +791,23 @@ export const CommentSheet: React.FC<Props> = ({
           roots.push(c);
         }
       });
+
+    // Check for orphaned replies (parent was deleted)
+    for (const parentId of Object.keys(map)) {
+      if (!commentIds.has(parentId)) {
+        // Create a dummy deleted comment so the replies still render
+        roots.push({
+          id: parentId,
+          text: null,
+          created_at: map[parentId][0]?.created_at ?? new Date().toISOString(),
+          isDeleted: true,
+          profiles: null,
+        });
+      }
+    }
+
+    roots.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
     return { roots, childrenMap: map };
   }, [comments]);
 
@@ -966,6 +994,12 @@ const styles = StyleSheet.create({
   repliesToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
   repliesLine: { width: 24, height: 1, marginRight: 8 },
   repliesToggleText: { fontSize: 12, fontWeight: '600' },
+  deletedCommentBox: { 
+    flexDirection: 'row', alignItems: 'center', 
+    padding: 10, borderRadius: 8, borderWidth: 1, 
+    marginTop: 4, marginBottom: 8 
+  },
+  deletedCommentText: { fontSize: 13, fontStyle: 'italic', marginLeft: 8 },
 
   aiHighlight: { marginBottom: 16, padding: 12, borderRadius: 14, borderWidth: 1 },
   aiHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
