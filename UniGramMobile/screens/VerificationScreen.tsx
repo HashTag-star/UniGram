@@ -151,7 +151,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   };
   const uploadFile = async (asset: DocumentPicker.DocumentPickerAsset, userId: string) => {
     const ext = asset.name.split('.').pop();
-    const fileName = `${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    const fileName = `${userId}_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}.${ext}`;
     const path = fileName;
 
     const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });

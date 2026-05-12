@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     if (!amount_ghs || !email || !product_type) throw new Error('amount_ghs, email and product_type are required');
 
     const amount_pesewas = Math.round(amount_ghs * 100);
-    const reference = `UG-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const reference = `UG-${Date.now()}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase()}`;
 
     const pRes = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',

@@ -6,15 +6,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Entry<T> { data: T; ts: number }
 
-// Tier 1 — memory (lost on app kill, instant reads)
-const mem: Record<string, Entry<any>> = {};
+// Tier 1 — memory (lost on app kill, instant reads). Map prevents __proto__ prototype pollution.
+const mem = new Map<string, Entry<any>>();
 
 const PREFIX = 'ugcache:';
 
 export const Cache = {
   /** Synchronous read from memory. Returns null if not in memory or expired. */
   getSync<T>(key: string, ttlMs: number): T | null {
-    const e = mem[key];
+    const e = mem.get(key);
     if (e && Date.now() - e.ts < ttlMs) return e.data as T;
     return null;
   },
@@ -28,7 +28,7 @@ export const Cache = {
       if (!raw) return null;
       const e: Entry<T> = JSON.parse(raw);
       if (Date.now() - e.ts > ttlMs) return null;
-      mem[key] = e; // promote to memory
+      mem.set(key, e);
       return e.data;
     } catch { return null; }
   },
@@ -36,18 +36,18 @@ export const Cache = {
   /** Write to memory immediately and AsyncStorage in background. */
   set<T>(key: string, data: T): void {
     const e: Entry<T> = { data, ts: Date.now() };
-    mem[key] = e;
+    mem.set(key, e);
     AsyncStorage.setItem(PREFIX + key, JSON.stringify(e)).catch(() => {});
   },
 
   /** Check if a key is stale (older than ttlMs) without reading the full value. */
   isStale(key: string, ttlMs: number): boolean {
-    const e = mem[key];
+    const e = mem.get(key);
     return !e || Date.now() - e.ts >= ttlMs;
   },
 
   invalidate(key: string): void {
-    delete mem[key];
+    mem.delete(key);
     AsyncStorage.removeItem(PREFIX + key).catch(() => {});
   },
 };

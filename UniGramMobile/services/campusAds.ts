@@ -80,7 +80,7 @@ export async function uploadAdMedia(localUri: string, mimeType?: string): Promis
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const ext = localUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
-  const path = `ads/${user.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const path = `ads/${user.id}/${Date.now()}_${globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8)}.${ext}`;
   return uploadFile('ad-media', path, localUri, mimeType);
 }
 

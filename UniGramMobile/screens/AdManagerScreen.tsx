@@ -119,7 +119,7 @@ function fmtDate(d: string | null): string {
 }
 
 function uid(): string {
-  return Math.random().toString(36).slice(2);
+  return globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 }
 
 function fmtReach([lo, hi]: [number, number]): string {
