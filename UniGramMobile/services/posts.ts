@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
 import { uploadFile } from './upload';
+import { randomId } from '../lib/uuid';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
 
@@ -56,7 +57,7 @@ export async function createPost(
         ext = isVideo ? 'mp4' : 'jpg';
       }
       const bucket = isVideo ? 'videos' : 'post-media';
-      const path = `${userId}/${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const path = `${userId}/${Date.now()}-${randomId(8)}.${ext}`;
       const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
       return uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime);
     });

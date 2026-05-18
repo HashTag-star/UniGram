@@ -12,6 +12,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { submitVerificationRequest } from '../services/verification';
 import { supabase } from '../lib/supabase';
+import { randomId } from '../lib/uuid';
 import { usePopup } from '../context/PopupContext';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
 
@@ -151,7 +152,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
   };
   const uploadFile = async (asset: DocumentPicker.DocumentPickerAsset, userId: string) => {
     const ext = asset.name.split('.').pop();
-    const fileName = `${userId}_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}.${ext}`;
+    const fileName = `${userId}_${Date.now()}_${randomId(8)}.${ext}`;
     const path = fileName;
 
     const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
