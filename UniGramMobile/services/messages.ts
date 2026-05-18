@@ -106,7 +106,7 @@ export async function getMessages(conversationId: string, limit = 60, before?: s
     .select(`
       *,
       profiles(*),
-      message_reactions(id, emoji, user_id, profiles(*)),
+      reactions:message_reactions(id, emoji, user_id, profiles(*)),
       reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))
     `)
     .eq('conversation_id', conversationId)
@@ -152,7 +152,7 @@ export async function sendMessage(
       is_forwarded: isForwarded,
       view_once: viewOnce,
     })
-    .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
+    .select(`*, profiles(*), reactions:message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
     .single();
   if (error) throw error;
 
@@ -345,7 +345,7 @@ export function subscribeToMessages(
         if (!messageId) return;
         const { data } = await supabase
           .from('messages')
-          .select(`*, profiles(*), message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
+          .select(`*, profiles(*), reactions:message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
           .eq('id', messageId)
           .single();
         if (!data) return;
