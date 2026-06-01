@@ -69,11 +69,38 @@ const SecureStoreAdapter = {
 // Prevent fetch from hanging indefinitely. 20s is generous for data queries
 // while still allowing most operations to complete on slow connections.
 // If the caller already supplies a signal (e.g., realtime), we leave it alone.
+// [Ama Mensah - Lead Dev] Replace bare "AbortError: Aborted" with a descriptive
+// SupabaseTimeoutError so LogBox shows the real cause + URL. The most common
+// trigger in the wild is a paused Supabase project (free tier cold-boot can
+// take 60s+); without context the bare AbortError told the operator nothing.
+const FETCH_TIMEOUT_MS = 20_000;
+
+export class SupabaseTimeoutError extends Error {
+  url: string;
+  timeoutMs: number;
+  constructor(url: string, timeoutMs: number) {
+    super(`Supabase request timed out after ${timeoutMs / 1000}s [${url}]`);
+    this.name = 'SupabaseTimeoutError';
+    this.url = url;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response> => {
   if (options.signal) return fetch(url, options);
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 20000);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+  const targetUrl = typeof url === 'string' ? url : (url?.url ?? String(url));
+  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((err: any) => {
+      // Convert the generic abort into a labelled error so callers and LogBox
+      // can distinguish a timeout from a caller-initiated cancellation.
+      if (err?.name === 'AbortError') {
+        throw new SupabaseTimeoutError(targetUrl, FETCH_TIMEOUT_MS);
+      }
+      throw err;
+    })
+    .finally(() => clearTimeout(id));
 };
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {

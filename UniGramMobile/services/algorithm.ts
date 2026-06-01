@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, SupabaseTimeoutError } from '../lib/supabase';
 import { getUserInterests } from './onboarding';
 import { INTERESTS } from '../data/interests';
 import { Cache, TTL } from '../lib/cache';
@@ -51,6 +51,14 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset }),
     getCachedBlockedIds(userId),
   ]);
+
+  // [Ama Mensah - Lead Dev] If the RPC itself timed out (Supabase paused, DB
+  // unreachable, etc.) bail early — the followed-users fallback would just
+  // burn another 20s on the same dead connection and emit another AbortError.
+  if (feedResult.status === 'rejected' && feedResult.reason instanceof SupabaseTimeoutError) {
+    console.warn('Feed RPC timed out — skipping fallback to avoid stacking 20s waits.', feedResult.reason.message);
+    return [];
+  }
 
   const { data, error } = feedResult.status === 'fulfilled'
     ? feedResult.value
