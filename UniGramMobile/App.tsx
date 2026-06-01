@@ -500,6 +500,10 @@ function AppShell() {
         if (done) AsyncStorage.setItem(`ug_onboard:${uid}`, 'true').catch(() => {});
         AccountService.registerAccount(data, session).catch(() => {});
       } else {
+        // [Ama Mensah - Lead Dev] No profile row found — treat as onboarding complete to avoid
+        // an infinite loading gate, but do NOT leave userProfile as null.
+        // Set a minimal stub so downstream null-checks on userProfile don't crash.
+        setUserProfile({ id: uid });
         setOnboardingDone(true);
       }
     };
@@ -523,10 +527,13 @@ function AppShell() {
   useEffect(() => {
     if (!session?.user?.id) return;
     const uid = session.user.id;
+    // [Ama Mensah - Lead Dev] Wrap in try/catch — getConversations can throw if network is down
     const refresh = async () => {
-      const convs = await getConversations(uid);
-      const total = convs.reduce((sum: number, c: any) => sum + (c.unread_count ?? 0), 0);
-      setMessageBadge(total);
+      try {
+        const convs = await getConversations(uid);
+        const total = convs.reduce((sum: number, c: any) => sum + (c.unread_count ?? 0), 0);
+        setMessageBadge(total);
+      } catch {}
     };
     refresh();
     // Subscribe to conversation_participants (filtered to this user) instead of the

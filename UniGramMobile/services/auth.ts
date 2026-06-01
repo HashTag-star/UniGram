@@ -70,9 +70,11 @@ export async function signInWithGoogle(): Promise<'success' | 'cancelled'> {
     return 'success';
   } catch (error: any) {
     // Check if the error is "Module not found" or "Native portion not found"
-    const isModuleMissing = error.message?.includes('could not be found') || 
+    // [Ama Mensah - Lead Dev] Guard against null GoogleSignin before property access
+    const isModuleMissing = !GoogleSignin ||
+                            error.message?.includes('could not be found') ||
                             error.message?.includes('Native module') ||
-                            !GoogleSignin.signIn;
+                            !GoogleSignin?.signIn;
 
     if (isModuleMissing) {
       console.log('Native GoogleSignin module missing, switching to browser-based OAuth.');

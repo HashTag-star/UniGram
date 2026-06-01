@@ -215,6 +215,9 @@ export default function SignupScreen({
     }, 700);
   }, [email]);
 
+  // [Ama Mensah - Lead Dev] Basic email format guard
+  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+
   const handleSignup = async () => {
     if (!fullName.trim() || !username.trim() || !email.trim() || !password || !dobDay || !dobMonth || !dobYear) {
       showPopup({
@@ -226,8 +229,51 @@ export default function SignupScreen({
       return;
     }
 
+    if (!isValidEmail(email)) {
+      showPopup({
+        title: 'Invalid email',
+        message: 'Please enter a valid email address.',
+        icon: 'mail-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
+
     // Age validation (13+)
-    const birthDate = new Date(parseInt(dobYear), parseInt(dobMonth) - 1, parseInt(dobDay));
+    // [Ama Mensah - Lead Dev] Validate DOB ranges explicitly before creating Date to prevent
+    // JS Date overflow silently shifting invalid dates (e.g. Feb 31 → Mar 3).
+    const dayInt = parseInt(dobDay, 10);
+    const monthInt = parseInt(dobMonth, 10);
+    const yearInt = parseInt(dobYear, 10);
+    if (
+      isNaN(dayInt) || isNaN(monthInt) || isNaN(yearInt) ||
+      dayInt < 1 || dayInt > 31 ||
+      monthInt < 1 || monthInt > 12 ||
+      yearInt < 1900 || yearInt > new Date().getFullYear()
+    ) {
+      showPopup({
+        title: 'Invalid date of birth',
+        message: 'Please enter a valid date of birth (DD / MM / YYYY).',
+        icon: 'calendar-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
+    const birthDate = new Date(yearInt, monthInt - 1, dayInt);
+    // Detect overflow: new Date(2000, 1, 31) becomes Mar 2 — check the constructed values match
+    if (
+      birthDate.getFullYear() !== yearInt ||
+      birthDate.getMonth() !== monthInt - 1 ||
+      birthDate.getDate() !== dayInt
+    ) {
+      showPopup({
+        title: 'Invalid date of birth',
+        message: 'The date you entered does not exist. Please check your day and month.',
+        icon: 'calendar-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
     const m = today.getMonth() - birthDate.getMonth();
@@ -282,10 +328,13 @@ export default function SignupScreen({
       });
       return;
     }
-    if (usernameAvailable === null && usernameChecking) {
+    // [Ama Mensah - Lead Dev] Block if availability is unknown for any reason (checking OR check failed/not run yet)
+    if (usernameAvailable === null) {
       showPopup({
-        title: 'Please wait',
-        message: 'Checking username availability...',
+        title: usernameChecking ? 'Please wait' : 'Username not verified',
+        message: usernameChecking
+          ? 'Checking username availability...'
+          : 'Could not verify username availability. Please wait a moment and try again.',
         icon: 'time-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });

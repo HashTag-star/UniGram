@@ -182,12 +182,24 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
     ]).start();
   }, []);
 
+  // [Ama Mensah - Lead Dev] Basic email format guard to avoid unnecessary network round-trips
+  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+
   const handleLogin = async () => {
     if (!email.trim() || !password) {
       showPopup({
         title: 'Missing fields',
         message: 'Please enter your email and password.',
         icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }]
+      });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      showPopup({
+        title: 'Invalid email',
+        message: 'Please enter a valid email address.',
+        icon: 'mail-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
       return;
