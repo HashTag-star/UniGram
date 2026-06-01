@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   View, Text, StyleSheet, Animated, Modal, 
   TouchableOpacity, Dimensions, Platform 
@@ -31,9 +31,14 @@ export const PremiumPopup: React.FC<PremiumPopupProps> = ({
   const { colors } = useTheme();
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  // [Abena Owusu - Frontend] Visibility gate now uses an Animated listener +
+  // useState instead of reading the private `_value` field on opacityAnim,
+  // which is an internal Animated API that breaks across RN versions.
+  const [rendered, setRendered] = useState(visible);
 
   useEffect(() => {
     if (visible) {
+      setRendered(true);
       Animated.parallel([
         Animated.spring(scaleAnim, { toValue: 1, tension: 150, friction: 12, useNativeDriver: true }),
         Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
@@ -42,11 +47,13 @@ export const PremiumPopup: React.FC<PremiumPopupProps> = ({
       Animated.parallel([
         Animated.timing(scaleAnim, { toValue: 0.9, duration: 150, useNativeDriver: true }),
         Animated.timing(opacityAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
-      ]).start();
+      ]).start(({ finished }) => {
+        if (finished) setRendered(false);
+      });
     }
   }, [visible]);
 
-  if (!visible && (opacityAnim as any)._value === 0) return null;
+  if (!visible && !rendered) return null;
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>

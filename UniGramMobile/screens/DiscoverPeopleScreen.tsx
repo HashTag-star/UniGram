@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Dimensions, FlatList,
   ActivityIndicator,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -233,6 +234,8 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
+  // [Abena Owusu - Frontend] Track load failures so we can show a retry state instead of a silent empty screen
+  const [loadError, setLoadError] = useState(false);
   const [currentUserId, setCurrentUserId] = useState('');
   const [peopleYouMayKnow, setPeopleYouMayKnow] = useState<any[]>([]);
   const [sharedInterests, setSharedInterests] = useState<any[]>([]);
@@ -246,6 +249,8 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
   }, []);
 
   const loadData = async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -261,6 +266,7 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
       setCampusTrending(all.filter((u: any) => u.reason === 'Goes to your university').slice(0, 5));
     } catch (err) {
       console.warn('Discover load fail', err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -319,8 +325,25 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
 
       {loading ? (
         <DiscoverSkeleton />
+      ) : loadError ? (
+        // [Abena Owusu - Frontend] Surface load failure with a retry instead of a silent empty screen
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 }}>
+          <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
+          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>Couldn't load suggestions</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center' }}>
+            Check your connection and try again.
+          </Text>
+          <TouchableOpacity
+            onPress={loadData}
+            style={{ marginTop: 8, paddingHorizontal: 18, paddingVertical: 10, backgroundColor: colors.accent, borderRadius: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading discover people"
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
-        <ScrollView 
+        <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 60 }}
         >
@@ -335,13 +358,8 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
               onPress={handleSyncContacts}
               loading={isSyncingContacts}
             />
-            <ContactRow 
-              icon="logo-facebook" 
-              title="Facebook Friends" 
-              subtitle="Connect your Facebook account" 
-              iconColor="#3b82f6" 
-              onPress={() => warning()}
-            />
+            {/* [Abena Owusu - Frontend] Removed "Facebook Friends" placeholder — no integration is wired
+                and the haptic-only press was misleading. Re-add when an FB SDK link flow exists. */}
           </View>
 
           {/* New: From Contacts Section */}
@@ -426,7 +444,21 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
             <View style={{ flex: 1 }}>
               <Text style={styles.promoTitle}>Invite Friends</Text>
               <Text style={styles.promoText}>Grow your community and make UniGram even better together.</Text>
-              <TouchableOpacity style={styles.promoBtn}>
+              {/* [Abena Owusu - Frontend] Wire Share Link to native share sheet so it's no longer a dead button */}
+              <TouchableOpacity
+                style={styles.promoBtn}
+                onPress={async () => {
+                  try {
+                    await Share.share({
+                      message: 'Join me on UniGram — the campus social network for students. https://unigram.app',
+                    });
+                  } catch (e) {
+                    // user cancelled or share unavailable
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Share invite link to UniGram"
+              >
                 <Text style={styles.promoBtnText}>Share Link</Text>
               </TouchableOpacity>
             </View>

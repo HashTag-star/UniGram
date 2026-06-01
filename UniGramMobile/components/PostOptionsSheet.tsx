@@ -8,10 +8,20 @@ import { useTheme } from '../context/ThemeContext';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// [Abena Owusu - Frontend] Minimal Post shape used by the sheet — only the
+// fields the sheet actually reads. Avoids `any` while staying decoupled from
+// FeedPost's full Post type so the sheet can be reused elsewhere.
+export interface PostOptionsSheetPost {
+  id: string;
+  user_id: string;
+  caption?: string | null;
+  profiles?: { username?: string | null } | null;
+}
+
 interface PostOptionsSheetProps {
   visible: boolean;
   onClose: () => void;
-  post: any;
+  post: PostOptionsSheetPost;
   currentUserId: string;
   onDelete?: (postId: string) => void;
   onShare?: () => void;

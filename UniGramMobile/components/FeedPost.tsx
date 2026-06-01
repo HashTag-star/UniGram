@@ -853,7 +853,7 @@ const _songUrlCache = new Map<string, string>();
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
 export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUserId, isLiked = false, isSaved = false, isReposted = false, isMuted, isActive: isActiveProp, setIsMuted, onOpenComments, onCommentCountChange, onDeleted, onUserPress, onVideoPress, onPostPress }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { showPopup } = usePopup();
   const { showToast } = useToast();
   const { medium, success, selection } = useHaptics();
@@ -1299,7 +1299,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
       <View style={[styles.postHeader, { backgroundColor: colors.background }]}>
         <View style={styles.postUserRow}>
-          <TouchableOpacity onPress={() => onUserPress?.(profile)}>
+          {/* [Abena Owusu - Frontend] Avatar + username taps both navigate to the profile; expose role/label to screen readers */}
+          <TouchableOpacity
+            onPress={() => onUserPress?.(profile)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${profile?.username ?? 'user'} profile`}
+          >
             <View style={styles.avatarRing}>
               {profile?.avatar_url
                 ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
@@ -1310,7 +1315,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           </TouchableOpacity>
           <View style={{ marginLeft: 10, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <TouchableOpacity onPress={() => onUserPress?.(profile)}>
+              <TouchableOpacity
+                onPress={() => onUserPress?.(profile)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${profile?.username ?? 'user'} profile`}
+              >
                 <Text style={[styles.postUsername, { color: colors.text }]}>{profile?.username ?? 'user'}</Text>
               </TouchableOpacity>
               {profile?.is_verified && (
@@ -1535,7 +1544,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       {aiContext && (
         <AIContextCard
           result={aiContext}
-          isDark={colors.background === '#000000' || colors.background === '#0f0f0f'}
+          isDark={isDark}
         />
       )}
 
