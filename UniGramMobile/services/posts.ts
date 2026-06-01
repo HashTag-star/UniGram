@@ -220,21 +220,30 @@ export async function deletePost(postId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
-  // 1. Get post data to find media path
+  // 1. Get post data to find media paths (single media_url + carousel media_urls)
+  // [Ama Mensah - Lead Dev] Previously only media_url was cleaned up, leaving
+  // every additional entry in media_urls orphaned in storage on delete.
   const { data: post } = await supabase
     .from('posts')
-    .select('media_url')
+    .select('media_url, media_urls')
     .eq('id', postId)
     .eq('user_id', userId)
     .single();
 
-  // 2. Delete associated file from storage if it exists
-  if (post?.media_url) {
+  // 2. Collect every storage path and remove in a single call
+  const urls: string[] = [];
+  if (post?.media_url) urls.push(post.media_url);
+  if (Array.isArray(post?.media_urls)) urls.push(...post.media_urls.filter(Boolean));
+  if (urls.length) {
     try {
-      // Extract path: "https://.../bucket/userId/timestamp.ext" -> "userId/timestamp.ext"
-      const pathParts = post.media_url.split('/');
-      const path = pathParts.slice(-2).join('/');
-      await supabase.storage.from('post-media').remove([path]);
+      const paths = Array.from(new Set(
+        urls.map(u => {
+          // "https://.../bucket/userId/timestamp.ext" -> "userId/timestamp.ext"
+          const parts = u.split('/');
+          return parts.slice(-2).join('/');
+        })
+      ));
+      await supabase.storage.from('post-media').remove(paths);
     } catch (err) {
       console.warn('Failed to cleanup post media:', err);
     }

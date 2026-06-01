@@ -3,11 +3,17 @@ import * as Linking from 'expo-linking';
 import { supabase } from '../lib/supabase';
 
 // Dynamic require to prevent crashes in Expo Go (Non-native environments)
+// [Ama Mensah - Lead Dev] webClientId now sourced from env; fall back to the
+// hardcoded production value so existing builds keep working if the env var
+// is unset (e.g. local dev that hasn't copied .env.example).
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
+  '679547157570-boeo81q3q6rabecqrjorg9l7um5su2ta.apps.googleusercontent.com';
 let GoogleSignin: any = null;
 try {
   GoogleSignin = require('@react-native-google-signin/google-signin').GoogleSignin;
   GoogleSignin.configure({
-    webClientId: '679547157570-boeo81q3q6rabecqrjorg9l7um5su2ta.apps.googleusercontent.com',
+    webClientId: GOOGLE_WEB_CLIENT_ID,
     offlineAccess: true,
   });
 } catch (e) {
