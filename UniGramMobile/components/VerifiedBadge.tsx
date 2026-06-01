@@ -19,7 +19,8 @@ const BADGE_COLORS: Record<VerificationType, string> = {
   alumni: '#14b8a6',     // Teal
 };
 
-export const VerifiedBadge: React.FC<Props> = ({ type = 'student', size = 'sm', ringColor }) => {
+// [Abena Owusu - Frontend Dev] React.memo: renders on every post card & profile — must not re-render on parent scroll
+export const VerifiedBadge: React.FC<Props> = React.memo(({ type = 'student', size = 'sm', ringColor }) => {
   const { colors } = useTheme();
   const dim = size === 'sm' ? 14 : 18;
   const fontSize = size === 'sm' ? 8 : 10;
@@ -49,4 +50,4 @@ export const VerifiedBadge: React.FC<Props> = ({ type = 'student', size = 'sm', 
       </View>
     </View>
   );
-};
+});

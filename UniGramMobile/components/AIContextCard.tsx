@@ -46,7 +46,8 @@ interface Props {
   isDark: boolean;
 }
 
-export const AIContextCard: React.FC<Props> = ({ result, isDark }) => {
+// [Abena Owusu - Frontend Dev] React.memo: AI card renders inside explore scroll, skip re-renders on unrelated state
+export const AIContextCard: React.FC<Props> = React.memo(({ result, isDark }) => {
   const [expanded, setExpanded] = useState(false);
 
   if (result.type === 'none') return null;
@@ -89,7 +90,7 @@ export const AIContextCard: React.FC<Props> = ({ result, isDark }) => {
       )}
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   card: {

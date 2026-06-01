@@ -470,8 +470,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
               {notifs.length === 0 ? (
                 <View style={styles.empty}>
                   <Ionicons name="notifications-off-outline" size={48} color={colors.textMuted} />
-                  <Text style={styles.emptyTitle}>No notifications yet</Text>
-                  <Text style={styles.emptySubtitle}>
+                  <Text style={[styles.emptyTitle, { color: colors.textSub }]}>No notifications yet</Text>
+                  <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
                     When people like, comment, or follow you, you'll see it here.
                   </Text>
                 </View>
@@ -633,10 +633,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     gap: 12,
   },
-  emptyTitle: { fontSize: 17, fontWeight: '600', color: 'rgba(255,255,255,0.5)' },
+  // [Abena Owusu - Frontend] Moved colors to theme tokens applied inline; keeping base styles here
+  emptyTitle: { fontSize: 17, fontWeight: '600' },
   emptySubtitle: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.25)',
     textAlign: 'center',
     lineHeight: 20,
   },

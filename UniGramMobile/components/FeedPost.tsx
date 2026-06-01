@@ -1474,15 +1474,23 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
         </View>
       ) : null}
 
+      {/* [Abena Owusu - Frontend] Added accessibilityLabel + accessibilityRole to all action buttons */}
       <View style={[styles.postActions, { backgroundColor: colors.background }]}>
         <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
-          <TouchableOpacity onPress={() => doLike()} style={styles.actionBtn}>
+          <TouchableOpacity
+            onPress={() => doLike()}
+            style={styles.actionBtn}
+            accessibilityLabel={liked ? 'Unlike post' : 'Like post'}
+            accessibilityRole="button"
+          >
             <Animated.View style={{ transform: [{ scale: heartScale }] }}>
               <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
             </Animated.View>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.actionBtn} 
+          <TouchableOpacity
+            style={styles.actionBtn}
+            accessibilityLabel="Comment on post"
+            accessibilityRole="button"
             onPress={() => {
               selection();
               onOpenComments?.(post.id, post.user_id);
@@ -1490,8 +1498,10 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           >
             <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.actionBtn} 
+          <TouchableOpacity
+            style={styles.actionBtn}
+            accessibilityLabel={reposted ? 'Undo repost' : 'Repost'}
+            accessibilityRole="button"
             onPress={() => {
               selection();
               setShowRepostSheet(true);
@@ -1499,8 +1509,10 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           >
             <Ionicons name="repeat" size={25} color={reposted ? '#22c55e' : colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.actionBtn} 
+          <TouchableOpacity
+            style={styles.actionBtn}
+            accessibilityLabel="Share post"
+            accessibilityRole="button"
             onPress={async () => {
               selection();
               setShowShare(true);
@@ -1510,7 +1522,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
           </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={toggleSave} style={styles.actionBtn}>
+        <TouchableOpacity
+          onPress={toggleSave}
+          style={styles.actionBtn}
+          accessibilityLabel={saved ? 'Unsave post' : 'Save post'}
+          accessibilityRole="button"
+        >
           <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? '#fbbf24' : colors.text} />
         </TouchableOpacity>
       </View>

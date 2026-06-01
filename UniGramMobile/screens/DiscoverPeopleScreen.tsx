@@ -367,9 +367,10 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                   <Text style={[styles.sectionHeading, { color: colors.textMuted, marginBottom: 2 }]}>SHARED INTERESTS</Text>
                   <Text style={[styles.sectionSub, { color: colors.textMuted }]}>People who share your vibe</Text>
                 </View>
-                <TouchableOpacity>
+                {/* [Abena Owusu - Frontend] TODO(product): wire "See all" to a full interests browse screen */}
+                {/* <TouchableOpacity>
                   <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 13 }}>See all</Text>
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
               <ScrollView 
                 horizontal 
@@ -398,9 +399,10 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
               </View>
               <View style={[styles.listCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
                 {peopleYouMayKnow.map(u => <UserRow key={u.id} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
-                <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: 1, borderTopColor: colors.border }]}>
+                {/* [Abena Owusu - Frontend] TODO(product): implement pagination or full suggestions screen */}
+                {/* <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: 1, borderTopColor: colors.border }]}>
                   <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>View More Suggestions</Text>
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
           </View>
 

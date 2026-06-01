@@ -1,3 +1,4 @@
+// [Abena Owusu - Frontend] Fixed hardcoded sheet color, added keyboardShouldPersistTaps, theme token for sheet bg
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -17,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getConversations, sendSharedContent } from '../services/messages';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../context/ThemeContext';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,8 +33,10 @@ interface ShareSheetProps {
   };
 }
 
-export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, content }) => {
+// [Abena Owusu - Frontend Dev] React.memo: prevents re-render when parent updates unrelated state
+export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onClose, content }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -109,7 +113,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.dismiss} onPress={onClose} activeOpacity={1} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20, backgroundColor: colors.bg }]}>
           <View style={styles.handle} />
           
           <View style={styles.header}>
@@ -137,6 +141,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
             <FlatList
               data={filtered}
               keyExtractor={(item) => item.conversations?.id ?? String(Math.random())}
+              keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
               renderItem={({ item }) => {
                 const convId = item.conversations?.id;
@@ -183,7 +188,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       </KeyboardAvoidingView>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   overlay: {
@@ -195,7 +200,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sheet: {
-    backgroundColor: '#1c1c1c',
+    // backgroundColor now applied via theme token inline style above
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: SCREEN_HEIGHT * 0.8,

@@ -175,7 +175,8 @@ export function PermissionsStep({ userId, onNext, onBack }: Props) {
             <ActivityIndicator color="#fff" />
           ) : (
             <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{x:0, y:0}} end={{x:1, y:1}} style={styles.btnGradient}>
-              <Text style={styles.btnText}>🎉 Enter UniGram</Text>
+              {/* [Abena Owusu - Frontend] Removed emoji from button text — can cause font rendering issues on some Android OEMs */}
+              <Text style={styles.btnText}>Enter UniGram</Text>
             </LinearGradient>
           )}
         </TouchableOpacity>
