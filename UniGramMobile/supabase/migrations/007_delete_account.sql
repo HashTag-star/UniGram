@@ -13,9 +13,13 @@ BEGIN
     RAISE EXCEPTION 'Not authenticated';
   END IF;
 
-  -- Delete from auth.users. 
-  -- Foreign keys ON DELETE CASCADE will automatically clean up 
+  -- Delete from auth.users.
+  -- Foreign keys ON DELETE CASCADE will automatically clean up
   -- profiles, posts, reels, follows, and likes.
   DELETE FROM auth.users WHERE id = auth.uid();
 END;
 $$;
+
+-- [Kofi Asante - Backend] fix: grant execute so authenticated users can
+-- call this SECURITY DEFINER function from the client.
+GRANT EXECUTE ON FUNCTION public.delete_current_user() TO authenticated;

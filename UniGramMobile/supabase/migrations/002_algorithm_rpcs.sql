@@ -211,9 +211,11 @@ END;
 $$;
 
 -- ── Grants ────────────────────────────────────────────────────────────────────
+-- [Kofi Asante - Backend] fix: removed premature grants for get_suggested_users
+-- and get_trending_hashtags — those functions are defined in 003 and 016
+-- respectively. Granting here causes a "function does not exist" error on first
+-- push. Grants for those functions live in their own migration files.
 GRANT EXECUTE ON FUNCTION get_personalized_feed   TO authenticated;
 GRANT EXECUTE ON FUNCTION get_explore_posts        TO authenticated;
-GRANT EXECUTE ON FUNCTION get_suggested_users      TO authenticated;
-GRANT EXECUTE ON FUNCTION get_trending_hashtags    TO authenticated;
 GRANT EXECUTE ON FUNCTION update_rel_strength      TO authenticated;
 GRANT EXECUTE ON FUNCTION increment_post_shares    TO authenticated;
