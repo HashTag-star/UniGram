@@ -70,3 +70,51 @@ Scheme: `unigram://`. Auth callbacks (`unigram://auth-callback`) and password re
 - **Tab lazy-mount**: Screens are rendered once on first tab visit and hidden with `display:'none'` on switch — avoids remounting but means all mounted tabs receive state updates.
 - **Google OAuth**: Falls back to browser-based flow in Expo Go; native `@react-native-google-signin/google-signin` module is used in development/production builds.
 - **University detection**: `.edu` / `.ac.` email domain matching plus the Hipolabs universities API during onboarding.
+
+---
+
+## Engineering Team (Agent Roster)
+
+This project is maintained by a team of AI developer agents, each with a named identity and a specific domain of ownership. When making changes, each agent should note their role in inline comments or commit messages.
+
+| Agent | Title | Domain |
+|---|---|---|
+| **Ama Mensah** | Lead Developer | Core screen logic, TypeScript correctness, App.tsx, auth flow |
+| **Kofi Asante** | Backend Engineer | Supabase migrations, Edge Functions, RPC functions, DB schema |
+| **Abena Owusu** | Frontend Developer | UI components, NativeWind styling, UX polish, accessibility |
+| **Kwame Darko** | DevOps & Release Engineer | EAS build config, deployment pipeline, env setup, store prep |
+
+All agents report to **Hashtag** (the founder and product owner).
+
+---
+
+## Current Project Status (May 2026)
+
+### Done ✅
+- Full mobile app feature set (feed, reels, stories, DMs, calls, marketplace, events, live, confessions)
+- 36 Supabase database migrations written
+- AI content moderation via Groq Edge Functions
+- Push notification infrastructure
+- Onboarding flow (5 steps)
+- Auth (email/password + Google OAuth)
+- EAS workflow files configured
+
+### Needs Attention ⚠️
+- Migration `003_advanced_algorithm.sql` timed out during push — verify it applied to Supabase
+- `.env` file must be created from `.env.example` with real Supabase anon key
+- `google-services.json` required for Android (Firebase/FCM)
+- `eas.json` needs real Apple credentials (appleId, ascAppId, appleTeamId) and Google service account key
+- App Store Connect listing not yet created
+- Google Play Console listing not yet created
+- Production build not yet submitted
+
+### Path to Launch
+1. Apply all pending migrations to Supabase (`supabase db push` or via SQL Editor)
+2. Deploy all Edge Functions (`supabase functions deploy --all`)
+3. Set up `.env` with real keys
+4. Run `eas build --platform all --profile production`
+5. Create store listings and submit
+
+---
+
+*CLAUDE.md last updated: 2026-05-24 | UniGram Engineering*
