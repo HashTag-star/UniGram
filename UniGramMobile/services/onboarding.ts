@@ -36,13 +36,14 @@ export async function completeOnboarding(userId: string) {
         affinities[interest.category] = (affinities[interest.category] ?? 0) + 10;
       }
     });
-    await supabase
-      .from('user_preferences')
-      .upsert(
-        { user_id: userId, affinities, university_affinities: {}, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id' },
-      )
-      .catch(() => {});
+    try {
+      await supabase
+        .from('user_preferences')
+        .upsert(
+          { user_id: userId, affinities, university_affinities: {}, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' },
+        );
+    } catch {}
   }
 }
 
@@ -108,9 +109,11 @@ export async function getSuggestedUsers(userId: string, limit = 15): Promise<any
       if (emails.length > 0) {
         // match_contacts: SELECT p.* FROM auth.users u JOIN profiles p ON p.id = u.id
         //                 WHERE u.email = ANY(p_emails) AND p.id != current_user_id
-        const { data: matched } = await supabase
-          .rpc('match_contacts', { p_emails: emails.slice(0, 500) })
-          .catch(() => ({ data: null }));
+        let matched: any[] | null = null;
+        try {
+          const r = await supabase.rpc('match_contacts', { p_emails: emails.slice(0, 500) });
+          matched = (r.data as any[]) ?? null;
+        } catch { matched = null; }
 
         if (matched?.length) {
           contactMatchedIds = (matched as any[]).map((u: any) => u.id);

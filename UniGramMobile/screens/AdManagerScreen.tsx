@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
+import { supabase } from '../lib/supabase';
 import {
   getCampaigns, createCampaignDraft, setPaymentRef,
   uploadAdMedia, initAdPayment, openAdCheckout,
@@ -49,6 +50,7 @@ interface Campaign {
   spent: number;
   impressions: number;
   clicks: number;
+  payment_ref?: string | null;
   start_date: string | null;
   end_date: string | null;
 }

@@ -234,13 +234,18 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
           getSavedPostIds(uid).catch(() => [] as string[]),
           getFollowing(uid).catch(() => [] as any[]),
           getFollowSuggestions(uid, 10).catch(() => [] as any[]),
-          supabase.from('profiles').select('university').eq('id', uid).single().then(r => r.data ?? null).catch(() => null),
+          (async () => {
+            try {
+              const r = await supabase.from('profiles').select('university').eq('id', uid).single();
+              return r.data ?? null;
+            } catch { return null; }
+          })(),
         ]);
         profData = prof;
         setGridPosts(posts);
         setLikedIds(new Set(liked));
         setSavedIds(new Set(saved));
-        const followingSet = new Set(follows.map((f: any) => f.id));
+        const followingSet = new Set<string>(follows.map((f: any) => f.id as string));
         setFollowingIds(followingSet);
         setSuggested(sugg.filter((u: any) => !followingSet.has(u.id)).slice(0, 10));
       } catch (e) {
