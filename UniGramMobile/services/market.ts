@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
+import { Cache, TTL } from '../lib/cache';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,15 @@ export async function getMarketItems(
   limit = 20,
   offset = 0,
 ): Promise<MarketItem[]> {
+  // [Ama Mensah - Lead Dev] Cache browse results when not searching — search queries are too
+  // varied to cache effectively and the user expects live results anyway
+  const cacheable = !search || !search.trim();
+  const key = `market:${category ?? 'all'}:${limit}:${offset}`;
+  if (cacheable) {
+    const hit = Cache.getSync<MarketItem[]>(key, TTL.market);
+    if (hit) return hit;
+  }
+
   let query = supabase
     .from('market_items')
     .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
@@ -75,13 +85,19 @@ export async function getMarketItems(
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data as MarketItem[]) ?? [];
+  const result = (data as MarketItem[]) ?? [];
+  if (cacheable) Cache.set(key, result);
+  return result;
 }
 
 /**
  * All items where seller_id = userId, newest first.
  */
 export async function getMyListings(userId: string): Promise<MarketItem[]> {
+  // [Ama Mensah - Lead Dev] Own listings rarely change — safe to cache for TTL.market
+  const key = `mylistings:${userId}`;
+  const hit = await Cache.get<MarketItem[]>(key, TTL.market);
+  if (hit) return hit;
   const { data, error } = await supabase
     .from('market_items')
     .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
@@ -89,7 +105,9 @@ export async function getMyListings(userId: string): Promise<MarketItem[]> {
     .order('created_at', { ascending: false })
     .limit(100);
   if (error) throw error;
-  return (data as MarketItem[]) ?? [];
+  const result = (data as MarketItem[]) ?? [];
+  Cache.set(key, result);
+  return result;
 }
 
 /**
@@ -157,6 +175,9 @@ export async function createMarketItem(
     .single();
 
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] New listing invalidates browse cache + seller's own listings
+  Cache.invalidatePattern('market:');
+  Cache.invalidate(`mylistings:${sellerId}`);
   return data as MarketItem;
 }
 
@@ -201,6 +222,9 @@ export async function updateMarketItem(
     .single();
 
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Edited item invalidates browse + seller listings caches
+  Cache.invalidatePattern('market:');
+  Cache.invalidate(`mylistings:${userId}`);
   return data as MarketItem;
 }
 
@@ -218,6 +242,9 @@ export async function deleteMarketItem(itemId: string, userId: string): Promise<
 
   const { error } = await supabase.from('market_items').delete().eq('id', itemId);
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Deleted listing must not appear in stale browse or seller views
+  Cache.invalidatePattern('market:');
+  Cache.invalidate(`mylistings:${userId}`);
 }
 
 /**
@@ -237,6 +264,9 @@ export async function markItemSold(itemId: string, userId: string): Promise<void
     .update({ is_sold: true })
     .eq('id', itemId);
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Sold item must drop out of browse results immediately
+  Cache.invalidatePattern('market:');
+  Cache.invalidate(`mylistings:${userId}`);
 }
 
 /**

@@ -13,10 +13,11 @@ interface StackedAvatarsProps {
  * Renders a row of overlapping profile pictures.
  * Commonly used for "Followed by X and 5 others" UI patterns.
  */
-export const StackedAvatars: React.FC<StackedAvatarsProps> = ({ 
-  urls, 
-  size = 24, 
-  overlap = 10, 
+// [Abena Owusu - Frontend Dev] React.memo: appears on every event card, no need to re-render unless avatar list changes
+export const StackedAvatars: React.FC<StackedAvatarsProps> = React.memo(({
+  urls,
+  size = 24,
+  overlap = 10,
   style 
 }) => {
   // Limit to max 3-4 avatars for better UI
@@ -50,7 +51,7 @@ export const StackedAvatars: React.FC<StackedAvatarsProps> = ({
       ))}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

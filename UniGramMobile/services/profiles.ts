@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
+import { Cache, TTL } from '../lib/cache';
 import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 import { createNotification } from './notifications';
@@ -7,12 +8,18 @@ import { sendPushToUser } from './pushNotifications';
 import { AccountService } from './accounts';
 
 export async function getProfile(userId: string) {
+  // [Ama Mensah - Lead Dev] Profile is read on every avatar render, explore card, DM header —
+  // cache for TTL.profile (5 min) with instant sync read for zero perceived latency
+  const key = `profile:${userId}`;
+  const hit = Cache.getSync<any>(key, TTL.profile);
+  if (hit) return hit;
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', userId)
     .single();
   if (error) throw error;
+  Cache.set(key, data);
   return data;
 }
 
@@ -42,6 +49,9 @@ export async function updateProfile(userId: string, updates: {
     .select()
     .single();
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Bust stale profile entry so the updated name/avatar shows immediately
+  Cache.invalidate(`profile:${userId}`);
+  if (data) Cache.set(`profile:${userId}`, data);
   return data;
 }
 
@@ -62,7 +72,10 @@ export async function uploadAvatar(userId: string) {
   if (result.canceled || !result.assets?.[0]?.base64) return null;
 
   const asset = result.assets[0];
-  const ext = asset.uri.split('.').pop() ?? 'jpg';
+  // [Ama Mensah - Lead Dev] Strip query strings before extracting extension (RN URIs can have ?v=... suffixes)
+  const uriWithoutQuery = asset.uri.split('?')[0];
+  const rawExt = uriWithoutQuery.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const ext = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(rawExt) ? rawExt : 'jpg';
   const path = `${userId}/avatar.${ext}`;
 
   const { error: uploadError } = await supabase.storage

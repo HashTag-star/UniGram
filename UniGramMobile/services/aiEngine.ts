@@ -79,15 +79,19 @@ export async function trackInterestSignal(userId: string, tags: string[]): Promi
   // Use upsert — if row exists, Supabase will overwrite. We rely on a DB trigger
   // or a separate RPC to actually increment (see SQL below). As a client-safe
   // fallback we just insert with ignoreDuplicates so we don't overwrite counts.
-  await supabase
-    .from('user_interest_signals')
-    .upsert(rows, { onConflict: 'user_id,interest_tag', ignoreDuplicates: true })
-    .catch(() => {});
+  try {
+    await supabase
+      .from('user_interest_signals')
+      .upsert(rows, { onConflict: 'user_id,interest_tag', ignoreDuplicates: true });
+  } catch {}
 
   // Best-effort increment via RPC (works if the function exists)
-  await supabase
-    .rpc('increment_interest_signals', { p_user_id: userId, p_tags: rows.map(r => r.interest_tag) })
-    .catch(() => {});
+  try {
+    await supabase.rpc('increment_interest_signals', {
+      p_user_id: userId,
+      p_tags: rows.map(r => r.interest_tag),
+    });
+  } catch {}
 }
 
 // ─── Comment Highlights ────────────────────────────────────────────────────────

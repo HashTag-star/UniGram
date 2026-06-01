@@ -8,10 +8,20 @@ import { useTheme } from '../context/ThemeContext';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// [Abena Owusu - Frontend] Minimal Post shape used by the sheet — only the
+// fields the sheet actually reads. Avoids `any` while staying decoupled from
+// FeedPost's full Post type so the sheet can be reused elsewhere.
+export interface PostOptionsSheetPost {
+  id: string;
+  user_id: string;
+  caption?: string | null;
+  profiles?: { username?: string | null } | null;
+}
+
 interface PostOptionsSheetProps {
   visible: boolean;
   onClose: () => void;
-  post: any;
+  post: PostOptionsSheetPost;
   currentUserId: string;
   onDelete?: (postId: string) => void;
   onShare?: () => void;
@@ -26,7 +36,8 @@ interface PostOptionsSheetProps {
   onNotInterested?: () => void;
 }
 
-export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
+// [Abena Owusu - Frontend Dev] React.memo: sheet only re-renders when its own props change
+export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = React.memo(({
   visible, onClose, post, currentUserId, onDelete, onShare, onCopyLink, onSave, isSaved,
   onRepost, isReposted, onQuote, onReport, onBlock, onNotInterested,
 }) => {
@@ -50,8 +61,9 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
 
   const isOwner = post.user_id === currentUserId;
 
+  // [Abena Owusu - Frontend] Added accessibilityLabel and accessibilityRole to interactive items
   const ActionIcon = ({ name, label, onPress, color = colors.text }: any) => (
-    <TouchableOpacity style={styles.actionIconBtn} onPress={onPress}>
+    <TouchableOpacity style={styles.actionIconBtn} onPress={onPress} accessibilityLabel={label} accessibilityRole="button">
       <View style={[styles.iconCircle, { borderColor: colors.border }]}>
         <Ionicons name={name} size={22} color={color} />
       </View>
@@ -60,7 +72,7 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
   );
 
   const ListItem = ({ name, label, onPress, destructive = false }: any) => (
-    <TouchableOpacity style={styles.listItem} onPress={onPress}>
+    <TouchableOpacity style={styles.listItem} onPress={onPress} accessibilityLabel={label} accessibilityRole="button">
       <Ionicons name={name} size={22} color={destructive ? '#ef4444' : colors.text} />
       <Text style={[styles.listItemText, { color: colors.text }, destructive && { color: '#ef4444' }]}>{label}</Text>
     </TouchableOpacity>
@@ -98,9 +110,11 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
             />
           </View>
 
-          <View style={styles.list}>
-            <ListItem name="star-outline" label="Add to favorites" />
-            <ListItem name="person-remove-outline" label="Unfollow" />
+          {/* [Abena Owusu - Frontend] Wrapped list in ScrollView so it is scrollable on small screens */}
+          <ScrollView style={styles.list} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {/* TODO(product): wire onFavorite and onUnfollow props when those service calls exist */}
+            <ListItem name="star-outline" label="Add to favorites" onPress={onClose} />
+            <ListItem name="person-remove-outline" label="Unfollow" onPress={onClose} />
             <ListItem name="information-circle-outline" label="Why you're seeing this post" onPress={onNotInterested} />
             <ListItem name="eye-off-outline" label="Not interested" onPress={() => { onClose(); onNotInterested?.(); }} />
             
@@ -122,12 +136,12 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = ({
               />
             )}
             <View style={{ height: 40 }} />
-          </View>
+          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'flex-end' },

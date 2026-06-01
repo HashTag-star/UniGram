@@ -11,8 +11,8 @@
     "build:ios": "eas build --platform ios --profile production",
     "build:preview": "eas build --platform all --profile preview",
     "build:dev": "eas build --platform android --profile development",
-    "submit:android": "eas submit --platform android",
-    "submit:ios": "eas submit --platform ios"
+    "submit:android": "eas submit --platform android --profile production",
+    "submit:ios": "eas submit --platform ios --profile production"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",

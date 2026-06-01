@@ -115,7 +115,7 @@ export async function updateUserPreferences(
   );
 
   // Mark processed + invalidate cached feed
-  await supabase.rpc('mark_interactions_processed', { p_user_id: userId }).catch(() => {});
+  try { await supabase.rpc('mark_interactions_processed', { p_user_id: userId }); } catch {}
   Cache.invalidate(`feed:${userId}`);
 }
 

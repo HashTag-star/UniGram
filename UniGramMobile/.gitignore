@@ -57,6 +57,10 @@ google-services.json
 GoogleService-Info.plist
 firebase.json
 
+# Google Play Store service account key (separate from Firebase google-services.json)
+# [Kwame Darko - DevOps] Added: Play Store submission uses a dedicated service account JSON
+google-play-service-account.json
+
 # Supabase scratch scripts in root
 /supabase-*.sql
 /supabase_*.sql

@@ -50,6 +50,20 @@ export const Cache = {
     mem.delete(key);
     AsyncStorage.removeItem(PREFIX + key).catch(() => {});
   },
+
+  /**
+   * Removes every in-memory entry whose key starts with `prefix`.
+   * AsyncStorage entries for those keys are evicted lazily on next stale read.
+   * Use to bust whole families of keys (e.g. `invalidatePattern('feed:')`)
+   */
+  invalidatePattern(prefix: string): void {
+    for (const key of mem.keys()) {
+      if (key.startsWith(prefix)) {
+        mem.delete(key);
+        AsyncStorage.removeItem(PREFIX + key).catch(() => {});
+      }
+    }
+  },
 };
 
 // ─── TTLs (tune per data type) ───────────────────────────────────────────────

@@ -26,6 +26,21 @@ async function applyBoost(supabase: any, payment: any) {
     .eq('id', payment.product_id);
 }
 
+// [Kofi Asante - Backend] Webhook was missing ad_payment handling — if Paystack
+// fires the webhook before the user comes back to call verify, the ad stays
+// stuck in 'pending' indefinitely. Mirror the activation logic from
+// paystack-verify here so either entrypoint flips the campaign live.
+async function applyAdPayment(supabase: any, payment: any) {
+  if (payment.product_type !== 'ad_payment' || !payment.product_id) return;
+  const durationDays: number = payment.metadata?.duration_days ?? 7;
+  const startDate = new Date().toISOString();
+  const endDate   = new Date(Date.now() + durationDays * 86_400_000).toISOString();
+  await supabase
+    .from('campus_ads')
+    .update({ status: 'active', start_date: startDate, end_date: endDate })
+    .eq('id', payment.product_id);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
@@ -84,6 +99,7 @@ Deno.serve(async (req) => {
 
     await applyBoost(supabase, payment);
     await applyPro(supabase, payment);
+    await applyAdPayment(supabase, payment);
 
     return new Response('ok', { status: 200 });
   } catch (e) {

@@ -227,12 +227,9 @@ export async function unsendMessage(messageId: string, userId: string) {
   if (error) throw error;
 }
 
-export async function deleteMessageForMe(messageId: string, userId: string) {
-  // Use a raw RPC or a careful update with array append
-  // Since we don't have a specific array append RPC, we'll fetch and update or use raw SQL via RPC
+export async function deleteMessageForMe(messageId: string) {
   const { error } = await supabase.rpc('delete_message_for_me', {
     p_message_id: messageId,
-    p_user_id: userId
   });
   if (error) throw error;
 }

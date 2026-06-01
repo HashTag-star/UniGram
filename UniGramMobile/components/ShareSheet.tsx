@@ -1,3 +1,4 @@
+// [Abena Owusu - Frontend] Fixed hardcoded sheet color, added keyboardShouldPersistTaps, theme token for sheet bg
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -17,6 +18,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getConversations, sendSharedContent } from '../services/messages';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../context/ThemeContext';
+import { useToast } from '../context/ToastContext';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,10 +34,14 @@ interface ShareSheetProps {
   };
 }
 
-export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, content }) => {
+// [Abena Owusu - Frontend Dev] React.memo: prevents re-render when parent updates unrelated state
+export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onClose, content }) => {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const { showToast } = useToast();
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState('');
   const [sending, setSending] = useState<string | null>(null);
   const currentUserId = React.useRef<string>('');
@@ -52,6 +59,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
 
   const loadConversations = async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -60,6 +68,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       setConversations(data);
     } catch (err) {
       console.error('Failed to load conversations for sharing', err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -91,9 +100,11 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
           previewUrl: content.thumbnail,
         }
       );
+      showToast('Sent', 'success');
       onClose();
     } catch (err) {
       console.error('Failed to share content', err);
+      showToast('Couldn’t send. Try again.', 'error');
     } finally {
       setSending(null);
     }
@@ -109,7 +120,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.dismiss} onPress={onClose} activeOpacity={1} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20, backgroundColor: colors.bg }]}>
           <View style={styles.handle} />
           
           <View style={styles.header}>
@@ -133,11 +144,37 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
 
           {loading ? (
             <ActivityIndicator style={{ marginVertical: 40 }} color="#6366f1" />
+          ) : loadError ? (
+            // [Abena Owusu - Frontend] Surface load failures instead of an empty silent sheet
+            <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+              <Ionicons name="cloud-offline-outline" size={40} color="rgba(255,255,255,0.5)" />
+              <Text style={{ color: '#fff', fontSize: 14 }}>Couldn't load your chats.</Text>
+              <TouchableOpacity
+                onPress={loadConversations}
+                style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#4f46e5', borderRadius: 8 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Try again</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <FlatList
               data={filtered}
               keyExtractor={(item) => item.conversations?.id ?? String(Math.random())}
-              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20, flexGrow: 1 }}
+              ListEmptyComponent={
+                <View style={{ paddingVertical: 40, alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="chatbubbles-outline" size={40} color="rgba(255,255,255,0.4)" />
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                    {query.trim() ? 'No matches' : 'No conversations yet'}
+                  </Text>
+                  {!query.trim() && (
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', maxWidth: 240 }}>
+                      Start a chat from someone's profile, then come back to share.
+                    </Text>
+                  )}
+                </View>
+              }
               renderItem={({ item }) => {
                 const convId = item.conversations?.id;
                 const isGroup = item.conversations?.is_group;
@@ -183,7 +220,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ visible, onClose, conten
       </KeyboardAvoidingView>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   overlay: {
@@ -195,7 +232,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sheet: {
-    backgroundColor: '#1c1c1c',
+    // backgroundColor now applied via theme token inline style above
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: SCREEN_HEIGHT * 0.8,
