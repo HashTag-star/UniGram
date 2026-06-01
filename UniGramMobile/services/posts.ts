@@ -4,6 +4,7 @@ import { uploadFile } from './upload';
 import { randomId } from '../lib/uuid';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
+import { Cache, TTL } from '../lib/cache';
 
 const POST_SELECT = `
   id, user_id, type, caption, media_url, media_urls, location, song, 
@@ -13,23 +14,47 @@ const POST_SELECT = `
 `;
 
 export async function getFeedPosts(limit = 20, offset = 0) {
+  // [Ama Mensah - Lead Dev] SWR: return cached result instantly, then refresh in background
+  const key = `feed:${limit}:${offset}`;
+  const hit = Cache.getSync<any[]>(key, TTL.feed);
+  if (hit) {
+    // Refresh in background so next render gets fresh data
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('posts').select(POST_SELECT)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (data) Cache.set(key, data);
+      } catch (_) {}
+    })();
+    return hit;
+  }
   const { data, error } = await supabase
     .from('posts')
     .select(POST_SELECT)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;
-  return data ?? [];
+  const result = data ?? [];
+  Cache.set(key, result);
+  return result;
 }
 
 export async function getUserPosts(userId: string) {
+  // [Ama Mensah - Lead Dev] Profile grid hits this on every visit — cache for TTL.profile
+  const key = `userposts:${userId}`;
+  const hit = await Cache.get<any[]>(key, TTL.profile);
+  if (hit) return hit;
   const { data, error } = await supabase
     .from('posts')
     .select(POST_SELECT)
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return data ?? [];
+  const result = data ?? [];
+  Cache.set(key, result);
+  return result;
 }
 
 export async function createPost(
@@ -103,7 +128,8 @@ export async function createPost(
   }
 
   // Send mention/tag notifications
-  notifyUserIds.forEach(async (tid) => {
+  // [Ama Mensah - Lead Dev] Use Promise.allSettled — forEach+async swallows errors and gives no await
+  await Promise.allSettled(Array.from(notifyUserIds).map(async (tid) => {
     try {
       const preview = caption.substring(0, 30);
       const notifText = caption.trim()
@@ -120,7 +146,11 @@ export async function createPost(
         type: 'post', postId: data.id, userId, channelId: 'social',
       }, uploadedUrls[0] ?? undefined, actor?.avatar_url ?? undefined).catch(() => {});
     } catch (e) {}
-  });
+  }));
+
+  // [Ama Mensah - Lead Dev] New post busts feed cache for all offsets and the author's own post list
+  Cache.invalidatePattern('feed:');
+  Cache.invalidate(`userposts:${userId}`);
 
   // Notify followers that someone they follow posted (fire-and-forget, capped at 500)
   (async () => {
@@ -180,6 +210,9 @@ export async function updatePost(postId: string, userId: string, updates: { capt
     .select()
     .single();
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Caption/location edits invalidate feed + profile grid
+  Cache.invalidatePattern('feed:');
+  Cache.invalidate(`userposts:${userId}`);
   return data;
 }
 
@@ -210,6 +243,9 @@ export async function deletePost(postId: string, userId: string) {
   // 3. Delete from database
   const { error } = await supabase.from('posts').delete().eq('id', postId).eq('user_id', userId);
   if (error) throw error;
+  // [Ama Mensah - Lead Dev] Deleted post must not appear in stale feed or profile grid
+  Cache.invalidatePattern('feed:');
+  Cache.invalidate(`userposts:${userId}`);
 }
 
 export async function likePost(postId: string, userId: string) {
@@ -544,10 +580,11 @@ export async function addPostComment(postId: string, userId: string, text: strin
   } catch (e) {}
 
   // 2. Parse Mentions (@username)
+  // [Ama Mensah - Lead Dev] Use Promise.allSettled — forEach+async swallows errors and gives no await
   const mentions = text.match(/@(\w+)/g);
   if (mentions) {
     const uniqueUsernames = Array.from(new Set(mentions.map(m => m.substring(1))));
-    uniqueUsernames.forEach(async (uname) => {
+    await Promise.allSettled(uniqueUsernames.map(async (uname) => {
       try {
         const { data: targetProfile } = await supabase.from('profiles').select('id').eq('username', uname).single();
         if (targetProfile && targetProfile.id !== userId) {
@@ -566,7 +603,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
           }, undefined, actorAvatar, 'post_comment').catch(() => {});
         }
       } catch (e) {}
-    });
+    }));
   }
 
   return res;
