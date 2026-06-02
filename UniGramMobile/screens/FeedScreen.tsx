@@ -763,8 +763,13 @@ const REEL_THUMB_GAP = 12;
 const REEL_THUMB_H = 250;
 
 const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?: (reelId: string) => void; colors: any }> = React.memo(({ reels, onSeeAll, onReelPress, colors }) => {
-  const [activeId, setActiveId] = useState<string | null>(reels[0]?.id ?? null);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [viewableIds, setViewableIds] = useState<string[]>([]);
+
+  // Initialize activeId when reels land
+  useEffect(() => {
+    if (reels.length > 0 && !activeId) setActiveId(reels[0].id);
+  }, [reels]);
 
   const viewabilityConfigCallbackPairs = useRef([{
     viewabilityConfig: { itemVisiblePercentThreshold: 50 },
@@ -1548,6 +1553,29 @@ export const FeedScreen = React.memo(({
     setShowCommentsAuthorId(authorId);
   }, []);
 
+  // Stable wrapper so memoized FeedPost doesn't see a new onVideoPress on every parent render.
+  const handleVideoPress = useCallback((post: any, isLiked: boolean) => {
+    const postAsReel = {
+      id: post.id,
+      video_url: (post.media_urls && post.media_urls.length > 0)
+        ? post.media_urls[0]
+        : post.media_url,
+      thumbnail_url: null,
+      caption: post.caption,
+      user_id: post.user_id,
+      profiles: post.profiles,
+      likes_count: post.likes_count ?? 0,
+      comments_count: post.comments_count ?? 0,
+      views_count: 0,
+      created_at: post.created_at,
+      song: post.song,
+      _isPost: true,
+      _initiallyLiked: isLiked,
+    };
+    DeviceEventEmitter.emit('feedActivePost', null);
+    onReelPress?.(post.id, [postAsReel]);
+  }, [onReelPress]);
+
   // Session-stable seed so ad slot positions differ between cold starts but
   // stay consistent during a single feed view (avoids ads jumping rows on
   // every re-render). Reset only when the user explicitly pull-to-refreshes.
@@ -1648,7 +1676,7 @@ export const FeedScreen = React.memo(({
     return result;
   }, [storyGroups, storyAds]);
 
-  const handleYourStory = async () => {
+  const handleYourStory = useCallback(async () => {
     if (onCreateStory) { onCreateStory(); return; }
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -1673,7 +1701,7 @@ export const FeedScreen = React.memo(({
         postStory(uri, undefined);
       }
     }
-  };
+  }, [onCreateStory, currentUserId, currentProfile, showPopup]);
 
   const postStory = (uri: string, linkUrl?: string) => {
     const tempId = 'temp-story-' + Date.now();
@@ -1783,9 +1811,9 @@ export const FeedScreen = React.memo(({
             return (
               <View style={{ width: w, height: 24, position: 'relative' }}>
                 {avatarPosts.map((p, i) => (
-                  <Image
+                  <CachedImage
                     key={p.id}
-                    source={{ uri: p.profiles.avatar_url }}
+                    uri={p.profiles.avatar_url}
                     style={{
                       position: 'absolute',
                       left: i * 14,
@@ -1925,31 +1953,11 @@ export const FeedScreen = React.memo(({
               onOpenComments={handleOpenComments}
               onDeleted={handlePostDeleted}
               onUserPress={onUserPress}
-              onVideoPress={(post, isLiked) => {
-                const postAsReel = {
-                  id: post.id,
-                  video_url: (post.media_urls && post.media_urls.length > 0)
-                    ? post.media_urls[0]
-                    : post.media_url,
-                  thumbnail_url: null,
-                  caption: post.caption,
-                  user_id: post.user_id,
-                  profiles: post.profiles,
-                  likes_count: post.likes_count ?? 0,
-                  comments_count: post.comments_count ?? 0,
-                  views_count: 0,
-                  created_at: post.created_at,
-                  song: post.song,
-                  _isPost: true,
-                  _initiallyLiked: isLiked,
-                };
-                DeviceEventEmitter.emit('feedActivePost', null);
-                onReelPress?.(post.id, [postAsReel]);
-              }}
+              onVideoPress={handleVideoPress}
               onPostPress={setPulsePost}
             />
           );
-        }, [isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress, setPulsePost])}
+        }, [isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, handleVideoPress, setPulsePost])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}

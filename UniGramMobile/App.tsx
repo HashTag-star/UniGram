@@ -492,6 +492,9 @@ function AppShell() {
     const hOn = DeviceEventEmitter.addListener('app_online', () => {
       showToast("You're back online! Continue messaging.", 'success');
     });
+    const hOff = DeviceEventEmitter.addListener('app_offline', (data) => {
+      showToast(data?.message || "You're offline.", 'error');
+    });
 
     return () => {
       cancelled = true;
@@ -502,6 +505,7 @@ function AppShell() {
       hM.remove();
       hSu.remove();
       hOn.remove();
+      hOff.remove();
     };
   }, [haptics]);
 
@@ -513,7 +517,7 @@ function AppShell() {
     const fetchProfile = async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned')
+        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned, is_pro, pro_expires_at, pro_disabled')
         .eq('id', uid)
         .single();
       if (data) {

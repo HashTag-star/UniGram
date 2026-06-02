@@ -61,10 +61,34 @@ async function callEdgeFunction(name: string, body: object) {
   return json;
 }
 
-export function isProActive(profile: { is_pro?: boolean; pro_expires_at?: string | null } | null): boolean {
+export function isProActive(
+  profile: { is_pro?: boolean; pro_expires_at?: string | null; pro_disabled?: boolean } | null,
+): boolean {
+  if (!profile?.is_pro) return false;
+  if (profile.pro_disabled) return false;
+  if (!profile.pro_expires_at) return true;
+  return new Date(profile.pro_expires_at).getTime() > Date.now();
+}
+
+// True when the user has paid for Pro and the period is still running,
+// regardless of whether they've opted out. Used by the opt-out UI so the
+// user can see remaining days and re-enable.
+export function isProPeriodActive(
+  profile: { is_pro?: boolean; pro_expires_at?: string | null } | null,
+): boolean {
   if (!profile?.is_pro) return false;
   if (!profile.pro_expires_at) return true;
   return new Date(profile.pro_expires_at).getTime() > Date.now();
+}
+
+export async function setProDisabled(disabled: boolean): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('profiles')
+    .update({ pro_disabled: disabled })
+    .eq('id', user.id);
+  if (error) throw error;
 }
 
 export async function initProPayment(): Promise<{ authorization_url: string; reference: string }> {

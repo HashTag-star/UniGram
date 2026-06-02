@@ -279,6 +279,48 @@ const liveCardStyles = StyleSheet.create({
   swipeHintText: { color: 'rgba(255,255,255,0.25)', fontSize: 12 },
 });
 
+// ─── In-Stream Ad Overlay (Facebook/YouTube style) ──────────────────────────
+
+const InStreamAdOverlay: React.FC<{
+  onComplete: () => void;
+}> = ({ onComplete }) => {
+  const [countdown, setCountdown] = useState(5);
+  const [isFinishing, setIsFinishing] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setIsFinishing(true);
+          setTimeout(onComplete, 800);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [onComplete]);
+
+  return (
+    <View style={styles.inStreamContainer}>
+      <View style={styles.inStreamBackdrop} />
+      <View style={styles.inStreamContent}>
+        <View style={styles.inStreamBadge}>
+          <Text style={styles.inStreamBadgeText}>AD</Text>
+        </View>
+        <Text style={styles.inStreamTitle}>UniGram Pro</Text>
+        <Text style={styles.inStreamSub}>Enjoy an ad-free experience and exclusive campus features.</Text>
+        
+        <View style={styles.inStreamTimerCircle}>
+          <Text style={styles.inStreamTimerText}>{isFinishing ? '✓' : countdown}</Text>
+        </View>
+        <Text style={styles.inStreamFooter}>Video will resume shortly</Text>
+      </View>
+    </View>
+  );
+};
+
 // ─── Reel item ────────────────────────────────────────────────────────────────
 
 const ReelItem: React.FC<{
@@ -291,7 +333,7 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
-}> = ({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
@@ -322,12 +364,26 @@ const ReelItem: React.FC<{
   const commentBarH = COMMENT_BAR_HEIGHT + insets.bottom;
   const profile = reel.profiles;
 
+  // Mid-roll ad demo state
+  const [showMidRoll, setShowMidRoll] = useState(false);
+  const [midRollPlayed, setMidRollPlayed] = useState(false);
+
   // Buffering / network error state
   const [isBuffering, setIsBuffering] = useState(false);
   const [netError, setNetError] = useState(false);
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   const stuckCountRef = useRef(0);
   const lastTimeRef = useRef(-1);
+
+  // Trigger mid-roll ad at 30% progress
+  useEffect(() => {
+    if (isActive && progress > 0.3 && !midRollPlayed && !showMidRoll) {
+      setShowMidRoll(true);
+      setMidRollPlayed(true);
+      setIsPaused(true);
+      hapticMedium();
+    }
+  }, [progress, isActive, midRollPlayed, showMidRoll]);
 
   // Pulsing shimmer loop for seek bar during buffer
   useEffect(() => {
@@ -917,9 +973,18 @@ const ReelItem: React.FC<{
           username: profile?.username,
         }}
       />
+
+      {showMidRoll && (
+        <InStreamAdOverlay 
+          onComplete={() => {
+            setShowMidRoll(false);
+            setIsPaused(false);
+          }} 
+        />
+      )}
     </View>
   );
-};
+});
 
 // ─── Loading skeleton ─────────────────────────────────────────────────────────
 
@@ -1001,7 +1066,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 export const ReelsScreen: React.FC<{
   onBack?: () => void;
   isMuted: boolean;
-  setIsMuted: (m: boolean) => void;
+  setIsMuted: React.Dispatch<React.SetStateAction<boolean>>;
   initialReelId?: string;
   initialReels?: any[];
 }> = ({ onBack, isMuted, setIsMuted, initialReelId, initialReels }) => {
@@ -1070,6 +1135,30 @@ export const ReelsScreen: React.FC<{
 
     rawReels.forEach((reel, i) => {
       result.push(reel);
+
+      // DEMO: Inject a high-quality mock ad as the second item
+      if (i === 0) {
+        result.push({
+          id: '__demo_reel_ad__',
+          _type: 'reel_ad',
+          ad: {
+            id: 'demo-ad-1',
+            name: 'UniGram Premium',
+            headline: 'Elevate your campus experience with UniGram Pro.',
+            body: 'Get exclusive badges, AI insights, and ad-free browsing.',
+            cta: 'Upgrade Now',
+            format: 'video',
+            media_url: 'https://assets.mixkit.co/videos/preview/mixkit-abstract-fast-motion-light-trails-41225-large.mp4',
+            profiles: {
+              username: 'unigram_official',
+              full_name: 'UniGram Team',
+              avatar_url: 'https://unigram.app/icon.png',
+            },
+            skippable: true,
+          }
+        });
+      }
+
       if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
       }
@@ -1235,6 +1324,63 @@ export const ReelsScreen: React.FC<{
     index,
   }), [containerHeight]);
 
+  // Stable callbacks so memoized children (ReelItem, ReelAdCard) don't re-render
+  // every time ReelsScreen's parent state changes.
+  const handleToggleMute = useCallback(() => setIsMuted(m => !m), []);
+  const handleLivePress = useCallback((sessionId: string) => setActiveLiveSessionId(sessionId), []);
+  const handleAdImpression = useCallback((adId: string) => {
+    if (!adImpressionsRef.current.has(adId)) {
+      adImpressionsRef.current.add(adId);
+      recordCampusAdImpression(adId).catch(() => {});
+    }
+  }, []);
+  const keyExtractor = useCallback(
+    (r: any) => `${r._type === 'live' ? 'live-' : r._type === 'reel_ad' ? 'ad-' : ''}${r.id}`,
+    []
+  );
+
+  const renderItem = useCallback(({ item, index }: any) => {
+    if (item._type === 'live') {
+      return (
+        <LivePreviewCard
+          session={item}
+          itemHeight={containerHeight}
+          onJoin={handleLivePress}
+        />
+      );
+    }
+    if (item._type === 'reel_ad') {
+      return (
+        <ReelAdCard
+          ad={item.ad}
+          isActive={index === activeIndex && isAppActive}
+          itemHeight={containerHeight}
+          onSkip={() => {
+            try { reelsListRef.current?.scrollToIndex({ index: index + 1, animated: true }); } catch {}
+          }}
+          onImpression={handleAdImpression}
+        />
+      );
+    }
+    return (
+      <ReelItem
+        reel={item}
+        currentUserId={currentUserId}
+        isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
+        isFollowingUser={followingIds.has(item.profiles?.id)}
+        isActive={index === activeIndex && isAppActive}
+        muted={isMuted}
+        onMuteToggle={handleToggleMute}
+        itemHeight={containerHeight}
+        onBack={onBack}
+      />
+    );
+  }, [
+    containerHeight, activeIndex, isAppActive, currentUserId,
+    likedPostIds, likedIds, followingIds, isMuted,
+    handleLivePress, handleAdImpression, handleToggleMute, onBack,
+  ]);
+
   if (loading) {
     return <ReelSkeleton onBack={onBack} />;
   }
@@ -1268,49 +1414,8 @@ export const ReelsScreen: React.FC<{
         <FlatList
           ref={reelsListRef}
           data={reels}
-          keyExtractor={r => `${r._type === 'live' ? 'live-' : r._type === 'reel_ad' ? 'ad-' : ''}${r.id}`}
-          renderItem={({ item, index }) => {
-            if (item._type === 'live') {
-              return (
-                <LivePreviewCard
-                  session={item}
-                  itemHeight={containerHeight}
-                  onJoin={(sessionId) => setActiveLiveSessionId(sessionId)}
-                />
-              );
-            }
-            if (item._type === 'reel_ad') {
-              return (
-                <ReelAdCard
-                  ad={item.ad}
-                  isActive={index === activeIndex && isAppActive}
-                  itemHeight={containerHeight}
-                  onSkip={() => {
-                    try { reelsListRef.current?.scrollToIndex({ index: index + 1, animated: true }); } catch {}
-                  }}
-                  onImpression={(adId) => {
-                    if (!adImpressionsRef.current.has(adId)) {
-                      adImpressionsRef.current.add(adId);
-                      recordCampusAdImpression(adId).catch(() => {});
-                    }
-                  }}
-                />
-              );
-            }
-            return (
-              <ReelItem
-                reel={item}
-                currentUserId={currentUserId}
-                isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
-                isFollowingUser={followingIds.has(item.profiles?.id)}
-                isActive={index === activeIndex && isAppActive}
-                muted={isMuted}
-                onMuteToggle={() => setIsMuted(!isMuted)}
-                itemHeight={containerHeight}
-                onBack={onBack}
-              />
-            );
-          }}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
           pagingEnabled
           showsVerticalScrollIndicator={false}
           windowSize={5}
@@ -1529,5 +1634,65 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+
+  // ── In-Stream Ad Demo ─────────────────────────────────────────────────────
+  inStreamContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inStreamBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  inStreamContent: {
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  inStreamBadge: {
+    backgroundColor: '#ff3b30',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginBottom: 16,
+  },
+  inStreamBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  inStreamTitle: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  inStreamSub: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+  inStreamTimerCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 3,
+    borderColor: '#ff3b30',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  inStreamTimerText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  inStreamFooter: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
   },
 });

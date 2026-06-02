@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { EditProfileModal } from './EditProfileModal';
 import { AdManagerScreen } from './AdManagerScreen';
 import { deleteUserAccount } from '../services/profiles';
+import { isProActive, isProPeriodActive, setProDisabled } from '../services/pro';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -491,6 +492,34 @@ export const SettingsScreen: React.FC<Props> = ({
     AsyncStorage.setItem(NOTIF_STORAGE_KEY, String(val)).catch(() => {});
   };
 
+  // Pro opt-out: turns the Pro experience off without ending the paid period.
+  // The toggle reflects the *active* state (i.e. inverse of pro_disabled), so
+  // turning it OFF = opt-out, turning it ON = restore Pro until pro_expires_at.
+  const [proTogglePending, setProTogglePending] = useState(false);
+  const handleProToggle = async (nextActive: boolean) => {
+    if (proTogglePending) return;
+    const prevDisabled = !!profile?.pro_disabled;
+    const nextDisabled = !nextActive;
+    if (prevDisabled === nextDisabled) return;
+    // Optimistic
+    onProfileUpdated({ ...profile, pro_disabled: nextDisabled });
+    setProTogglePending(true);
+    try {
+      await setProDisabled(nextDisabled);
+    } catch (e: any) {
+      // Roll back
+      onProfileUpdated({ ...profile, pro_disabled: prevDisabled });
+      showPopup({
+        title: 'Could not update Pro status',
+        message: e?.message ?? 'Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
+    } finally {
+      setProTogglePending(false);
+    }
+  };
+
   const handleLogout = () => {
     showPopup({
       title: 'Log Out',
@@ -635,6 +664,50 @@ export const SettingsScreen: React.FC<Props> = ({
               noBorder
             />
           </Section>
+
+          {isProPeriodActive(profile) && (
+            <Section title="UniGram Pro">
+              <Row
+                icon="star"
+                iconColor="#facc15"
+                label={isProActive(profile) ? 'Pro is active' : 'Pro is disabled'}
+                sublabel={(() => {
+                  const expiresAt = profile?.pro_expires_at;
+                  if (!expiresAt) return isProActive(profile) ? 'Active subscription' : 'Re-enable until your period ends';
+                  const ms = new Date(expiresAt).getTime() - Date.now();
+                  const days = Math.max(0, Math.ceil(ms / 86400000));
+                  if (isProActive(profile)) {
+                    return `${days} day${days === 1 ? '' : 's'} remaining`;
+                  }
+                  return `You can re-enable for ${days} more day${days === 1 ? '' : 's'}`;
+                })()}
+                right={
+                  <Switch
+                    value={isProActive(profile)}
+                    onValueChange={(val) => {
+                      if (val) {
+                        handleProToggle(true);
+                      } else {
+                        showPopup({
+                          title: 'Disable Pro?',
+                          message: 'Your Pro badge and features will be hidden until you turn this back on. No refund — your paid period keeps running, and you can re-enable any time before it ends.',
+                          icon: 'star-outline',
+                          buttons: [
+                            { text: 'Cancel', style: 'cancel', onPress: () => {} },
+                            { text: 'Disable Pro', style: 'destructive', onPress: () => handleProToggle(false) },
+                          ],
+                        });
+                      }
+                    }}
+                    disabled={proTogglePending}
+                    trackColor={{ false: '#333', true: colors.accent }}
+                    thumbColor="#fff"
+                  />
+                }
+                noBorder
+              />
+            </Section>
+          )}
 
           <Section title="Preferences">
             <Row

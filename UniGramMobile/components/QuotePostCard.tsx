@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage } from './CachedImage';
@@ -57,7 +57,7 @@ export const QuotePostCard: React.FC<QuotePostCardProps> = React.memo(({ post, o
           </Text>
         ) : null}
         {thumb ? (
-          <Image source={{ uri: thumb }} style={styles.thumb} resizeMode="cover" />
+          <CachedImage uri={thumb} style={styles.thumb} resizeMode="cover" recyclingKey={`qpc-${post.id}`} />
         ) : !post.caption ? (
           <Text style={[styles.empty, { color: colors.textMuted }]}>View original post</Text>
         ) : null}

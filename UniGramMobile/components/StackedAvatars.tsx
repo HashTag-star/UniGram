@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, ViewStyle, Image } from 'react-native';
+import { View, StyleSheet, ViewStyle } from 'react-native';
 import { CachedImage } from './CachedImage';
 
 interface StackedAvatarsProps {

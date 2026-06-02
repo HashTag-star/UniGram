@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 
 let Haptics: any = null;
@@ -57,5 +57,10 @@ export function useHaptics() {
     try { await h.impactAsync(h.ImpactFeedbackStyle.Light); } catch {}
   }, []);
 
-  return { light, medium, heavy, success, error, warning, selection };
+  // Stable object identity — every call to useHaptics returning a new literal
+  // would re-fire useEffects keyed on `haptics` (App.tsx's startup effect did).
+  return useMemo(
+    () => ({ light, medium, heavy, success, error, warning, selection }),
+    [light, medium, heavy, success, error, warning, selection]
+  );
 }

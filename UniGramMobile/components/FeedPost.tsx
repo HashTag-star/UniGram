@@ -157,56 +157,39 @@ const ThreadTextCard: React.FC<{ caption?: string | null }> = ({ caption }) => {
 };
 
 // Mounts only when its parent is active — creates exactly one player per visible preview
-const ReelVideoLayer: React.FC<{ videoUrl: string }> = ({ videoUrl }) => {
+const ReelVideoLayer: React.FC<{ videoUrl: string; isMuted?: boolean }> = ({ videoUrl, isMuted = true }) => {
   const player = useVideoPlayer(videoUrl, p => {
     p.loop = true;
-    p.muted = true;
+    p.muted = isMuted;
     p.audioMixingMode = 'mixWithOthers';
     p.play();
   });
+
   return (
     <VideoView
       player={player}
       style={StyleSheet.absoluteFill}
-      contentFit="contain"
+      contentFit="cover"
       nativeControls={false}
     />
   );
 };
 
 export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => {
-  const player = useVideoPlayer(reel.video_url, p => {
-    p.loop = true;
-    p.muted = true;
-    p.audioMixingMode = 'mixWithOthers';
-    if (isActive) p.play();
-  });
-
-  useEffect(() => {
-    if (isActive) {
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [isActive, player]);
-
   return (
     <View style={StyleSheet.absoluteFill}>
-      {/* Fallback while video first frame loads or when inactive */}
+      {/* Base Layer: Thumbnail or Fallback Icon */}
       {reel.thumbnail_url ? (
         <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
       ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }]}>
-          <Ionicons name="film-outline" size={48} color="rgba(255,255,255,0.1)" />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="film-outline" size={42} color="rgba(255,255,255,0.15)" />
         </View>
       )}
-      {isActive && (
-        <VideoView
-          player={player}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          nativeControls={false}
-        />
+
+      {/* Video Layer: Only mounts when active to save resources and avoid "blank" flickers */}
+      {isActive && reel.video_url && (
+        <ReelVideoLayer videoUrl={reel.video_url} />
       )}
     </View>
   );

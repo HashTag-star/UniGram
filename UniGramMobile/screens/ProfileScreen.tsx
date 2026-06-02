@@ -674,7 +674,7 @@ export const ProfileScreen = React.memo<Props>(({
         onClose={() => setShowProSheet(false)}
         onSuccess={() => {
           // Optimistic update so the UI responds immediately
-          setProfile((p: any) => p ? { ...p, is_pro: true, pro_expires_at: new Date(Date.now() + 30 * 86400000).toISOString() } : p);
+          setProfile((p: any) => p ? { ...p, is_pro: true, pro_disabled: false, pro_expires_at: new Date(Date.now() + 30 * 86400000).toISOString() } : p);
           showToast('Welcome to UniGram Pro!', 'success');
           // Re-fetch from DB to confirm the subscription persisted
           load();

@@ -89,10 +89,13 @@ export class SupabaseTimeoutError extends Error {
     this.url = url;
     this.timeoutMs = timeoutMs;
     // Friendly message intended for display to end users (no URLs or internals)
-    this.userMessage = `Request timed out. Please check your internet connection and try again.`;
+    this.userMessage = `You're offline.`;
     
     // Mark global state so we can notify when it comes back
-    _wasOffline = true;
+    if (!_wasOffline) {
+      _wasOffline = true;
+      DeviceEventEmitter.emit('app_offline', { message: this.userMessage });
+    }
   }
 }
 
