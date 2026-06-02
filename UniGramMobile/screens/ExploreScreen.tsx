@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, Dimensions, ActivityIndicator, Modal, ScrollView,
+  DeviceEventEmitter,
 } from 'react-native';
 import { FlashList as _FlashList } from '@shopify/flash-list';
 const FlashList = _FlashList as React.ComponentType<any>;
@@ -348,8 +349,13 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
   const isSearching = isSearchFocused || query.length > 0;
   const mediaGridPosts = useMemo(() => gridPosts.filter((p: any) => p.media_url), [gridPosts]);
 
+  const [scrollY, setScrollY] = useState(0);
+
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
+      const topId = viewableItems[0].key;
+      DeviceEventEmitter.emit('feedActivePost', topId);
+
       const lastVisible = viewableItems[viewableItems.length - 1];
       const startIdx = (lastVisible.index ?? 0) + 1;
       const urls: string[] = [];
@@ -598,6 +604,8 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
           contentContainerStyle={{ paddingBottom: 80 }}
           estimatedItemSize={COL}
           drawDistance={300}
+          onScroll={(e: any) => setScrollY(e.nativeEvent.contentOffset.y)}
+          scrollEventThrottle={16}
           ListHeaderComponent={
             <>
               {/* Trending hashtags */}
@@ -668,6 +676,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
               {exploreAds.length > 0 && (
                 <SponsoredAdCard
                   ad={exploreAds[0]}
+                  isActive={isVisible && scrollY < 400}
                   onImpression={(adId) => {
                     if (!exploreAdImpressionsRef.current.has(adId)) {
                       exploreAdImpressionsRef.current.add(adId);

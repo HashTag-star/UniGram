@@ -489,6 +489,9 @@ function AppShell() {
     const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
     const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);
     const hSu = DeviceEventEmitter.addListener('haptic_success', haptics.success);
+    const hOn = DeviceEventEmitter.addListener('app_online', () => {
+      showToast("You're back online! Continue messaging.", 'success');
+    });
 
     return () => {
       cancelled = true;
@@ -498,6 +501,7 @@ function AppShell() {
       hS.remove();
       hM.remove();
       hSu.remove();
+      hOn.remove();
     };
   }, [haptics]);
 

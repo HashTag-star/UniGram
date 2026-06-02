@@ -1073,7 +1073,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
             ))
           ) }
 
-          <View style={[styles.infoBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View key="info-banner" style={[styles.infoBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Ionicons name="information-circle-outline" size={18} color="#6366f1" style={{ marginTop: 1 }} />
             <Text style={[styles.infoText, { color: colors.textSub }]}>
               Campus Ads reach verified students at your university only. Campaigns go live within 24 hours of payment approval.

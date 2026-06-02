@@ -19,6 +19,7 @@ import {
   RefreshControl,
   Share,
   Image,
+  DeviceEventEmitter,
 } from 'react-native';
 import { FlashList as _FlashList } from '@shopify/flash-list';
 const FlashList = _FlashList as React.ComponentType<any>;
@@ -1134,7 +1135,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
   // Inject sponsored ads into the browse grid (every N items, first at index 4)
   const mixedBrowseItems = React.useMemo(() => {
     if (!marketAds.length || activeTab !== 'browse') return browseItems;
-    const interval = adFrequencyInterval(marketAds[0]?.budget ?? 60);
+    const interval = adFrequencyInterval(marketAds[0]?.budget ?? 60, marketAds[0]?.reach_multiplier ?? 1);
     const result: any[] = [];
     let adIdx = 0;
     browseItems.forEach((item, i) => {
@@ -1177,6 +1178,9 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
+      const topId = viewableItems[0].key;
+      DeviceEventEmitter.emit('feedActivePost', topId);
+
       const lastVisible = viewableItems[viewableItems.length - 1];
       const startIdx = (lastVisible.index ?? 0) + 1;
       const urls: string[] = [];
@@ -1612,4 +1616,4 @@ const sell = StyleSheet.create({
   },
   bannedTitle: { fontSize: 20, fontWeight: '700', marginTop: 16 },
   bannedSub: { fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
-});
+});

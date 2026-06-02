@@ -68,6 +68,10 @@ export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onCl
       setConversations(data);
     } catch (err) {
       console.error('Failed to load conversations for sharing', err);
+      // Show a friendly message for timeouts
+      if ((err as any)?.name === 'SupabaseTimeoutError' && (err as any).userMessage) {
+        showToast((err as any).userMessage, 'error');
+      }
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -104,7 +108,11 @@ export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onCl
       onClose();
     } catch (err) {
       console.error('Failed to share content', err);
-      showToast('Couldn’t send. Try again.', 'error');
+      if ((err as any)?.name === 'SupabaseTimeoutError' && (err as any).userMessage) {
+        showToast((err as any).userMessage, 'error');
+      } else {
+        showToast('Couldn’t send. Try again.', 'error');
+      }
     } finally {
       setSending(null);
     }

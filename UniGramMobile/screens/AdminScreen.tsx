@@ -228,7 +228,7 @@ const AgentTab: React.FC = () => {
           ref={(r) => r?.scrollToEnd({ animated: true })}
         >
           {/* Proactive Tools */}
-          <View style={agentStyles.toolsRow}>
+          <View key="proactive-tools" style={agentStyles.toolsRow}>
             <TouchableOpacity 
               style={agentStyles.toolBtn} 
               onPress={() => handleSend("Perform a platform health check and look for issues.")}
@@ -249,13 +249,13 @@ const AgentTab: React.FC = () => {
 
           {/* Proposals & Actions */}
           {proposals.length > 0 && (
-            <View style={agentStyles.proposalsCard}>
+            <View key="agent-proposals" style={agentStyles.proposalsCard}>
               <View style={agentStyles.proposalHeader}>
                 <Ionicons name="flash" size={16} color="#fbbf24" />
                 <Text style={agentStyles.proposalTitle}>Agent Proposals & Actions</Text>
               </View>
               {proposals.slice(-5).reverse().map((p, i) => (
-                <View key={i} style={agentStyles.proposalItemWrap}>
+                <View key={`prop-${i}`} style={agentStyles.proposalItemWrap}>
                   <View style={agentStyles.proposalItem}>
                     <Ionicons 
                       name={p.status === 'executed' ? 'checkmark-circle' : 'time-outline'} 
@@ -282,7 +282,7 @@ const AgentTab: React.FC = () => {
 
           {messages.map((m, i) => (
             <View 
-              key={i} 
+              key={`msg-${i}`} 
               style={[
                 agentStyles.messageWrap, 
                 m.role === 'user' ? agentStyles.userMessageWrap : agentStyles.botMessageWrap
@@ -302,7 +302,7 @@ const AgentTab: React.FC = () => {
             </View>
           ))}
           {loading && (
-            <View style={agentStyles.loadingWrap}>
+            <View key="loading-indicator" style={agentStyles.loadingWrap}>
               <ActivityIndicator size="small" color="#6366f1" />
               <Text style={agentStyles.loadingText}>Agent is thinking...</Text>
             </View>

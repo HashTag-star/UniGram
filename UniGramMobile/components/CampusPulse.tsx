@@ -412,6 +412,7 @@ export const CampusPulse: React.FC<{
           style={styles.pillsRow}
         >
           <TouchableOpacity
+            key="all-pill"
             style={[
               styles.hashPill,
               activeHashtag === null

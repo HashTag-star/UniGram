@@ -10,7 +10,13 @@
       "Bash(node *)",
       "Bash(xargs grep *)",
       "Bash(npx tsc *)",
-      "Bash(grep -n \"VerificationScreen\\\\|showVerification\\\\|</View>.*;$\\\\|return \\(\" screens/ProfileScreen.tsx)"
+      "Bash(grep -n \"VerificationScreen\\\\|showVerification\\\\|</View>.*;$\\\\|return \\(\" screens/ProfileScreen.tsx)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram checkout main)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram pull --ff-only origin main)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram checkout -- .claude/settings.local.json)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram stash pop)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram log --oneline -4)",
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram status --short)"
     ]
   }
 }

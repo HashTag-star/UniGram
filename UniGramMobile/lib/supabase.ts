@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
+import { DeviceEventEmitter } from 'react-native';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -74,15 +75,24 @@ const SecureStoreAdapter = {
 // trigger in the wild is a paused Supabase project (free tier cold-boot can
 // take 60s+); without context the bare AbortError told the operator nothing.
 const FETCH_TIMEOUT_MS = 20_000;
+let _wasOffline = false;
 
 export class SupabaseTimeoutError extends Error {
   url: string;
   timeoutMs: number;
+  userMessage: string;
   constructor(url: string, timeoutMs: number) {
-    super(`Supabase request timed out after ${timeoutMs / 1000}s [${url}]`);
-    this.name = 'SupabaseTimeoutError';
+    // [Ama Mensah - Lead Dev] Satisfy the user requirement for friendlier error strings.
+    // The super() call sets .message, which is what typically shows in default alerts/logs.
+    super("You're offline.");
+    this.name = 'Network timeout';
     this.url = url;
     this.timeoutMs = timeoutMs;
+    // Friendly message intended for display to end users (no URLs or internals)
+    this.userMessage = `Request timed out. Please check your internet connection and try again.`;
+    
+    // Mark global state so we can notify when it comes back
+    _wasOffline = true;
   }
 }
 
@@ -91,7 +101,16 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
   const controller = new AbortController();
   const targetUrl = typeof url === 'string' ? url : (url?.url ?? String(url));
   const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  
   return fetch(url, { ...options, signal: controller.signal })
+    .then((res) => {
+      // If we were previously offline and this request succeeded, notify the app
+      if (_wasOffline) {
+        _wasOffline = false;
+        DeviceEventEmitter.emit('app_online');
+      }
+      return res;
+    })
     .catch((err: any) => {
       // Convert the generic abort into a labelled error so callers and LogBox
       // can distinguish a timeout from a caller-initiated cancellation.

@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hashtechs — AI Office</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#050810;
+  color:#c8d4f0;
+  font-family:'Courier New',monospace;
+  overflow:hidden; height:100vh;
+  display:flex; flex-direction:column;
+  user-select:none;
+}
+header {
+  height:46px; flex-shrink:0;
+  background:rgba(5,8,20,0.98);
+  border-bottom:1px solid rgba(80,100,220,0.18);
+  display:flex; align-items:center; padding:0 16px; gap:14px;
+}
+.logo-box {
+  width:30px; height:30px;
+  background:linear-gradient(135deg,#00d4ff,#7c3aed);
+  border-radius:7px; display:flex; align-items:center;
+  justify-content:center; font-weight:900; font-size:12px;
+  color:#fff; box-shadow:0 0 14px rgba(0,212,255,0.3);
+}
+.logo-text { font-size:14px; font-weight:700; color:#e8eeff; }
+.logo-sub  { font-size:9px; color:#445577; }
+.hd { width:1px; height:26px; background:rgba(80,100,220,0.15); }
+.hstat { display:flex; flex-direction:column; gap:1px; }
+.hstat-l { font-size:9px; color:#445577; text-transform:uppercase; letter-spacing:.5px; }
+.hstat-v { font-size:12px; font-weight:700; }
+.header-r { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.ldot { width:7px; height:7px; border-radius:50%; background:#7ee787;
+        box-shadow:0 0 8px #7ee787; animation:blink 2.2s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
+.ltext { font-size:11px; color:#7ee787; font-weight:600; }
+#clock { font-size:10px; color:#334455; }
+
+.body { flex:1; display:flex; overflow:hidden; min-height:0; }
+#canvas-wrap { flex:1; position:relative; overflow:hidden; background:#04060f; }
+canvas { display:block; image-rendering:pixelated; }
+
+aside {
+  width:280px; flex-shrink:0;
+  background:rgba(5,8,20,0.97);
+  border-left:1px solid rgba(80,100,220,0.13);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+.aside-top {
+  padding:10px 12px; border-bottom:1px solid rgba(80,100,220,0.1);
+  display:flex; flex-direction:column; gap:8px;
+}
+.sec-title {
+  font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#445577;
+  margin-bottom:4px;
+}
+.stat-row { display:flex; justify-content:space-between; font-size:10.5px; padding:3px 0;
+  border-bottom:1px solid rgba(80,100,220,0.05); }
+.stat-row:last-child { border:none; }
+.sl { color:#6677aa; }
+.sv { font-weight:700; }
+.c-cyan  { color:#00d4ff; }
+.c-gold  { color:#ffd700; }
+.c-green { color:#7ee787; }
+.c-red   { color:#ff6b6b; }
+.c-vio   { color:#c792ea; }
+
+.feed-wrap {
+  flex:1; overflow-y:auto; padding:10px 12px;
+  display:flex; flex-direction:column; gap:6px;
+}
+.feed-wrap::-webkit-scrollbar { width:3px; }
+.feed-wrap::-webkit-scrollbar-thumb { background:rgba(80,100,220,0.2); border-radius:2px; }
+.feed-item { padding:6px 8px; background:rgba(15,20,45,0.7);
+  border:1px solid rgba(80,100,220,0.08); border-radius:7px; }
+.fi-agent { font-size:10.5px; font-weight:700; margin-bottom:2px; }
+.fi-msg   { font-size:10px; color:#5566aa; line-height:1.4; }
+.fi-time  { font-size:9px; color:#333a55; margin-top:2px; }
+
+.agent-strip {
+  border-top:1px solid rgba(80,100,220,0.1);
+  padding:8px 12px; display:flex; flex-wrap:wrap; gap:4px;
+  max-height:80px; overflow-y:auto;
+}
+.agent-pip {
+  display:flex; align-items:center; gap:4px;
+  font-size:9.5px; color:#6677aa;
+  background:rgba(15,20,45,0.6);
+  border:1px solid rgba(80,100,220,0.08);
+  border-radius:20px; padding:2px 7px;
+}
+.pip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-box">HT</div>
+  <div>
+    <div class="logo-text">Hashtechs AI Corp</div>
+    <div class="logo-sub">Virtual Office — Sprint 1 Complete</div>
+  </div>
+  <div class="hd"></div>
+  <div class="hstat"><div class="hstat-l">Agents</div><div class="hstat-v c-cyan">19 Active</div></div>
+  <div class="hd"></div>
+  <div class="hstat"><div class="hstat-l">Status</div><div class="hstat-v c-green">All Working</div></div>
+  <div class="hd"></div>
+  <div class="hstat"><div class="hstat-l">App</div><div class="hstat-v c-gold">Pre-Launch</div></div>
+  <div class="hd"></div>
+  <div class="hstat"><div class="hstat-l">Funding</div><div class="hstat-v c-vio">$150K Target</div></div>
+  <div class="header-r">
+    <div class="ldot"></div>
+    <div class="ltext">Live</div>
+    <div id="clock">--:--:--</div>
+  </div>
+</header>
+
+<div class="body">
+  <div id="canvas-wrap">
+    <canvas id="office"></canvas>
+  </div>
+  <aside>
+    <div class="aside-top">
+      <div>
+        <div class="sec-title">Company Status</div>
+        <div class="stat-row"><span class="sl">Sprint 1</span><span class="sv c-green">15/15 Complete ✓</span></div>
+        <div class="stat-row"><span class="sl">Caching</span><span class="sv c-green">Live — 60-70% read↓</span></div>
+        <div class="stat-row"><span class="sl">Investors</span><span class="sv c-cyan">12 Targets Found</span></div>
+        <div class="stat-row"><span class="sl">Burn Rate</span><span class="sv c-green">~$15 USD/mo</span></div>
+        <div class="stat-row"><span class="sl">App Build</span><span class="sv c-gold">Ready — awaiting $99</span></div>
+      </div>
+    </div>
+    <div class="feed-wrap" id="feed">
+      <!-- populated by JS -->
+    </div>
+    <div class="agent-strip" id="agent-strip">
+      <!-- agent pills populated by JS -->
+    </div>
+  </aside>
+</div>
+
+<canvas id="office" style="display:none"></canvas>
+
+<script>
+// ================================================================
+//   HASHTECHS VIRTUAL OFFICE
+//   Inspired by agent-office / CLAW3D concept
+//   Built from scratch for Hashtechs AI Corp
+// ================================================================
+
+const DEPT_COLORS = {
+  ceo:       '#ffffff',
+  gm:        '#88aaff',
+  tech:      '#00d4ff',
+  finance:   '#ffd700',
+  marketing: '#ff6b6b',
+  hr:        '#7ee787',
+  board:     '#c792ea',
+};
+
+const DEPT_BG = {
+  ceo:       'rgba(40,15,80,0.55)',
+  gm:        'rgba(10,20,70,0.55)',
+  tech:      'rgba(0,22,38,0.6)',
+  finance:   'rgba(38,28,0,0.6)',
+  marketing: 'rgba(38,6,10,0.6)',
+  hr:        'rgba(5,32,12,0.6)',
+  board:     'rgba(28,8,55,0.55)',
+  meeting:   'rgba(10,14,30,0.55)',
+};
+
+// ── Agents ──────────────────────────────────────────────────────
+const AGENTS = [
+  // Executive
+  { id:'hashtag',   name:'Hashtag',         role:'CEO & Founder',      dept:'ceo',
+    home:{x:100,y:95},  msgs:['Reviewing investor deck…','Sprint 1 done ✓','Planning KNUST launch','Board review: Jun 29','$150K angel round 🎯'],
+    emotes:['🚀','💡','📱','✅','🎯'] },
+
+  { id:'claude',    name:'Claude',           role:'General Manager',     dept:'gm',
+    home:{x:820,y:95},  msgs:['Coordinating 5 departments','Drafting Privacy Policy…','19 agents operational ✓','Sprint 2 planning…','Monitoring all channels'],
+    emotes:['🧠','📋','💬','⚙️','🔍'] },
+
+  // Board (around boardroom table)
+  { id:'kwabena_o', name:'Dr. Kwabena Osei', role:'Board Chairman',      dept:'board',
+    home:{x:330,y:68},  msgs:['Strategy review in progress','Governance update ready','Advising on GTM…','Board pack due Jun 29'],
+    emotes:['♟️','📊','🏛️','✍️'] },
+
+  { id:'akosua',    name:'Akosua Frimpong',  role:'Legal Counsel',       dept:'board',
+    home:{x:430,y:68},  msgs:['Reviewing Privacy Policy…','DPA registration: Jun 22','ToS draft in progress','App Store compliance ✓'],
+    emotes:['⚖️','📜','🔒','✍️'] },
+
+  { id:'nana_d',    name:'Nana Darkoa',      role:'Financial Advisor',   dept:'board',
+    home:{x:530,y:68},  msgs:['Reviewing revenue model…','Investor intro via network','Base case: GH₵ 212K Y1','Break-even Month 4'],
+    emotes:['💰','📈','🤝','📊'] },
+
+  { id:'ebo',       name:'Ebo Hammond',      role:'Market Expansion Adv',dept:'board',
+    home:{x:630,y:68},  msgs:['Pan-Africa GTM strategy','KNUST → Ashesi → UG path','Intro to Ingressive Capital','West Africa expansion plan'],
+    emotes:['🌍','🗺️','🤝','📡'] },
+
+  // Tech
+  { id:'ama_m',     name:'Ama Mensah',       role:'Lead Developer',      dept:'tech',
+    home:{x:80,y:230},  msgs:['Caching layer complete ✓','SWR on feed: 60-70% ↓reads','Reviewing Kofi\'s PRs…','React.memo audit done ✓','feed: 120ms → <5ms 🔥'],
+    emotes:['💻','🛠️','⚡','✅','🔥'] },
+
+  { id:'kofi_a',    name:'Kofi Asante',      role:'Backend Engineer',    dept:'tech',
+    home:{x:200,y:230}, msgs:['Supabase edge functions ready','DB migrations clean ✓','Cache invalidation working','Backend perf ↑ confirmed'],
+    emotes:['🛠️','⚙️','🗄️','✅'] },
+
+  { id:'abena_o',   name:'Abena Owusu',      role:'Frontend Developer',  dept:'tech',
+    home:{x:80,y:315},  msgs:['React.memo: 5 components ✓','VerifiedBadge: highest value','NativeWind styles polished','UI components looking 🔥'],
+    emotes:['🎨','💅','✅','⚡'] },
+
+  { id:'kwame_d',   name:'Kwame Darko',      role:'DevOps Engineer',     dept:'tech',
+    home:{x:200,y:315}, msgs:['EAS build config ready','Waiting on Apple $99 payment','Play Store: $25 pending CEO','Build pipeline tested ✓'],
+    emotes:['🚀','🔧','⏳','📦'] },
+
+  // Finance
+  { id:'kweku',     name:'Kweku Amponsah',   role:'CFO',                 dept:'finance',
+    home:{x:470,y:220}, msgs:['Revenue model v2 filed ✓','Base: break-even Month 4','Reviewing cost tracker…','Finance dept at full strength'],
+    emotes:['💰','📊','✅','🏦'] },
+
+  { id:'akua',      name:'Akua Sarpong',     role:'Financial Analyst',   dept:'finance',
+    home:{x:590,y:220}, msgs:['3-scenario model complete','Bull: GH₵ 254K Year 1 💰','Bear: break-even Month 6','Sensitivity analysis done ✓'],
+    emotes:['📈','🧮','✅','📊'] },
+
+  { id:'kojo',      name:'Kojo Acheampong',  role:'Cost Controller',     dept:'finance',
+    home:{x:710,y:220}, msgs:['Sprint 2 cost tracker live','Supabase: $0 (free tier)','EAS: $0 (free tier)','Monthly infra: ~$15 USD ✓'],
+    emotes:['💸','📋','✅','🎯'] },
+
+  { id:'ama_d',     name:'Ama Darko',        role:'Investment Strategist',dept:'finance',
+    home:{x:470,y:310}, msgs:['12 investor targets filed','GreenHouse Capital = #1 🇬🇭','Ingressive Capital next','Phase 1 outreach starting…'],
+    emotes:['🎯','💼','🤝','📩'] },
+
+  { id:'abena_a',   name:'Abena Amoah',      role:'Junior Accountant',   dept:'finance',
+    home:{x:590,y:310}, msgs:['Expense log open ✓','4 entries logged today','Domain $15 ✅ approved','Apple $99 ⏳ pending CEO'],
+    emotes:['📒','✏️','💳','⏳'] },
+
+  // Marketing
+  { id:'nana_ama',  name:'Nana Ama Asante',  role:'CMO',                 dept:'marketing',
+    home:{x:80,y:435},  msgs:['ASO keywords reviewed ✓','0 competitors on key terms!','Meta Ads brief ready','KNUST pilot: GH₵ 5,000 budget'],
+    emotes:['📣','🎯','✅','📱'] },
+
+  { id:'kwabena',   name:'Kwabena Mensah',   role:'Digital Marketing Mgr',dept:'marketing',
+    home:{x:200,y:435}, msgs:['ASO keyword research done','campus marketplace Ghana = 0 comp','Semrush plan upgrade needed','Meta Ads Manager being set up'],
+    emotes:['🔍','📱','📊','⚡'] },
+
+  { id:'adaeze',    name:'Adaeze Obi',       role:'Content & Social Lead',dept:'marketing',
+    home:{x:80,y:515},  msgs:['15s Reels ad script ready','5 things only KNUST knows 😄','Ambassador UGC brief done','Content calendar drafted'],
+    emotes:['🎬','✍️','📸','🔥'] },
+
+  { id:'kofi_dk',   name:'Kofi Darko',       role:'Brand Strategist',    dept:'marketing',
+    home:{x:200,y:515}, msgs:['Brand identity locked ✓','Ambassador programme brief','Campus GTM strategy done','Ebo Hammond: warm intros 🤝'],
+    emotes:['🎨','🏫','🤝','✅'] },
+
+  // HR
+  { id:'efua',      name:'Efua Boateng',     role:'CPO',                 dept:'hr',
+    home:{x:470,y:435}, msgs:['Skills gap analysis done ✓','CS role: CRITICAL gap 🔴','4 departments fully staffed','Onboarding process ready'],
+    emotes:['👥','📋','🔴','✅'] },
+
+  { id:'yaw',       name:'Yaw Asiedu',       role:'Talent Acquisition',  dept:'hr',
+    home:{x:590,y:435}, msgs:['CS Head JD published ✓','Paystack alumni = ideal fit','YC job board pipeline open','Q3 hire: targeting now'],
+    emotes:['🎯','📄','🔎','🤝'] },
+
+  { id:'adwoa',     name:'Adwoa Mensah',     role:'Employee Experience',  dept:'hr',
+    home:{x:710,y:435}, msgs:['Agent onboarding smooth ✓','Culture docs updated','19 agents, 0 attrition 😎','Satisfaction: 100% this sprint'],
+    emotes:['😊','💚','🏠','✅'] },
+
+  { id:'fiifi',     name:'Fiifi Quaye',      role:'Training Lead',       dept:'hr',
+    home:{x:470,y:515}, msgs:['Skills inventory complete','Connector training done ✓','Semrush gap → upgrade flagged','All agents tool-briefed ✓'],
+    emotes:['📚','🎓','✅','🔧'] },
+];
+
+// ── Rooms ────────────────────────────────────────────────────────
+const ROOMS = [
+  { label:'CEO OFFICE',   dept:'ceo',     x:25,  y:25,  w:180, h:140 },
+  { label:'BOARDROOM',    dept:'board',   x:210, y:25,  w:465, h:140 },
+  { label:'GM OFFICE',    dept:'gm',      x:680, y:25,  w:215, h:140 },
+  { label:'TECH',         dept:'tech',    x:25,  y:170, w:360, h:190 },
+  { label:'FINANCE',      dept:'finance', x:390, y:170, w:505, h:190 },
+  { label:'MARKETING',    dept:'marketing',x:25, y:365, w:360, h:175 },
+  { label:'HR',           dept:'hr',      x:390, y:365, w:505, h:175 },
+  { label:'MEETING ROOM', dept:'meeting', x:25,  y:545, w:870, h:60  },
+];
+
+// ── Desk positions ───────────────────────────────────────────────
+// {agentId, cx, cy} — center of desk
+const DESKS = [
+  {id:'hashtag',  cx:100, cy:100},
+  {id:'claude',   cx:820, cy:100},
+  // board: around table
+  {id:'kwabena_o',cx:330, cy:90},
+  {id:'akosua',   cx:430, cy:90},
+  {id:'nana_d',   cx:530, cy:90},
+  {id:'ebo',      cx:630, cy:90},
+  // tech
+  {id:'ama_m',    cx:80,  cy:237},
+  {id:'kofi_a',   cx:195, cy:237},
+  {id:'abena_o',  cx:80,  cy:320},
+  {id:'kwame_d',  cx:195, cy:320},
+  // finance
+  {id:'kweku',    cx:468, cy:230},
+  {id:'akua',     cx:588, cy:230},
+  {id:'kojo',     cx:708, cy:230},
+  {id:'ama_d',    cx:468, cy:318},
+  {id:'abena_a',  cx:588, cy:318},
+  // marketing
+  {id:'nana_ama', cx:80,  cy:443},
+  {id:'kwabena',  cx:195, cy:443},
+  {id:'adaeze',   cx:80,  cy:523},
+  {id:'kofi_dk',  cx:195, cy:523},
+  // hr
+  {id:'efua',     cx:468, cy:443},
+  {id:'yaw',      cx:588, cy:443},
+  {id:'adwoa',    cx:708, cy:443},
+  {id:'fiifi',    cx:468, cy:523},
+];
+
+// ── Canvas setup ─────────────────────────────────────────────────
+const wrap   = document.getElementById('canvas-wrap');
+const canvas = document.getElementById('office');
+const ctx    = canvas.getContext('2d');
+
+const CW = 900, CH = 615;
+canvas.width  = CW;
+canvas.height = CH;
+canvas.style.width  = '100%';
+canvas.style.height = '100%';
+canvas.style.display = 'block';
+wrap.appendChild(canvas);
+
+// ── Agent state ───────────────────────────────────────────────────
+let time = 0;
+const agentState = {};
+AGENTS.forEach(ag => {
+  const desk = DESKS.find(d => d.id === ag.id);
+  const hx = desk ? desk.cx : ag.home.x;
+  const hy = desk ? desk.cy - 22 : ag.home.y;
+  agentState[ag.id] = {
+    x: hx, y: hy,
+    tx: hx, ty: hy,
+    homeX: hx, homeY: hy,
+    bobPhase: Math.random() * Math.PI * 2,
+    state: 'idle',
+    msgIdx: Math.floor(Math.random() * ag.msgs.length),
+    emoteIdx: Math.floor(Math.random() * ag.emotes.length),
+    speechAlpha: 0,
+    speechTimer: Math.random() * 5,
+    stateTimer: 5 + Math.random() * 15,
+    walkTimer: 0,
+    speed: 60 + Math.random() * 40,
+  };
+});
+
+// ── Drawing utilities ─────────────────────────────────────────────
+function rr(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// ── Draw floor ────────────────────────────────────────────────────
+function drawFloor() {
+  ctx.fillStyle = '#04060f';
+  ctx.fillRect(0, 0, CW, CH);
+  // tile grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 0.5;
+  const T = 30;
+  for (let x = 0; x <= CW; x += T) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,CH); ctx.stroke(); }
+  for (let y = 0; y <= CH; y += T) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(CW,y); ctx.stroke(); }
+}
+
+// ── Draw rooms ────────────────────────────────────────────────────
+function drawRooms() {
+  ROOMS.forEach(rm => {
+    const c = DEPT_COLORS[rm.dept] || '#445566';
+    const bg = DEPT_BG[rm.dept] || 'rgba(10,14,30,0.5)';
+
+    // carpet fill
+    ctx.fillStyle = bg;
+    rr(ctx, rm.x, rm.y, rm.w, rm.h, 6);
+    ctx.fill();
+
+    // border
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.45;
+    rr(ctx, rm.x + 0.75, rm.y + 0.75, rm.w - 1.5, rm.h - 1.5, 6);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // room label
+    ctx.fillStyle = c;
+    ctx.globalAlpha = 0.6;
+    ctx.font = 'bold 9px "Courier New",monospace';
+    ctx.fillText(rm.label, rm.x + 8, rm.y + 13);
+    ctx.globalAlpha = 1;
+  });
+
+  // boardroom table
+  ctx.fillStyle = '#12182e';
+  rr(ctx, 290, 55, 380, 80, 8);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200,180,255,0.25)';
+  ctx.lineWidth = 1;
+  rr(ctx, 290, 55, 380, 80, 8);
+  ctx.stroke();
+
+  // meeting table
+  ctx.fillStyle = '#0e1428';
+  rr(ctx, 130, 558, 640, 36, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(100,120,220,0.3)';
+  ctx.lineWidth = 1;
+  rr(ctx, 130, 558, 640, 36, 6);
+  ctx.stroke();
+}
+
+// ── Draw desk ─────────────────────────────────────────────────────
+function drawDesk(cx, cy, deptColor) {
+  const W = 46, H = 22;
+
+  // desk surface
+  ctx.fillStyle = '#111828';
+  rr(ctx, cx - W/2, cy - H/2, W, H, 3);
+  ctx.fill();
+  ctx.strokeStyle = '#1e2840';
+  ctx.lineWidth = 1;
+  rr(ctx, cx - W/2, cy - H/2, W, H, 3);
+  ctx.stroke();
+
+  // monitor stand
+  ctx.fillStyle = '#252535';
+  ctx.fillRect(cx - 2, cy - H/2 - 4, 4, 5);
+
+  // monitor bezel
+  ctx.fillStyle = '#080e1c';
+  rr(ctx, cx - 13, cy - H/2 - 17, 26, 14, 2);
+  ctx.fill();
+
+  // screen glow
+  ctx.fillStyle = deptColor;
+  ctx.globalAlpha = 0.38;
+  rr(ctx, cx - 11, cy - H/2 - 15, 22, 10, 1);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // fake text lines on screen
+  ctx.fillStyle = deptColor;
+  ctx.globalAlpha = 0.75;
+  const sy = cy - H/2 - 13;
+  ctx.fillRect(cx - 8, sy,     12, 1);
+  ctx.fillRect(cx - 8, sy + 3,  9, 1);
+  ctx.fillRect(cx - 8, sy + 6, 14, 1);
+  ctx.globalAlpha = 1;
+
+  // chair
+  ctx.fillStyle = '#181e30';
+  rr(ctx, cx - 10, cy + H/2 + 2, 20, 14, 3);
+  ctx.fill();
+  ctx.fillStyle = '#0e1325';
+  ctx.fillRect(cx - 3, cy + H/2 + 14, 6, 6);
+}
+
+function drawAllDesks() {
+  DESKS.forEach(d => {
+    const agent = AGENTS.find(a => a.id === d.id);
+    const color = agent ? DEPT_COLORS[agent.dept] : '#445566';
+    // Board desks are chairs around table, not standard desks
+    if (['kwabena_o','akosua','nana_d','ebo'].includes(d.id)) {
+      // draw chair only
+      ctx.fillStyle = '#181e30';
+      rr(ctx, d.cx - 10, d.cy + 8, 20, 14, 3);
+      ctx.fill();
+    } else {
+      drawDesk(d.cx, d.cy, color);
+    }
+  });
+}
+
+// ── Decorations ───────────────────────────────────────────────────
+function drawDecorations() {
+  // Plants
+  [[860, 172], [860, 363], [25, 172], [25, 363]].forEach(([px, py]) => {
+    ctx.fillStyle = '#0f2016';
+    rr(ctx, px - 8, py + 8, 16, 12, 2);
+    ctx.fill();
+    ctx.fillStyle = '#1a4025';
+    ctx.beginPath(); ctx.arc(px, py + 5, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#245530';
+    ctx.beginPath(); ctx.arc(px - 5, py, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + 5, py, 6, 0, Math.PI*2); ctx.fill();
+  });
+
+  // Coffee machine (bottom right of marketing zone)
+  const cm = {x: 330, y: 390};
+  ctx.fillStyle = '#1a1a2e';
+  rr(ctx, cm.x, cm.y, 28, 32, 3);
+  ctx.fill();
+  ctx.fillStyle = '#cc4422';
+  ctx.fillRect(cm.x + 4, cm.y + 4, 20, 12);
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(cm.x + 14, cm.y + 24, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#442211';
+  ctx.beginPath(); ctx.arc(cm.x + 14, cm.y + 24, 3, 0, Math.PI*2); ctx.fill();
+
+  // Whiteboard (HR zone)
+  ctx.fillStyle = '#f0f4ff';
+  rr(ctx, 860, 395, 18, 100, 2);
+  ctx.fill();
+  ctx.strokeStyle = '#334466';
+  ctx.lineWidth = 1;
+  rr(ctx, 860, 395, 18, 100, 2);
+  ctx.stroke();
+  ctx.fillStyle = '#00d4ff';
+  ctx.globalAlpha = 0.5;
+  ctx.fillRect(863, 400, 12, 1.5);
+  ctx.fillRect(863, 405, 8, 1.5);
+  ctx.fillRect(863, 410, 11, 1.5);
+  ctx.globalAlpha = 1;
+
+  // Windows (top wall)
+  [[200, 4], [380, 4], [560, 4], [740, 4]].forEach(([wx, wy]) => {
+    ctx.fillStyle = '#0a1828';
+    ctx.fillRect(wx, wy, 60, 18);
+    ctx.strokeStyle = 'rgba(100,160,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(wx, wy, 60, 18);
+    ctx.fillStyle = 'rgba(100,160,255,0.08)';
+    ctx.fillRect(wx + 2, wy + 2, 56, 14);
+  });
+}
+
+// ── Draw agent character ──────────────────────────────────────────
+function drawCharacter(cx, cy, color, bobY, isWalking, walkCycle) {
+  const by = bobY;
+  const t = walkCycle;
+
+  // shadow
+  ctx.save();
+  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 16 + by, 8, 2.5, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // legs
+  const ls = isWalking ? Math.sin(t * 8) * 3 : 0;
+  ctx.fillStyle = '#141828';
+  ctx.fillRect(cx - 5, cy + 7 + by, 4, 7 + ls);
+  ctx.fillRect(cx + 1, cy + 7 + by, 4, 7 - ls);
+
+  // shoes
+  ctx.fillStyle = '#0a0e1a';
+  ctx.fillRect(cx - 6, cy + 14 + by + ls, 5, 3);
+  ctx.fillRect(cx + 1, cy + 14 + by - ls, 5, 3);
+
+  // body / shirt
+  ctx.fillStyle = color;
+  ctx.fillRect(cx - 6, cy + by, 12, 9);
+
+  // collar
+  ctx.fillStyle = '#eeeeee';
+  ctx.fillRect(cx - 1, cy + by, 2, 5);
+
+  // arms
+  ctx.fillStyle = color;
+  const ar = isWalking ? -ls * 0.5 : 0;
+  ctx.fillRect(cx - 9, cy + 1 + by + ar, 3, 7);
+  ctx.fillRect(cx + 6, cy + 1 + by - ar, 3, 7);
+
+  // neck
+  ctx.fillStyle = '#c89060';
+  ctx.fillRect(cx - 2, cy - 3 + by, 4, 4);
+
+  // head
+  ctx.fillStyle = '#c89060';
+  ctx.beginPath();
+  ctx.arc(cx, cy - 8 + by, 7, 0, Math.PI*2);
+  ctx.fill();
+
+  // hair (top half, dept color)
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy - 8 + by, 7, Math.PI, 0);
+  ctx.fill();
+
+  // eyes
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(cx - 4, cy - 11 + by, 2.5, 2);
+  ctx.fillRect(cx + 1.5, cy - 11 + by, 2.5, 2);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(cx - 3.5, cy - 11 + by, 1.5, 1.5);
+  ctx.fillRect(cx + 2, cy - 11 + by, 1.5, 1.5);
+}
+
+// ── Draw speech bubble ────────────────────────────────────────────
+function drawBubble(cx, cy, text, color, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  ctx.font = '9.5px "Courier New",monospace';
+  const tw = ctx.measureText(text).width;
+  const pad = 10, bh = 18;
+  const bw = tw + pad * 2;
+  const bx = cx - bw / 2;
+  const by = cy - 52;
+
+  // bg
+  ctx.fillStyle = 'rgba(6,9,22,0.94)';
+  rr(ctx, bx, by, bw, bh, 5);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  rr(ctx, bx, by, bw, bh, 5);
+  ctx.stroke();
+
+  // tail
+  ctx.beginPath();
+  ctx.moveTo(cx - 5, by + bh - 0.5);
+  ctx.lineTo(cx, by + bh + 7);
+  ctx.lineTo(cx + 5, by + bh - 0.5);
+  ctx.strokeStyle = color;
+  ctx.stroke();
+
+  // text
+  ctx.fillStyle = color;
+  ctx.fillText(text, cx - tw / 2, by + 13);
+  ctx.restore();
+}
+
+// ── Draw emote ────────────────────────────────────────────────────
+function drawEmote(cx, cy, emote, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.85;
+  ctx.font = '14px sans-serif';
+  ctx.fillText(emote, cx - 7, cy - 30);
+  ctx.restore();
+}
+
+// ── Agent name plate ──────────────────────────────────────────────
+function drawNamePlate(cx, cy, name, color) {
+  ctx.font = 'bold 8px "Courier New",monospace';
+  const tw = ctx.measureText(name).width;
+  ctx.fillStyle = 'rgba(4,6,16,0.7)';
+  ctx.fillRect(cx - tw/2 - 3, cy + 18, tw + 6, 11);
+  ctx.fillStyle = color;
+  ctx.fillText(name, cx - tw/2, cy + 27);
+}
+
+// ── Main draw ─────────────────────────────────────────────────────
+function draw() {
+  drawFloor();
+  drawRooms();
+  drawDecorations();
+  drawAllDesks();
+
+  // Sort agents by Y for depth
+  const sorted = AGENTS.slice().sort((a,b) => {
+    const sa = agentState[a.id], sb = agentState[b.id];
+    return sa.y - sb.y;
+  });
+
+  sorted.forEach(ag => {
+    const st  = agentState[ag.id];
+    const col = DEPT_COLORS[ag.dept];
+    const bob = Math.sin(time * 1.5 + st.bobPhase) * 1.5;
+    const walking = st.state === 'walking';
+    const wc = walking ? time : 0;
+
+    drawCharacter(st.x, st.y, col, bob, walking, wc);
+    drawNamePlate(st.x, st.y, ag.name.split(' ')[0], col);
+
+    const emote = ag.emotes[st.emoteIdx % ag.emotes.length];
+    const eAlpha = st.state === 'idle' ? 0.7 + 0.3 * Math.sin(time + st.bobPhase) : 0.3;
+    drawEmote(st.x, st.y, emote, eAlpha);
+
+    drawBubble(st.x, st.y, ag.msgs[st.msgIdx % ag.msgs.length], col, st.speechAlpha);
+  });
+}
+
+// ── Behavior AI ───────────────────────────────────────────────────
+const meetingSpots = [
+  {x:200,y:560},{x:280,y:560},{x:360,y:560},{x:440,y:560},
+  {x:520,y:560},{x:600,y:560},{x:680,y:560}
+];
+
+function updateBehavior(dt) {
+  AGENTS.forEach(ag => {
+    const st = agentState[ag.id];
+
+    // speech alpha
+    if (st.state === 'idle') {
+      st.speechTimer -= dt;
+      if (st.speechTimer <= 0) {
+        st.speechAlpha = 1;
+        st.speechTimer = 4 + Math.random() * 4;
+        st.msgIdx = (st.msgIdx + 1) % ag.msgs.length;
+        setTimeout(() => { if (agentState[ag.id]) agentState[ag.id].speechAlpha = 0; }, 3500);
+      }
+    } else {
+      st.speechAlpha = Math.max(0, st.speechAlpha - dt * 0.8);
+    }
+
+    // state machine
+    st.stateTimer -= dt;
+    if (st.stateTimer <= 0) {
+      const roll = Math.random();
+
+      if (st.state === 'idle') {
+        if (roll < 0.3) {
+          // walk to a random colleague's desk
+          const target = AGENTS[Math.floor(Math.random() * AGENTS.length)];
+          const td = DESKS.find(d => d.id === target.id);
+          if (td) {
+            st.tx = td.cx + (Math.random() - 0.5) * 20;
+            st.ty = td.cy - 22;
+          }
+          st.state = 'walking';
+          st.stateTimer = 4 + Math.random() * 5;
+          st.emoteIdx = (st.emoteIdx + 1) % ag.emotes.length;
+        } else if (roll < 0.5) {
+          // walk to meeting room
+          const spot = meetingSpots[Math.floor(Math.random() * meetingSpots.length)];
+          st.tx = spot.x;
+          st.ty = spot.y;
+          st.state = 'walking';
+          st.stateTimer = 5 + Math.random() * 6;
+        } else {
+          // stay idle, change message + emote
+          st.stateTimer = 8 + Math.random() * 10;
+          st.emoteIdx = (st.emoteIdx + 1) % ag.emotes.length;
+        }
+      } else {
+        // return home
+        st.tx = st.homeX;
+        st.ty = st.homeY;
+        st.state = 'returning';
+        st.stateTimer = 3 + Math.random() * 3;
+      }
+    }
+
+    // movement
+    if (st.state === 'walking' || st.state === 'returning') {
+      const dx = st.tx - st.x;
+      const dy = st.ty - st.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 2) {
+        st.x = st.tx; st.y = st.ty;
+        if (st.state === 'returning') {
+          st.state = 'idle';
+          st.stateTimer = 10 + Math.random() * 15;
+        }
+      } else {
+        const spd = st.speed * dt;
+        st.x += (dx / dist) * Math.min(spd, dist);
+        st.y += (dy / dist) * Math.min(spd, dist);
+      }
+    }
+  });
+}
+
+// ── Animation loop ────────────────────────────────────────────────
+let lastT = 0;
+function loop(t) {
+  const dt = Math.min((t - lastT) / 1000, 0.05);
+  lastT = t;
+  time += dt;
+
+  updateBehavior(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ── Sidebar feed ──────────────────────────────────────────────────
+const FEED_ITEMS = [
+  { agent:'Ama Darko',         dept:'finance',   msg:'Investor target list filed — 12 targets, 3 tiers',       time:'Just now' },
+  { agent:'Fiifi Quaye',       dept:'hr',        msg:'Skills gap analysis: 5 gaps. CS is CRITICAL 🔴',        time:'2m ago'   },
+  { agent:'Kwabena Mensah',    dept:'marketing', msg:'ASO keyword research done — 0 competitors on key terms', time:'5m ago'   },
+  { agent:'Ama Mensah',        dept:'tech',      msg:'Caching layer live — 60-70% Supabase read reduction',    time:'12m ago'  },
+  { agent:'Abena Owusu',       dept:'tech',      msg:'React.memo applied to 5 high-frequency components',      time:'18m ago'  },
+  { agent:'Yaw Asiedu',        dept:'hr',        msg:'CS Head JD ready — targeting Paystack/Hubtel alumni',    time:'25m ago'  },
+  { agent:'Akua Sarpong',      dept:'finance',   msg:'Revenue model v2: Base case break-even Month 4',         time:'32m ago'  },
+  { agent:'Kojo Acheampong',   dept:'finance',   msg:'Cost tracker live — infra ~$15 USD/mo (amazing burn!)',  time:'40m ago'  },
+  { agent:'Abena Amoah',       dept:'finance',   msg:'Hired as Junior Accountant — expense log opened',        time:'1h ago'   },
+  { agent:'Claude (GM)',       dept:'gm',        msg:'All 19 agents activated across 6 Slack channels',        time:'2h ago'   },
+  { agent:'Hashtag (CEO)',     dept:'ceo',       msg:'Sprint 1 launched — all-hands update broadcast',         time:'3h ago'   },
+];
+
+const feedEl = document.getElementById('feed');
+FEED_ITEMS.forEach(fi => {
+  const color = DEPT_COLORS[fi.dept] || '#88aaff';
+  feedEl.innerHTML += `
+    <div class="feed-item">
+      <div class="fi-agent" style="color:${color}">${fi.agent}</div>
+      <div class="fi-msg">${fi.msg}</div>
+      <div class="fi-time">${fi.time}</div>
+    </div>`;
+});
+
+// ── Agent pills ───────────────────────────────────────────────────
+const stripEl = document.getElementById('agent-strip');
+AGENTS.forEach(ag => {
+  const color = DEPT_COLORS[ag.dept];
+  stripEl.innerHTML += `
+    <div class="agent-pip">
+      <div class="pip-dot" style="background:${color};box-shadow:0 0 4px ${color}"></div>
+      <span style="color:${color}">${ag.name.split(' ')[0]}</span>
+    </div>`;
+});
+
+// ── Clock ─────────────────────────────────────────────────────────
+function tick() {
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    n.toLocaleTimeString('en-GH',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+setInterval(tick, 1000); tick();
+
+// ── Tooltip on hover ─────────────────────────────────────────────
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = CW / rect.width;
+  const scaleY = CH / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top)  * scaleY;
+
+  let found = null;
+  AGENTS.forEach(ag => {
+    const st = agentState[ag.id];
+    const dx = mx - st.x, dy = my - st.y;
+    if (Math.sqrt(dx*dx + dy*dy) < 18) found = ag;
+  });
+
+  canvas.title = found ? `${found.name} — ${found.role}` : '';
+});
+</script>
+</body>
+</html>

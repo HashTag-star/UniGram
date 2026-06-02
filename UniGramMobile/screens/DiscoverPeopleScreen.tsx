@@ -364,7 +364,7 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
 
           {/* New: From Contacts Section */}
           {contactUsers.length > 0 && (
-            <View style={styles.section}>
+            <View key="sec-contacts" style={styles.section}>
                <View style={styles.sectionHeader}>
                   <View>
                     <Text style={[styles.sectionHeading, { color: colors.textMuted, marginBottom: 2 }]}>FROM YOUR CONTACTS</Text>
@@ -372,14 +372,14 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                   </View>
                 </View>
                 <View style={[styles.listCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                  {contactUsers.map(u => <UserRow key={u.id} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
+                  {contactUsers.map((u, i) => <UserRow key={u.id || `contact-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
                 </View>
             </View>
           )}
 
           {/* Shared Interests - Horizontal */}
           {sharedInterests.length > 0 && (
-            <View style={styles.section}>
+            <View key="sec-interests" style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View>
                   <Text style={[styles.sectionHeading, { color: colors.textMuted, marginBottom: 2 }]}>SHARED INTERESTS</Text>
@@ -395,9 +395,9 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: 12, paddingRight: 20 }}
               >
-                {sharedInterests.map(user => (
+                {sharedInterests.map((user, i) => (
                   <InterestUserCard 
-                    key={user.id} 
+                    key={user.id || `interest-${i}`} 
                     user={user} 
                     currentUserId={currentUserId}
                     onUserPress={onUserPress}
@@ -408,7 +408,7 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
           )}
 
           {/* People You May Know - Vertical List */}
-          <View style={styles.section}>
+          <View key="sec-pymk" style={styles.section}>
              <View style={styles.sectionHeader}>
                 <View>
                   <Text style={[styles.sectionHeading, { color: colors.textMuted, marginBottom: 2 }]}>PEOPLE YOU MAY KNOW</Text>
@@ -416,7 +416,7 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                 </View>
               </View>
               <View style={[styles.listCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                {peopleYouMayKnow.map(u => <UserRow key={u.id} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
+                {peopleYouMayKnow.map((u, i) => <UserRow key={u.id || `pymk-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
                 {/* [Abena Owusu - Frontend] TODO(product): implement pagination or full suggestions screen */}
                 {/* <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: 1, borderTopColor: colors.border }]}>
                   <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>View More Suggestions</Text>
@@ -426,10 +426,10 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
 
           {/* Campus Trending */}
           {campusTrending.length > 0 && (
-            <View style={styles.section}>
+            <View key="sec-trending" style={styles.section}>
               <Text style={[styles.sectionHeading, { color: colors.textMuted }]}>CAMPUS STARS</Text>
               <View style={[styles.trendingCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                 {campusTrending.map(u => <UserRow key={u.id} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
+                 {campusTrending.map((u, i) => <UserRow key={u.id || `trending-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
               </View>
             </View>
           )}

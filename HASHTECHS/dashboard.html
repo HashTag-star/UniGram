@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hashtechs — AI Command Center</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #020510;
+      color: #d0d8f0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* ── HEADER ── */
+    header {
+      height: 54px;
+      flex-shrink: 0;
+      background: rgba(6, 8, 22, 0.97);
+      border-bottom: 1px solid rgba(80, 100, 220, 0.18);
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+      gap: 18px;
+      z-index: 200;
+    }
+
+    .logo { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .logo-mark {
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 100%);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 13px; color: #fff;
+      box-shadow: 0 0 16px rgba(0, 212, 255, 0.35);
+    }
+    .logo-text { font-size: 15px; font-weight: 700; color: #e8eeff; line-height: 1.2; }
+    .logo-sub  { font-size: 10px; color: #5566aa; letter-spacing: 0.3px; }
+
+    .hdiv { width: 1px; height: 28px; background: rgba(80,100,220,0.18); flex-shrink: 0; }
+
+    .hstat { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
+    .hstat-label { font-size: 9.5px; color: #5566aa; text-transform: uppercase; letter-spacing: 0.6px; }
+    .hstat-value { font-size: 13px; font-weight: 700; }
+    .hstat-value.cyan   { color: #00d4ff; }
+    .hstat-value.gold   { color: #ffd700; }
+    .hstat-value.green  { color: #7ee787; }
+    .hstat-value.violet { color: #c792ea; }
+
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #7ee787;
+      box-shadow: 0 0 10px #7ee787;
+      animation: blink 2.2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .live-text { font-size: 11.5px; color: #7ee787; font-weight: 600; }
+    #hclock { font-size: 11px; color: #445577; font-variant-numeric: tabular-nums; }
+
+    .hint-text {
+      font-size: 10px; color: #334455;
+      border: 1px solid rgba(80,100,220,0.12);
+      padding: 3px 8px; border-radius: 4px;
+    }
+
+    /* ── LAYOUT ── */
+    .content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+    /* ── PANELS ── */
+    .panel {
+      width: 252px;
+      flex-shrink: 0;
+      background: rgba(6, 8, 22, 0.92);
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .panel-left  { border-right: 1px solid rgba(80,100,220,0.13); }
+    .panel-right { border-left:  1px solid rgba(80,100,220,0.13); }
+
+    .panel::-webkit-scrollbar { width: 3px; }
+    .panel::-webkit-scrollbar-thumb { background: rgba(80,100,220,0.2); border-radius: 2px; }
+
+    .psec {
+      background: rgba(15,18,45,0.7);
+      border: 1px solid rgba(80,100,220,0.1);
+      border-radius: 10px;
+      padding: 11px 12px;
+    }
+    .psec h3 {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #445577;
+      margin-bottom: 9px;
+    }
+
+    .mrow {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(80,100,220,0.05);
+      font-size: 11.5px;
+    }
+    .mrow:last-child { border-bottom: none; }
+    .mrow-label { color: #6677aa; }
+    .mrow-val { font-weight: 600; }
+    .v-green  { color: #7ee787; }
+    .v-gold   { color: #ffd700; }
+    .v-cyan   { color: #00d4ff; }
+    .v-red    { color: #ff6b6b; }
+    .v-violet { color: #c792ea; }
+    .v-dim    { color: #4a5577; }
+
+    .prog-bar { height: 3px; background: rgba(80,100,220,0.1); border-radius: 2px; margin: 8px 0 4px; overflow: hidden; }
+    .prog-fill { height: 100%; background: linear-gradient(90deg,#00d4ff,#7c3aed); border-radius: 2px; }
+
+    .task-row { display: flex; align-items: flex-start; gap: 7px; padding: 3.5px 0; font-size: 11px; }
+    .task-row .tick { flex-shrink: 0; margin-top: 1px; }
+    .task-row .tlabel { color: #44556a; text-decoration: line-through; line-height: 1.4; }
+    .task-row .tpend  { color: #7ee787; line-height: 1.4; }
+
+    .alert-box {
+      background: rgba(255,80,50,0.08);
+      border: 1px solid rgba(255,80,50,0.25);
+      border-radius: 9px;
+      padding: 10px 11px;
+    }
+    .alert-title { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.8px; color: #ff9977; margin-bottom: 7px; }
+    .alert-item  { font-size: 11px; color: #cc7755; padding: 2px 0; display: flex; align-items: flex-start; gap: 5px; }
+
+    .legend { display: flex; flex-direction: column; gap: 5px; }
+    .leg-item { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #6677aa; }
+    .leg-dot  { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    /* activity feed */
+    .act-item { padding: 7px 0; border-bottom: 1px solid rgba(80,100,220,0.06); }
+    .act-item:last-child { border-bottom: none; }
+    .act-agent  { font-size: 11.5px; font-weight: 700; }
+    .act-action { font-size: 11px; color: #6677aa; margin-top: 1px; line-height: 1.4; }
+    .act-time   { font-size: 10px; color: #334455; margin-top: 2px; }
+
+    /* milestone */
+    .ms-row { display: flex; justify-content: space-between; align-items: center; padding: 4.5px 0;
+              border-bottom: 1px solid rgba(80,100,220,0.05); font-size: 11px; }
+    .ms-row:last-child { border-bottom: none; }
+    .ms-label { color: #6677aa; }
+    .ms-date  { font-weight: 600; }
+
+    /* ── VIZ ── */
+    #viz { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+    #three-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; }
+    #labels { position: absolute; inset: 0; pointer-events: none; }
+
+    .alabel {
+      position: absolute;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+      transition: opacity 0.25s;
+      line-height: 1.3;
+    }
+    .alabel .aname { font-size: 11px; font-weight: 700; white-space: nowrap;
+      text-shadow: 0 0 8px #000, 0 0 16px #000; }
+    .alabel .arole { font-size: 9px; color: #55668a; white-space: nowrap;
+      text-shadow: 0 0 8px #000; }
+
+    #info-popup {
+      position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+      background: rgba(8,10,28,0.96);
+      border: 1px solid rgba(80,100,220,0.28);
+      border-radius: 11px;
+      padding: 13px 22px;
+      min-width: 210px; text-align: center;
+      backdrop-filter: blur(12px);
+      display: none;
+      pointer-events: none;
+    }
+    #info-popup .ip-name { font-size: 15px; font-weight: 700; margin-bottom: 3px; }
+    #info-popup .ip-role { font-size: 12px; color: #8899bb; }
+    #info-popup .ip-dept { font-size: 10px; color: #445566; margin-top: 4px;
+      text-transform: uppercase; letter-spacing: 0.6px; }
+    #info-popup .ip-tag  { display: inline-block; margin-top: 7px; padding: 2px 10px;
+      border-radius: 20px; font-size: 10px; font-weight: 600; background: rgba(255,255,255,0.06); }
+
+    /* ── FOOTER ── */
+    footer {
+      height: 32px; flex-shrink: 0;
+      background: rgba(5,7,18,0.97);
+      border-top: 1px solid rgba(80,100,220,0.13);
+      display: flex; align-items: center; padding: 0 18px; gap: 20px;
+    }
+    .fitem { font-size: 10px; color: #334455; }
+    .fitem span { color: #556688; }
+    .fitem .fok { color: #7ee787; }
+    .fitem .fwarn { color: #ffd700; }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-mark">HT</div>
+    <div>
+      <div class="logo-text">Hashtechs AI Corp</div>
+      <div class="logo-sub">UniGram — Command Center</div>
+    </div>
+  </div>
+  <div class="hdiv"></div>
+  <div class="hstat">
+    <div class="hstat-label">Agents</div>
+    <div class="hstat-value cyan">19 Active</div>
+  </div>
+  <div class="hdiv"></div>
+  <div class="hstat">
+    <div class="hstat-label">Sprint</div>
+    <div class="hstat-value green">Sprint 1 ✓</div>
+  </div>
+  <div class="hdiv"></div>
+  <div class="hstat">
+    <div class="hstat-label">App Status</div>
+    <div class="hstat-value gold">Pre-Launch</div>
+  </div>
+  <div class="hdiv"></div>
+  <div class="hstat">
+    <div class="hstat-label">Funding Target</div>
+    <div class="hstat-value violet">$150K USD</div>
+  </div>
+  <div class="hdiv"></div>
+  <div class="hstat">
+    <div class="hstat-label">Market</div>
+    <div class="hstat-value cyan">400K+ Students</div>
+  </div>
+  <div class="header-right">
+    <div class="hint-text">Drag to rotate · Hover to inspect</div>
+    <div class="live-dot"></div>
+    <div class="live-text">All Systems Live</div>
+    <div id="hclock">--:--:--</div>
+  </div>
+</header>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- LEFT PANEL -->
+  <aside class="panel panel-left">
+
+    <div class="psec">
+      <h3>Company Status</h3>
+      <div class="mrow"><span class="mrow-label">App Build</span><span class="mrow-val v-green">✓ Complete</span></div>
+      <div class="mrow"><span class="mrow-label">Caching Layer</span><span class="mrow-val v-green">✓ Deployed</span></div>
+      <div class="mrow"><span class="mrow-label">React.memo Audit</span><span class="mrow-val v-green">✓ 5 Components</span></div>
+      <div class="mrow"><span class="mrow-label">KNUST Pilot</span><span class="mrow-val v-gold">⏳ Ready</span></div>
+      <div class="mrow"><span class="mrow-label">Users</span><span class="mrow-val v-cyan">0 (Pre-Launch)</span></div>
+      <div class="mrow"><span class="mrow-label">Revenue</span><span class="mrow-val v-cyan">GH₵ 0 (Pre-Rev)</span></div>
+      <div class="mrow"><span class="mrow-label">Slack Channels</span><span class="mrow-val v-green">6 Active</span></div>
+    </div>
+
+    <div class="psec">
+      <h3>Sprint 1 — 15 / 15 ✓</h3>
+      <div class="prog-bar"><div class="prog-fill" style="width:100%"></div></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Company update broadcast</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">App-wide caching (SWR)</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">React.memo audit</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Slack channels + agents</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Connector briefings sent</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Revenue model v2</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Investor target list</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">CS Head JD published</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">ASO keyword research</span></div>
+      <div class="task-row"><span class="tick">✅</span><span class="tlabel">Hired Junior Accountant</span></div>
+    </div>
+
+    <div class="psec">
+      <h3>Financial Snapshot</h3>
+      <div class="mrow"><span class="mrow-label">Round Target</span><span class="mrow-val v-cyan">$150,000 USD</span></div>
+      <div class="mrow"><span class="mrow-label">Raised</span><span class="mrow-val v-gold">$0 (Active)</span></div>
+      <div class="mrow"><span class="mrow-label">Break-even (Base)</span><span class="mrow-val v-green">Month 4</span></div>
+      <div class="mrow"><span class="mrow-label">Year 1 Revenue</span><span class="mrow-val v-green">GH₵ 212K</span></div>
+      <div class="mrow"><span class="mrow-label">Monthly Infra</span><span class="mrow-val v-green">~$15–20 USD</span></div>
+      <div class="mrow"><span class="mrow-label">Investor Targets</span><span class="mrow-val v-cyan">12 Identified</span></div>
+    </div>
+
+    <div class="psec">
+      <h3>Department Legend</h3>
+      <div class="legend">
+        <div class="leg-item"><div class="leg-dot" style="background:#fff;box-shadow:0 0 7px #fff"></div>CEO · Hashtag</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#88aaff;box-shadow:0 0 7px #88aaff"></div>GM · Claude</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#00d4ff;box-shadow:0 0 7px #00d4ff"></div>Tech · 4 agents</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#ffd700;box-shadow:0 0 7px #ffd700"></div>Finance · 5 agents</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#ff6b6b;box-shadow:0 0 7px #ff6b6b"></div>Marketing · 4 agents</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#7ee787;box-shadow:0 0 7px #7ee787"></div>HR · 4 agents</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#c792ea;box-shadow:0 0 7px #c792ea"></div>Board · 4 advisors</div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- 3D VIZ -->
+  <div id="viz">
+    <canvas id="three-canvas"></canvas>
+    <div id="labels"></div>
+    <div id="info-popup">
+      <div class="ip-name" id="ip-name">—</div>
+      <div class="ip-role" id="ip-role">—</div>
+      <div class="ip-dept" id="ip-dept">—</div>
+      <div class="ip-tag" id="ip-tag">Active</div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <aside class="panel panel-right">
+
+    <div class="alert-box">
+      <div class="alert-title">⚠ CEO Action Required</div>
+      <div class="alert-item"><span>→</span>Pay Apple Developer $99/yr</div>
+      <div class="alert-item"><span>→</span>Pay Google Play Console $25</div>
+      <div class="alert-item"><span>→</span>Lead investor calls personally</div>
+      <div class="alert-item"><span>→</span>Sign DPA registration (Jun 22)</div>
+      <div class="alert-item"><span>→</span>Privacy Policy URL before App Store</div>
+    </div>
+
+    <div class="psec" style="flex:1;overflow-y:auto">
+      <h3>Live Activity Feed</h3>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ffd700">Ama Darko</div>
+        <div class="act-action">Filed investor target list — 12 targets across 3 tiers. GreenHouse Capital first.</div>
+        <div class="act-time">Just now</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#7ee787">Fiifi Quaye</div>
+        <div class="act-action">Skills gap analysis complete — 5 gaps. CS is CRITICAL 🔴 pre-launch.</div>
+        <div class="act-time">2 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ff6b6b">Kwabena Mensah</div>
+        <div class="act-action">ASO keyword research filed. Zero competition on "campus marketplace Ghana".</div>
+        <div class="act-time">5 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#00d4ff">Ama Mensah</div>
+        <div class="act-action">Caching layer live across posts, profiles, market. Est. 60–70% Supabase read reduction.</div>
+        <div class="act-time">12 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#00d4ff">Abena Owusu</div>
+        <div class="act-action">React.memo applied to VerifiedBadge, ShareSheet, PostOptionsSheet, StackedAvatars, AIContextCard.</div>
+        <div class="act-time">18 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#7ee787">Yaw Asiedu</div>
+        <div class="act-action">CS Head JD ready. Targeting Paystack/Hubtel alumni. Pipeline via YC + LinkedIn.</div>
+        <div class="act-time">25 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ffd700">Akua Sarpong</div>
+        <div class="act-action">Revenue model v2. Base: break-even M4. Bull: M3.5. Bear: M6. All profitable Year 1.</div>
+        <div class="act-time">32 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ffd700">Kojo Acheampong</div>
+        <div class="act-action">Sprint 2 cost tracker live. Supabase + EAS both free tier. Infra ~$15–20/mo.</div>
+        <div class="act-time">40 min ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ffd700">Abena Amoah</div>
+        <div class="act-action">Hired as Junior Accountant. Expense log opened. 4 entries logged.</div>
+        <div class="act-time">1 hr ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#88aaff">Claude (GM)</div>
+        <div class="act-action">All 19 agents activated across 6 Slack channels. Connector briefings posted to all 5 departments.</div>
+        <div class="act-time">2 hrs ago</div>
+      </div>
+      <div class="act-item">
+        <div class="act-agent" style="color:#ffffff">Hashtag (CEO)</div>
+        <div class="act-action">Sprint 1 launched. Company-wide update broadcast. Caching sprint delegated to Tech.</div>
+        <div class="act-time">3 hrs ago</div>
+      </div>
+    </div>
+
+    <div class="psec">
+      <h3>Upcoming Milestones</h3>
+      <div class="ms-row"><span class="ms-label">Privacy Policy + ToS</span><span class="ms-date v-gold">Jun 15</span></div>
+      <div class="ms-row"><span class="ms-label">DPA Registration</span><span class="ms-date v-gold">Jun 22</span></div>
+      <div class="ms-row"><span class="ms-label">App Store Submit</span><span class="ms-date v-cyan">Jun 2026</span></div>
+      <div class="ms-row"><span class="ms-label">KNUST Launch</span><span class="ms-date v-cyan">Jun 2026</span></div>
+      <div class="ms-row"><span class="ms-label">Board Review</span><span class="ms-date v-cyan">Jun 29</span></div>
+      <div class="ms-row"><span class="ms-label">CS Head Hire</span><span class="ms-date v-violet">Q3 2026</span></div>
+      <div class="ms-row"><span class="ms-label">Analytics Hire</span><span class="ms-date v-violet">Q4 2026</span></div>
+    </div>
+
+  </aside>
+
+</div><!-- /content -->
+
+<!-- FOOTER -->
+<footer>
+  <div class="fitem">Hashtechs AI Corp · <span>UniGram v1.0.0</span></div>
+  <div class="fitem">Supabase: <span class="fok">Connected</span></div>
+  <div class="fitem">Slack: <span class="fok">19 Agents Active</span></div>
+  <div class="fitem">Sprint: <span class="fok">1 Complete</span> → <span>2 Pending</span></div>
+  <div class="fitem">Infra Cost: <span class="fok">~$15 USD/mo</span></div>
+  <div class="fitem" style="margin-left:auto">Hashtechs AI Stack · May 2026</div>
+</footer>
+
+<!-- THREE.JS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ================================================================
+//  HASHTECHS — 3D AGENT NETWORK
+//  Inspired by CrewAI crew3D · Built from scratch for Hashtechs
+// ================================================================
+
+const COLORS = {
+  ceo:       0xffffff,
+  gm:        0x88aaff,
+  tech:      0x00d4ff,
+  finance:   0xffd700,
+  marketing: 0xff6b6b,
+  hr:        0x7ee787,
+  board:     0xc792ea,
+};
+
+const COLORS_CSS = {
+  ceo:       '#ffffff',
+  gm:        '#88aaff',
+  tech:      '#00d4ff',
+  finance:   '#ffd700',
+  marketing: '#ff6b6b',
+  hr:        '#7ee787',
+  board:     '#c792ea',
+};
+
+const DEPT_LABELS = {
+  ceo: 'Executive', gm: 'General Management',
+  tech: 'Tech Department', finance: 'Finance Department',
+  marketing: 'Marketing Department', hr: 'HR Department',
+  board: 'Advisory Board',
+};
+
+// ── helper: polar to cartesian (xz-plane, y-up) ──
+function p(angleDeg, radius, y) {
+  const r = angleDeg * Math.PI / 180;
+  return { x: Math.sin(r) * radius, y: y || 0, z: Math.cos(r) * radius };
+}
+
+// ── agent data ──
+// Pentagon: Tech=72°, Finance=144°, Marketing=216°, HR=288°, Board=0°(360°)
+const AGENTS = [
+  // Executive spine
+  { id:'hashtag',       name:'Hashtag',           role:'CEO & Founder',           dept:'ceo',       pos:{x:0,y:7,z:0},    size:0.55 },
+  { id:'claude',        name:'Claude',             role:'General Manager',          dept:'gm',        pos:{x:0,y:4,z:0},    size:0.45 },
+
+  // ── Tech (72°) ──
+  { id:'ama_m',         name:'Ama Mensah',         role:'Lead Developer',           dept:'tech',      pos:p(72,6,0),         size:0.37, head:true },
+  { id:'kofi_a',        name:'Kofi Asante',        role:'Backend Engineer',         dept:'tech',      pos:p(58,8.5,-0.8),    size:0.27 },
+  { id:'abena_o',       name:'Abena Owusu',        role:'Frontend Developer',       dept:'tech',      pos:p(82,8.2,0.8),     size:0.27 },
+  { id:'kwame_d',       name:'Kwame Darko',        role:'DevOps Engineer',          dept:'tech',      pos:p(70,9.5,-1.2),    size:0.27 },
+
+  // ── Finance (144°) ──
+  { id:'kweku',         name:'Kweku Amponsah',     role:'CFO',                      dept:'finance',   pos:p(144,6,0),        size:0.37, head:true },
+  { id:'akua',          name:'Akua Sarpong',       role:'Financial Analyst',        dept:'finance',   pos:p(132,8.5,1),      size:0.27 },
+  { id:'kojo',          name:'Kojo Acheampong',    role:'Cost Controller',          dept:'finance',   pos:p(155,8.2,-0.8),   size:0.27 },
+  { id:'ama_d',         name:'Ama Darko',          role:'Investment Strategist',    dept:'finance',   pos:p(138,9.5,1.5),    size:0.27 },
+  { id:'abena_a',       name:'Abena Amoah',        role:'Junior Accountant',        dept:'finance',   pos:p(150,10,-1.5),    size:0.22 },
+
+  // ── Marketing (216°) ──
+  { id:'nana_ama',      name:'Nana Ama Asante',    role:'CMO',                      dept:'marketing', pos:p(216,6,0),        size:0.37, head:true },
+  { id:'kwabena',       name:'Kwabena Mensah',     role:'Digital Marketing Mgr',    dept:'marketing', pos:p(204,8.5,-0.8),   size:0.27 },
+  { id:'adaeze',        name:'Adaeze Obi',         role:'Content & Social Lead',    dept:'marketing', pos:p(228,8.2,0.8),    size:0.27 },
+  { id:'kofi_dk',       name:'Kofi Darko',         role:'Brand Strategist',         dept:'marketing', pos:p(212,9.5,-1.2),   size:0.27 },
+
+  // ── HR (288°) ──
+  { id:'efua',          name:'Efua Boateng',       role:'CPO',                      dept:'hr',        pos:p(288,6,0),        size:0.37, head:true },
+  { id:'yaw',           name:'Yaw Asiedu',         role:'Talent Acquisition',       dept:'hr',        pos:p(277,8.5,0.8),    size:0.27 },
+  { id:'adwoa',         name:'Adwoa Mensah',       role:'Employee Experience Mgr',  dept:'hr',        pos:p(300,8.2,-0.8),   size:0.27 },
+  { id:'fiifi',         name:'Fiifi Quaye',        role:'Training & Dev Lead',      dept:'hr',        pos:p(283,9.5,1.2),    size:0.27 },
+
+  // ── Board (0°/360°) ──
+  { id:'kwabena_o',     name:'Dr. Kwabena Osei',   role:'Board Chairman',           dept:'board',     pos:p(0,6,0),          size:0.37, head:true },
+  { id:'akosua',        name:'Akosua Frimpong',    role:'Legal Counsel',            dept:'board',     pos:p(350,8.5,0.8),    size:0.27 },
+  { id:'nana_d',        name:'Nana Darkoa',        role:'Financial Advisor',        dept:'board',     pos:p(10,8.2,-0.8),    size:0.27 },
+  { id:'ebo',           name:'Ebo Hammond',        role:'Market Expansion Advisor', dept:'board',     pos:p(2,9.5,-1.2),     size:0.27 },
+];
+
+const CONNECTIONS = [
+  // spine
+  ['hashtag','claude'],
+  // GM → dept heads
+  ['claude','ama_m'],['claude','kweku'],['claude','nana_ama'],['claude','efua'],
+  // board → leadership
+  ['kwabena_o','hashtag'],['akosua','claude'],['nana_d','kweku'],['ebo','claude'],
+  // tech internal
+  ['ama_m','kofi_a'],['ama_m','abena_o'],['ama_m','kwame_d'],
+  // finance internal
+  ['kweku','akua'],['kweku','kojo'],['kweku','ama_d'],['kojo','abena_a'],
+  // marketing internal
+  ['nana_ama','kwabena'],['nana_ama','adaeze'],['nana_ama','kofi_dk'],
+  // hr internal
+  ['efua','yaw'],['efua','adwoa'],['efua','fiifi'],
+  // cross-dept
+  ['ama_d','nana_ama'],  // investor pitch ↔ marketing
+  ['kofi_a','kweku'],    // backend infra costs ↔ finance
+  ['yaw','claude'],      // hiring pipeline ↔ GM
+];
+
+// ================================================================
+//  SCENE SETUP
+// ================================================================
+const vizEl    = document.getElementById('viz');
+const canvas   = document.getElementById('three-canvas');
+const labelsEl = document.getElementById('labels');
+
+let W = vizEl.clientWidth;
+let H = vizEl.clientHeight;
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(W, H);
+renderer.setClearColor(0x020510, 1);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x020510, 0.012);
+
+const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 500);
+camera.position.set(0, 14, 24);
+camera.lookAt(0, 1, 0);
+
+// ── Lights ──
+scene.add(new THREE.AmbientLight(0x0a0a20, 3));
+const sunLight = new THREE.DirectionalLight(0x8899ff, 0.6);
+sunLight.position.set(5, 20, 10);
+scene.add(sunLight);
+
+// Dept accent lights
+[
+  { dept:'tech',      angle:72  },
+  { dept:'finance',   angle:144 },
+  { dept:'marketing', angle:216 },
+  { dept:'hr',        angle:288 },
+  { dept:'board',     angle:0   },
+].forEach(({ dept, angle }) => {
+  const lp = p(angle, 6, 2);
+  const light = new THREE.PointLight(COLORS[dept], 1.2, 18);
+  light.position.set(lp.x, lp.y, lp.z);
+  scene.add(light);
+});
+
+// ── Grid ──
+const grid = new THREE.GridHelper(60, 50, 0x0a1530, 0x060f20);
+grid.position.y = -4;
+scene.add(grid);
+
+// ── Stars ──
+(function buildStars() {
+  const geo = new THREE.BufferGeometry();
+  const n = 2500;
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos[i*3]   = (Math.random() - 0.5) * 300;
+    pos[i*3+1] = (Math.random() - 0.5) * 300;
+    pos[i*3+2] = (Math.random() - 0.5) * 300;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x223355, size: 0.15 })));
+})();
+
+// ── Orbital rings for dept heads (decorative) ──
+const mainGroup = new THREE.Group();
+scene.add(mainGroup);
+
+// ================================================================
+//  BUILD NODES
+// ================================================================
+const meshMap   = {};  // id → sphere mesh
+const haloMap   = {};  // id → halo mesh
+const ringMap   = {};  // id → ring mesh (dept heads)
+
+AGENTS.forEach(ag => {
+  const col = COLORS[ag.dept];
+
+  // Core sphere
+  const geo = new THREE.SphereGeometry(ag.size, 32, 32);
+  const mat = new THREE.MeshStandardMaterial({
+    color: col,
+    emissive: col,
+    emissiveIntensity: 0.85,
+    roughness: 0.15,
+    metalness: 0.4,
+  });
+  const sphere = new THREE.Mesh(geo, mat);
+  sphere.position.set(ag.pos.x, ag.pos.y, ag.pos.z);
+  mainGroup.add(sphere);
+  meshMap[ag.id] = sphere;
+
+  // Halo
+  const hGeo = new THREE.SphereGeometry(ag.size * 2.0, 16, 16);
+  const hMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.055, side: THREE.BackSide });
+  const halo = new THREE.Mesh(hGeo, hMat);
+  halo.position.copy(sphere.position);
+  mainGroup.add(halo);
+  haloMap[ag.id] = halo;
+
+  // Orbiting ring for dept heads + CEO + GM
+  if (ag.head || ag.dept === 'ceo' || ag.dept === 'gm') {
+    const rGeo = new THREE.TorusGeometry(ag.size * 2.2, 0.04, 8, 64);
+    const rMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.5 });
+    const ring = new THREE.Mesh(rGeo, rMat);
+    ring.position.copy(sphere.position);
+    ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.6;
+    ring.rotation.z = (Math.random() - 0.5) * 0.6;
+    mainGroup.add(ring);
+    ringMap[ag.id] = ring;
+  }
+});
+
+// ================================================================
+//  BUILD CONNECTIONS + PARTICLES
+// ================================================================
+const particles = [];
+
+CONNECTIONS.forEach(([fromId, toId]) => {
+  const fa = AGENTS.find(a => a.id === fromId);
+  const ta = AGENTS.find(a => a.id === toId);
+  if (!fa || !ta) return;
+
+  const from = new THREE.Vector3(fa.pos.x, fa.pos.y, fa.pos.z);
+  const to   = new THREE.Vector3(ta.pos.x, ta.pos.y, ta.pos.z);
+
+  // Arc midpoint — lift slightly
+  const mid = from.clone().add(to).multiplyScalar(0.5);
+  mid.y += 1.8 + Math.random() * 0.8;
+
+  const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
+  const pts   = curve.getPoints(60);
+
+  const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: COLORS[fa.dept],
+    transparent: true,
+    opacity: 0.18,
+  });
+  mainGroup.add(new THREE.Line(lineGeo, lineMat));
+
+  // Traveling particle
+  const pGeo = new THREE.SphereGeometry(0.09, 8, 8);
+  const pMat = new THREE.MeshBasicMaterial({ color: COLORS[fa.dept], transparent: true, opacity: 0.95 });
+  const pmesh = new THREE.Mesh(pGeo, pMat);
+  mainGroup.add(pmesh);
+
+  particles.push({
+    curve,
+    mesh: pmesh,
+    t: Math.random(),
+    speed: 0.0018 + Math.random() * 0.002,
+  });
+});
+
+// ================================================================
+//  HTML LABELS
+// ================================================================
+const labelEls = {};
+
+AGENTS.forEach(ag => {
+  const div = document.createElement('div');
+  div.className = 'alabel';
+  div.id = 'lbl_' + ag.id;
+  div.innerHTML =
+    `<div class="aname" style="color:${COLORS_CSS[ag.dept]}">${ag.name}</div>` +
+    `<div class="arole">${ag.role}</div>`;
+  labelsEl.appendChild(div);
+  labelEls[ag.id] = div;
+});
+
+// ── Project 3D local-group pos → CSS px ──
+function toScreen(localPos) {
+  const v = new THREE.Vector3(localPos.x, localPos.y, localPos.z);
+  v.applyMatrix4(mainGroup.matrixWorld);
+  v.project(camera);
+  return {
+    x: (v.x + 1) / 2 * W,
+    y: (-v.y + 1) / 2 * H,
+    behind: v.z > 1,
+  };
+}
+
+// ================================================================
+//  HOVER / CLICK INTERACTION
+// ================================================================
+const raycaster = new THREE.Raycaster();
+const mouse2    = new THREE.Vector2();
+const allMeshes = Object.values(meshMap);
+
+const infoPopup = document.getElementById('info-popup');
+const ipName    = document.getElementById('ip-name');
+const ipRole    = document.getElementById('ip-role');
+const ipDept    = document.getElementById('ip-dept');
+const ipTag     = document.getElementById('ip-tag');
+
+let hoveredId = null;
+let isDragging = false;
+let autoRotate = true;
+let prevMouseX = 0;
+let theta = 0;
+let time = 0;
+
+function getAgentIdFromMesh(mesh) {
+  return Object.keys(meshMap).find(id => meshMap[id] === mesh) || null;
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  if (isDragging) {
+    const dx = e.clientX - prevMouseX;
+    theta += dx * 0.008;
+    mainGroup.rotation.y = theta;
+    prevMouseX = e.clientX;
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  mouse2.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+  mouse2.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse2, camera);
+  const hits = raycaster.intersectObjects(allMeshes);
+
+  if (hits.length > 0) {
+    const id = getAgentIdFromMesh(hits[0].object);
+    if (id && id !== hoveredId) {
+      hoveredId = id;
+      const ag = AGENTS.find(a => a.id === id);
+      if (ag) {
+        ipName.textContent = ag.name;
+        ipName.style.color = COLORS_CSS[ag.dept];
+        ipRole.textContent = ag.role;
+        ipDept.textContent = DEPT_LABELS[ag.dept];
+        ipTag.textContent  = ag.head ? 'Department Head' : (ag.dept === 'ceo' ? 'Founder & CEO' : ag.dept === 'gm' ? 'General Manager' : 'Active Agent');
+        ipTag.style.color  = COLORS_CSS[ag.dept];
+        infoPopup.style.display = 'block';
+      }
+    }
+    canvas.style.cursor = 'pointer';
+  } else {
+    hoveredId = null;
+    infoPopup.style.display = 'none';
+    canvas.style.cursor = 'default';
+  }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  prevMouseX = e.clientX;
+  autoRotate = false;
+  infoPopup.style.display = 'none';
+});
+
+canvas.addEventListener('mouseup', () => {
+  isDragging = false;
+  setTimeout(() => { autoRotate = true; }, 3000);
+});
+
+canvas.addEventListener('mouseleave', () => {
+  isDragging = false;
+  hoveredId = null;
+  infoPopup.style.display = 'none';
+  canvas.style.cursor = 'default';
+});
+
+// ================================================================
+//  ANIMATION LOOP
+// ================================================================
+function animate() {
+  requestAnimationFrame(animate);
+  time += 0.016;
+
+  // Auto-rotate
+  if (autoRotate && !isDragging) {
+    theta += 0.004;
+    mainGroup.rotation.y = theta;
+  }
+
+  // Pulse nodes
+  AGENTS.forEach(ag => {
+    const mesh = meshMap[ag.id];
+    if (!mesh) return;
+    const base = ag.head ? 1.0 : 1.0;
+    const pulse = base + 0.06 * Math.sin(time * 1.8 + ag.id.charCodeAt(0) * 0.3);
+    mesh.scale.setScalar(pulse);
+    const halo = haloMap[ag.id];
+    if (halo) { halo.scale.setScalar(pulse * 1.05); }
+  });
+
+  // Spin rings
+  Object.entries(ringMap).forEach(([id, ring]) => {
+    ring.rotation.z += 0.008;
+    ring.rotation.x += 0.003;
+  });
+
+  // Move particles
+  particles.forEach(p => {
+    p.t += p.speed;
+    if (p.t > 1) p.t = 0;
+    p.mesh.position.copy(p.curve.getPoint(p.t));
+  });
+
+  // Update label positions
+  mainGroup.updateMatrixWorld();
+  AGENTS.forEach(ag => {
+    const el = labelEls[ag.id];
+    if (!el) return;
+    const sc = toScreen(ag.pos);
+    if (sc.behind) {
+      el.style.opacity = '0';
+    } else {
+      el.style.left    = sc.x + 'px';
+      el.style.top     = (sc.y + ag.size * 28 + 6) + 'px';
+      // Fade labels that are behind or very far from center (depth cue)
+      el.style.opacity = hoveredId === ag.id ? '1' : '0.82';
+    }
+  });
+
+  // Highlight hovered node
+  if (hoveredId) {
+    const mesh = meshMap[hoveredId];
+    if (mesh) mesh.scale.setScalar(1.35);
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// ================================================================
+//  RESIZE
+// ================================================================
+window.addEventListener('resize', () => {
+  W = vizEl.clientWidth;
+  H = vizEl.clientHeight;
+  camera.aspect = W / H;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+// ================================================================
+//  CLOCK
+// ================================================================
+function tick() {
+  const now = new Date();
+  document.getElementById('hclock').textContent =
+    now.toLocaleTimeString('en-GH', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+setInterval(tick, 1000);
+tick();
+
+</script>
+</body>
+</html>
