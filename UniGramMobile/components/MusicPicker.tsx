@@ -46,6 +46,15 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
   const player = useAudioPlayer(selectedTrack?.previewUrl ?? '');
   const status = useAudioPlayerStatus(player);
 
+  // Refs that mirror the latest state — used by the loop watcher so it can
+  // see fresh values without re-subscribing to status on every tick (the old
+  // code put status?.currentTime in the deps and tore down the interval ~30
+  // times/sec, effectively never letting it fire).
+  const startPointRef = useRef(0);
+  const isPlayingRef  = useRef(false);
+  useEffect(() => { startPointRef.current = startPoint; }, [startPoint]);
+  useEffect(() => { isPlayingRef.current  = isPlaying;  }, [isPlaying]);
+
   // Live playhead position in seconds for the playhead overlay.
   const playheadS = status?.currentTime ?? 0;
 
@@ -153,19 +162,22 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trimMode, selectedTrack?.trackId, isPlaying]);
 
-  // Loop within the selected clip window. When the playhead crosses
-  // (startPoint + CLIP_LENGTH_S), jump back to startPoint. Polling at 100ms is
-  // fast enough to feel seamless on real devices.
+  // Loop within the selected clip window. Reads from refs so it doesn't
+  // tear down + rebuild on every status tick (the previous version had
+  // status?.currentTime in deps and rebuilt the interval ~30 times/sec,
+  // so it effectively never fired and the loop didn't work).
   useEffect(() => {
-    if (!player || !isPlaying || !trimMode) return;
+    if (!player || !trimMode) return;
     const id = setInterval(() => {
-      const t = status?.currentTime ?? 0;
-      if (t >= startPoint + CLIP_LENGTH_S || t < startPoint - 0.2) {
-        try { player.seekTo(startPoint); } catch {}
+      if (!isPlayingRef.current) return;
+      const t = player.currentTime ?? 0;
+      const sp = startPointRef.current;
+      if (t >= sp + CLIP_LENGTH_S || t < sp - 0.3) {
+        try { player.seekTo(sp); } catch {}
       }
-    }, 100);
+    }, 150);
     return () => clearInterval(id);
-  }, [player, isPlaying, trimMode, startPoint, status?.currentTime]);
+  }, [player, trimMode]);
 
   // Stop & reset when leaving trim mode or unmounting.
   useEffect(() => {
@@ -220,21 +232,35 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
               horizontal
               showsHorizontalScrollIndicator={false}
               decelerationRate="fast"
+              // Update the start-point preview (label + colored bars + playhead
+              // bounds) on every scroll frame, but DON'T call player.seekTo()
+              // 60×/sec — expo-audio chokes on rapid-fire seeks during an
+              // active drag and pins playback wherever it was, which is the
+              // "only plays one part of the song no matter where I drag" bug.
               onScroll={(e) => {
                 const x = e.nativeEvent.contentOffset.x;
-                const newStart = xToSeconds(x);
-                const clamped  = Math.max(0, Math.min(maxStartS, newStart));
-                // 0.1s threshold so we drop redundant seeks but still feel
-                // responsive (every ~7 px of drag at SCROLL_TRACK_WIDTH=W*1.8).
+                const clamped = Math.max(0, Math.min(maxStartS, xToSeconds(x)));
                 if (Math.abs(clamped - startPoint) > 0.1) {
                   setStartPoint(clamped);
-                  // expo-audio seekTo() takes SECONDS — the old code passed ms
-                  // and seeked thousands of seconds past the end, silently
-                  // failing. This is the core bug behind "trim doesn't work".
-                  try { player.seekTo(clamped); } catch {}
                 }
               }}
-              scrollEventThrottle={16}
+              // Commit the seek when the finger lifts (or momentum settles).
+              // expo-audio's seekTo takes seconds and is reliable when called
+              // once on settle — the old code called it ~60×/sec on every
+              // scroll frame and silently failed.
+              onScrollEndDrag={(e) => {
+                const x = e.nativeEvent.contentOffset.x;
+                const clamped = Math.max(0, Math.min(maxStartS, xToSeconds(x)));
+                setStartPoint(clamped);
+                try { player.seekTo(clamped); } catch {}
+              }}
+              onMomentumScrollEnd={(e) => {
+                const x = e.nativeEvent.contentOffset.x;
+                const clamped = Math.max(0, Math.min(maxStartS, xToSeconds(x)));
+                setStartPoint(clamped);
+                try { player.seekTo(clamped); } catch {}
+              }}
+              scrollEventThrottle={32}
               contentContainerStyle={{ paddingHorizontal: width / 2 }}
             >
               <View style={[styles.waveBarContainer, { width: SCROLL_TRACK_WIDTH }]}>
@@ -285,20 +311,28 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <View style={{ flex: 1 }}>
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-          <Animated.View 
-            style={[
-              styles.sheet, 
-              { 
-                backgroundColor: colors.bg, 
-                paddingBottom: Math.max(insets.bottom, 20),
-                opacity: fadeAnim,
-                transform: [{ translateY: slideAnim }]
-              }
-            ]}
-          >
-            <View style={styles.handle} />
+      <View style={styles.overlay}>
+        {/* Backdrop — ONLY this layer closes the modal. The old version
+            wrapped the entire sheet in a single TouchableOpacity, so every
+            tap inside the trimmer (play button, waveform, Done button…)
+            bubbled to onClose and the modal dismissed itself. */}
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <Animated.View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.bg,
+              paddingBottom: Math.max(insets.bottom, 20),
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }],
+            },
+          ]}
+        >
+          <View style={styles.handle} />
             
             {!trimMode ? (
               <View style={styles.searchContainer}>
@@ -348,8 +382,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
                 </ScrollView>
               </View>
             ) : renderTrimmer()}
-          </Animated.View>
-        </TouchableOpacity>
+        </Animated.View>
       </View>
     </Modal>
   );
