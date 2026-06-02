@@ -282,40 +282,70 @@ const liveCardStyles = StyleSheet.create({
 // ─── In-Stream Ad Overlay (Facebook/YouTube style) ──────────────────────────
 
 const InStreamAdOverlay: React.FC<{
+  ad: any;
   onComplete: () => void;
-}> = ({ onComplete }) => {
+}> = ({ ad, onComplete }) => {
   const [countdown, setCountdown] = useState(5);
-  const [isFinishing, setIsFinishing] = useState(false);
+  const [canSkip, setCanSkip] = useState(false);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const timer = setInterval(() => {
       setCountdown(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          setIsFinishing(true);
-          setTimeout(onComplete, 800);
+          setCanSkip(true);
           return 0;
         }
         return prev - 1;
       });
-    }, 1000);
+    }, 1250); // Increased from 1000ms to 1250ms for a more natural "not too fast" feel
     return () => clearInterval(timer);
-  }, [onComplete]);
+  }, []);
 
   return (
     <View style={styles.inStreamContainer}>
       <View style={styles.inStreamBackdrop} />
+      
+      {/* Skip Button - Only shows after 5s */}
+      {canSkip && (
+        <TouchableOpacity 
+          style={[styles.inStreamSkipBtn, { top: insets.top + 20 }]} 
+          onPress={onComplete}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.inStreamSkipText}>Skip Ad</Text>
+          <Ionicons name="chevron-forward" size={16} color="#fff" />
+        </TouchableOpacity>
+      )}
+
       <View style={styles.inStreamContent}>
         <View style={styles.inStreamBadge}>
           <Text style={styles.inStreamBadgeText}>AD</Text>
         </View>
-        <Text style={styles.inStreamTitle}>UniGram Pro</Text>
-        <Text style={styles.inStreamSub}>Enjoy an ad-free experience and exclusive campus features.</Text>
-        
-        <View style={styles.inStreamTimerCircle}>
-          <Text style={styles.inStreamTimerText}>{isFinishing ? '✓' : countdown}</Text>
+
+        {/* Real Ad Branding */}
+        <View style={styles.inStreamBrandRow}>
+          {ad?.profiles?.avatar_url && (
+            <Image source={{ uri: ad.profiles.avatar_url }} style={styles.inStreamBrandAvatar} />
+          )}
+          <Text style={styles.inStreamBrandName}>{ad?.profiles?.username || ad?.name || 'Sponsored'}</Text>
         </View>
-        <Text style={styles.inStreamFooter}>Video will resume shortly</Text>
+
+        <Text style={styles.inStreamTitle}>{ad?.headline || 'Advertisement'}</Text>
+        <Text style={styles.inStreamSub}>{ad?.body || ''}</Text>
+        
+        {!canSkip && (
+          <View style={styles.inStreamCountdownRow}>
+            <Text style={styles.inStreamCountdownText}>Skip Ad in {countdown}s</Text>
+          </View>
+        )}
+
+        {canSkip && ad?.cta && (
+          <TouchableOpacity style={styles.inStreamCTABtn} onPress={() => ad?.media_url && Linking.openURL(ad.media_url).catch(() => {})}>
+            <Text style={styles.inStreamCTAText}>{ad.cta}</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -333,7 +363,8 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
-}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
+  reelAds?: any[]; // Pass ads pool to select from
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, reelAds = [] }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
@@ -367,6 +398,7 @@ const ReelItem: React.FC<{
   // Mid-roll ad demo state
   const [showMidRoll, setShowMidRoll] = useState(false);
   const [midRollPlayed, setMidRollPlayed] = useState(false);
+  const [activeAd, setActiveAd] = useState<any>(null);
 
   // Buffering / network error state
   const [isBuffering, setIsBuffering] = useState(false);
@@ -378,12 +410,22 @@ const ReelItem: React.FC<{
   // Trigger mid-roll ad at 30% progress
   useEffect(() => {
     if (isActive && progress > 0.3 && !midRollPlayed && !showMidRoll) {
+      // Pick a real ad from the pool, or fallback to the demo one
+      const realAd = reelAds.length > 0 ? reelAds[Math.floor(Math.random() * reelAds.length)] : {
+        name: 'UniGram Premium',
+        headline: 'Elevate your campus experience.',
+        body: 'Get exclusive badges, AI insights, and ad-free browsing.',
+        cta: 'Upgrade Now',
+        profiles: { username: 'unigram_official' }
+      };
+      
+      setActiveAd(realAd);
       setShowMidRoll(true);
       setMidRollPlayed(true);
       setIsPaused(true);
       hapticMedium();
     }
-  }, [progress, isActive, midRollPlayed, showMidRoll]);
+  }, [progress, isActive, midRollPlayed, showMidRoll, reelAds]);
 
   // Pulsing shimmer loop for seek bar during buffer
   useEffect(() => {
@@ -680,17 +722,14 @@ const ReelItem: React.FC<{
       player.currentTime = newTime;
       setProgress(newTime / player.duration);
       triggerSeekFeedback('back');
-      hapticWarning();
     } else if (x > width * 0.65) {
       const newTime = Math.min(player.duration, cur + 10);
       player.currentTime = newTime;
       setProgress(newTime / player.duration);
       triggerSeekFeedback('forward');
-      hapticWarning();
     } else {
       if (!liked) toggleLike();
       showHeartAnim();
-      hapticMedium();
     }
   };
 
@@ -974,8 +1013,9 @@ const ReelItem: React.FC<{
         }}
       />
 
-      {showMidRoll && (
+      {showMidRoll && activeAd && (
         <InStreamAdOverlay 
+          ad={activeAd}
           onComplete={() => {
             setShowMidRoll(false);
             setIsPaused(false);
@@ -1213,12 +1253,11 @@ export const ReelsScreen: React.FC<{
 
     setActiveIndex(prev => {
       if (prev !== newIndex) {
-        impactLight();
         return newIndex;
       }
       return prev;
     });
-  }, [impactLight]);
+  }, []);
 
   const load = useCallback(async () => {
     const safetyTimer = setTimeout(() => setLoading(false), 15000);
@@ -1373,12 +1412,13 @@ export const ReelsScreen: React.FC<{
         onMuteToggle={handleToggleMute}
         itemHeight={containerHeight}
         onBack={onBack}
+        reelAds={reelAds}
       />
     );
   }, [
     containerHeight, activeIndex, isAppActive, currentUserId,
     likedPostIds, likedIds, followingIds, isMuted,
-    handleLivePress, handleAdImpression, handleToggleMute, onBack,
+    handleLivePress, handleAdImpression, handleToggleMute, onBack, reelAds
   ]);
 
   if (loading) {
@@ -1676,6 +1716,52 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 32,
   },
+  inStreamBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  inStreamBrandAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  inStreamBrandName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  inStreamCountdownRow: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginBottom: 16,
+  },
+  inStreamCountdownText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  inStreamCTABtn: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  inStreamCTAText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: '800',
+  },
   inStreamTimerCircle: {
     width: 60,
     height: 60,
@@ -1694,5 +1780,23 @@ const styles = StyleSheet.create({
   inStreamFooter: {
     color: 'rgba(255,255,255,0.4)',
     fontSize: 14,
+  },
+  inStreamSkipBtn: {
+    position: 'absolute',
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  inStreamSkipText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

@@ -327,10 +327,9 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
   // ── Hashtag filter ────────────────────────────────────────────────────────
   const openHashtag = useCallback(async (tag: string) => {
     setActiveHashtag(tag);
-    selection();
     const posts = await getPostsByHashtag(tag, 30).catch(() => []);
     setHashtagPosts(posts);
-  }, [selection]);
+  }, []);
 
   // ── Follow sync callback (used by UserCard / UserRow) ────────────────────
   const handleFollowToggle = useCallback((userId: string, next: boolean) => {

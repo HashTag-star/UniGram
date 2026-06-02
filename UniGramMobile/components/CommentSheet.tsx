@@ -618,17 +618,15 @@ export const CommentSheet: React.FC<Props> = ({
   }, [loadingMore, hasMore, page, loadComments]);
 
   const toggleExpand = useCallback((parentId: string) => {
-    hapticSelection();
     setExpandedParents(prev => {
       const next = new Set(prev);
       if (next.has(parentId)) next.delete(parentId); else next.add(parentId);
       return next;
     });
-  }, [hapticSelection]);
+  }, []);
 
   const handleLike = useCallback(async (comment: any) => {
     const isLiked = !!comment.isLiked;
-    hapticLight();
     setComments(prev => prev.map(c => c.id === comment.id
       ? { ...c, likes_count: (c.likes_count ?? 0) + (isLiked ? -1 : 1), isLiked: !isLiked }
       : c
@@ -647,7 +645,7 @@ export const CommentSheet: React.FC<Props> = ({
         : c
       ));
     }
-  }, [currentUserId, targetType, hapticLight]);
+  }, [currentUserId, targetType]);
 
   const handleReply = useCallback((comment: any) => {
     setReplyingTo(comment);
