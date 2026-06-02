@@ -68,8 +68,11 @@ import { LiveScreen } from './LiveScreen';
 import { TrendingScreen } from './TrendingScreen';
 import { PopupButton } from '../components/PremiumPopup';
 import { FeedPost, ReelPreview, timeAgo, fmtCount, type PostProfile, type Post, type FeedPostProps } from '../components/FeedPost';
-import { AnimatedFlashList as _AnimatedFlashList } from '@shopify/flash-list';
-const AnimatedFlashList = _AnimatedFlashList as React.ComponentType<any>;
+// Note: we previously used Shopify's FlashList here for raw throughput, but its
+// cell-recycling caused brief blank rows on fast flicks even with drawDistance
+// turned up. Animated.FlatList trades a little memory for zero blank cells,
+// which is the right call for a content feed.
+const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<any>;
 
 const { width, height: screenHeight } = Dimensions.get('window');
 
@@ -175,8 +178,8 @@ const StoryBarInternal: React.FC<{
       onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
     >
       {/* Live Sessions — animated bubbles, appear before "Your Story" */}
-      {liveSessions.map((ls) => (
-        <LiveStoryBubble key={ls.id} ls={ls} onPress={() => onLivePress(ls.id)} />
+      {liveSessions.map((ls, i) => (
+        <LiveStoryBubble key={ls.id || `live-${i}`} ls={ls} onPress={() => onLivePress(ls.id)} />
       ))}
       
       <TouchableOpacity 
@@ -206,7 +209,7 @@ const StoryBarInternal: React.FC<{
         const globalIdx = storyGroups.indexOf(group);
         const allViewed = group.stories.every((s: any) => viewedIds.includes(s.id));
         return (
-          <TouchableOpacity key={group.profile.id} style={styles.storyItem} onPress={() => onStoryPress(globalIdx)}>
+          <TouchableOpacity key={group.profile.id || `group-${i}`} style={styles.storyItem} onPress={() => onStoryPress(globalIdx)}>
             <View style={[styles.storyRing, allViewed && styles.storyRingViewed]}>
               <View style={styles.storyAvatarClip}>
                 {group.profile.avatar_url
@@ -1004,6 +1007,15 @@ export const FeedScreen = React.memo(({
   const [likedIds, setLikedIds] = useState<Set<string>>(cachedLikedIds ?? new Set());
   const [savedIds, setSavedIds] = useState<Set<string>>(cachedSavedIds ?? new Set());
   const [repostedIds, setRepostedIds] = useState<Set<string>>(cachedRepostedIds ?? new Set());
+  // Refs mirror these Sets so renderItem can read fresh values without
+  // having the Sets in its useCallback deps (which would invalidate the
+  // callback on every like/save and re-render visible cells mid-scroll).
+  const likedIdsRef = useRef(likedIds);
+  const savedIdsRef = useRef(savedIds);
+  const repostedIdsRef = useRef(repostedIds);
+  useEffect(() => { likedIdsRef.current = likedIds; }, [likedIds]);
+  useEffect(() => { savedIdsRef.current = savedIds; }, [savedIds]);
+  useEffect(() => { repostedIdsRef.current = repostedIds; }, [repostedIds]);
   const [viewedIds, setViewedIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState('');
   const currentUserIdRef = useRef('');
@@ -1035,22 +1047,23 @@ export const FeedScreen = React.memo(({
   const pillAnim = useRef(new Animated.Value(-120)).current; // Increased offset
 
   const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 70,
+    itemVisiblePercentThreshold: 50,
+    minimumViewTime: 50,
   }).current;
 
   const recordedImpressions = useRef(new Set<string>());
   const dwellStartTimes = useRef(new Map<string, number>());
+  const lastEmittedActiveRef = useRef<string | null>(null);
 
   const onViewableItemsChanged = useRef(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
       const topId = viewableItems[0].key;
-      // Emit event instead of setting state — this avoids invalidating the
-      // renderItem useCallback on every scroll and cascading cell reconciliation.
-      DeviceEventEmitter.emit('feedActivePost', topId);
+      if (lastEmittedActiveRef.current !== topId) {
+        lastEmittedActiveRef.current = topId;
+        DeviceEventEmitter.emit('feedActivePost', topId);
+      }
 
       // Record impressions for all visible items if not already done this session.
-      // Use the ref so this closure always sees the current userId (not the stale
-      // empty string captured at initialization).
       viewableItems.forEach((info: any) => {
         const id = info.key;
         if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
@@ -1059,6 +1072,11 @@ export const FeedScreen = React.memo(({
           if (uid) recordImpression(id, uid);
         }
       });
+    } else if (lastEmittedActiveRef.current !== null) {
+      // Mid-scroll gap with nothing past the threshold — pause everything so
+      // videos don't keep playing off-screen.
+      lastEmittedActiveRef.current = null;
+      DeviceEventEmitter.emit('feedActivePost', null);
     }
 
     // Dwell tracking — record time each post spends in viewport
@@ -1107,17 +1125,32 @@ export const FeedScreen = React.memo(({
   const lastScrollY = useRef(0);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerVisible = useRef(new Animated.Value(1)).current;
+  const headerStateRef = useRef<0 | 1>(1);
   const HEADER_HEIGHT = insets.top + 48;
 
   const handleScroll = (e: any) => {
     const y = e.nativeEvent.contentOffset.y;
     const diff = y - lastScrollY.current;
-    if (diff > 8 && y > HEADER_HEIGHT) {
-      Animated.timing(headerVisible, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-    } else if (diff < -5) {
-      Animated.timing(headerVisible, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    }
     lastScrollY.current = y;
+
+    // Only fire timing() when the target state actually changes — calling it
+    // on every 16 ms scroll frame was the source of the jitter.
+    let nextTarget: 0 | 1 | null = null;
+    if (y <= 0) {
+      nextTarget = 1;
+    } else if (diff > 6 && y > HEADER_HEIGHT) {
+      nextTarget = 0;
+    } else if (diff < -4) {
+      nextTarget = 1;
+    }
+    if (nextTarget !== null && nextTarget !== headerStateRef.current) {
+      headerStateRef.current = nextTarget;
+      Animated.timing(headerVisible, {
+        toValue: nextTarget,
+        duration: 160,
+        useNativeDriver: true,
+      }).start();
+    }
   };
 
   const headerTranslateY = headerVisible.interpolate({ inputRange: [0, 1], outputRange: [-HEADER_HEIGHT, 0] });
@@ -1515,21 +1548,35 @@ export const FeedScreen = React.memo(({
     setShowCommentsAuthorId(authorId);
   }, []);
 
+  // Session-stable seed so ad slot positions differ between cold starts but
+  // stay consistent during a single feed view (avoids ads jumping rows on
+  // every re-render). Reset only when the user explicitly pull-to-refreshes.
+  const adSlotSeedRef = useRef(Math.floor(Math.random() * 1000));
+
   const handleRefresh = useCallback(() => {
     setPendingPosts([]);
     setRefreshing(true);
+    // Reseed ad slot offsets so the user gets a fresh layout on pull-to-refresh
+    // (otherwise the same posts keep getting paired with the same ad slots).
+    adSlotSeedRef.current = Math.floor(Math.random() * 1000);
     load(true);
   }, [load]);
 
   const onRefresh = handleRefresh;
 
-  // Inject reel strip (after 3rd post), suggestion cards (after 8th post), and sponsored ads
   const feedItems = React.useMemo(() => {
-    if (!posts.length) return posts;
+    // When there are no posts but we DO have ads, fall through so the
+    // ad-only fallback below can run. (Previously this early-returned and
+    // the fallback was unreachable.)
+    if (!posts.length && feedAds.length === 0) return posts;
     const items: any[] = [];
     const eventSlots = followCount < 5 ? [1, 4, 8] : [];
     let eventIdx = 0;
     let adIdx = 0;
+    const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60, feedAds[0]?.reach_multiplier ?? 1) : 11;
+    // First ad never lands in the top 3 posts — Instagram-style breathing room.
+    const FIRST_AD_MIN_INDEX = 3;
+    const seed = adSlotSeedRef.current;
     posts.forEach((p, i) => {
       items.push(p);
       if (i === 2 && previewReels.length > 0) {
@@ -1542,15 +1589,12 @@ export const FeedScreen = React.memo(({
         const ev = campusEvents[eventIdx++];
         items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
       }
-      // Pseudo-randomly inject ads into the feed based on budget frequency
-      const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60) : 5;
-      if (feedAds.length > 0) {
-        const chunkIndex = Math.floor(i / feedAdInterval);
-        // Deterministic pseudo-random offset within each chunk (0 to interval - 1)
-        const offsetInChunk = (chunkIndex * 11 + 2) % feedAdInterval;
-        const shouldInjectAd = (i % feedAdInterval === offsetInChunk);
-        
-        if (shouldInjectAd || (i === 0 && adIdx === 0)) {
+      if (feedAds.length > 0 && i >= FIRST_AD_MIN_INDEX) {
+        const chunkIndex = Math.floor((i - FIRST_AD_MIN_INDEX) / feedAdInterval);
+        // Session-seeded offset → slot within each chunk varies between launches.
+        const offsetInChunk = (seed + chunkIndex * 13) % feedAdInterval;
+        const shouldInjectAd = ((i - FIRST_AD_MIN_INDEX) % feedAdInterval === offsetInChunk);
+        if (shouldInjectAd) {
           const ad = feedAds[adIdx % feedAds.length];
           adIdx++;
           items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
@@ -1558,7 +1602,8 @@ export const FeedScreen = React.memo(({
       }
     });
 
-    // If the feed is completely empty (no posts), forcefully inject the test ads so the user can see them
+    // If the feed is completely empty (no posts), surface ads so the user
+    // still sees something (and ad creators can preview their work).
     if (posts.length === 0 && feedAds.length > 0) {
       feedAds.forEach((ad, i) => {
         items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
@@ -1573,7 +1618,7 @@ export const FeedScreen = React.memo(({
   // Inject sponsored story "groups" between real story groups
   const storyGroupsWithAds = React.useMemo(() => {
     if (!storyAds.length) return storyGroups;
-    const interval = adFrequencyInterval(storyAds[0]?.budget ?? 60);
+    const interval = adFrequencyInterval(storyAds[0]?.budget ?? 60, storyAds[0]?.reach_multiplier ?? 1);
     const result = [...storyGroups];
     let adIdx = 0;
 
@@ -1759,11 +1804,20 @@ export const FeedScreen = React.memo(({
         </TouchableOpacity>
       </Animated.View>
 
-      <AnimatedFlashList
+      <AnimatedFlatList
         ref={flatListRef}
         data={loading ? [] : feedItems}
-        estimatedItemSize={600}
         keyExtractor={(p: any) => p.id}
+        // FlatList tuning for a content feed with variable-height rows.
+        // - windowSize 11 ≈ 5 screens above + 5 below kept mounted → no blanks
+        // - removeClippedSubviews off because clipped subviews are the exact
+        //   thing causing the "white flash" the user kept reporting
+        // - initialNumToRender high enough to fill the first viewport in one pass
+        windowSize={11}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true, listener: handleScroll }
@@ -1848,6 +1902,7 @@ export const FeedScreen = React.memo(({
             return (
               <SponsoredAdCard
                 ad={item.ad}
+                isActive={lastEmittedActiveRef.current === item.id}
                 onImpression={(adId) => {
                   if (!adImpressionsRef.current.has(adId)) {
                     adImpressionsRef.current.add(adId);
@@ -1861,9 +1916,9 @@ export const FeedScreen = React.memo(({
             <FeedPost
               post={item}
               currentUserId={currentUserId}
-              isLiked={likedIds.has(item.id)}
-              isSaved={savedIds.has(item.id)}
-              isReposted={repostedIds.has(item.id)}
+              isLiked={likedIdsRef.current.has(item.id)}
+              isSaved={savedIdsRef.current.has(item.id)}
+              isReposted={repostedIdsRef.current.has(item.id)}
               isMuted={isMuted}
               setIsMuted={setIsMuted}
               onCommentCountChange={handleCommentCountChange}
@@ -1894,7 +1949,7 @@ export const FeedScreen = React.memo(({
               onPostPress={setPulsePost}
             />
           );
-        }, [likedIds, savedIds, repostedIds, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress, setPulsePost])}
+        }, [isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, onReelPress, setPulsePost])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}

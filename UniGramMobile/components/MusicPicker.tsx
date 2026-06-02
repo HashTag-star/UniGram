@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, Dimensions, ActivityIndicator, Image, Modal,
@@ -6,10 +6,24 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useTheme } from '../context/ThemeContext';
 
 const { width, height } = Dimensions.get('window');
+
+// Length of the chosen clip — matches the share/post music duration.
+const CLIP_LENGTH_S = 15;
+// Visible width of the scrollable waveform. The full track maps across this
+// width so 1 px ≈ (duration / SCROLL_TRACK_WIDTH) seconds.
+const SCROLL_TRACK_WIDTH = width * 1.8;
+const WAVE_BAR_COUNT = 64;
+
+function formatSeconds(s: number): string {
+  const safe = Math.max(0, s);
+  const m = Math.floor(safe / 60);
+  const sec = Math.floor(safe % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
 
 interface MusicPickerProps {
   visible: boolean;
@@ -27,9 +41,39 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
   const [selectedTrack, setSelectedTrack] = useState<any>(null);
   const [trimMode, setTrimMode] = useState(false);
   
-  const [startPoint, setStartPoint] = useState(0); 
+  const [startPoint, setStartPoint] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const player = useAudioPlayer(selectedTrack?.previewUrl ?? '');
+  const status = useAudioPlayerStatus(player);
+
+  // Live playhead position in seconds for the playhead overlay.
+  const playheadS = status?.currentTime ?? 0;
+
+  // Real preview duration in seconds. iTunes returns the FULL track length in
+  // `trackTimeMillis` but the previewUrl itself is only ~30s, so we cap there.
+  // Fallback to 30s when neither field is present.
+  const previewDurationS = useMemo(() => {
+    if (status?.duration && status.duration > 0) return status.duration;
+    const tt = selectedTrack?.trackTimeMillis;
+    return tt ? Math.min(30, tt / 1000) : 30;
+  }, [status?.duration, selectedTrack?.trackTimeMillis]);
+
+  // Max valid start: can't pick a window that runs past the end of the preview.
+  const maxStartS = Math.max(0, previewDurationS - CLIP_LENGTH_S);
+
+  // Stable waveform — heights derived deterministically from the track id so
+  // the bars don't shimmer on every re-render (the old version called
+  // Math.random() inside the JSX).
+  const waveformHeights = useMemo(() => {
+    const seedSource = String(selectedTrack?.trackId ?? 'x');
+    let h = 0;
+    for (let i = 0; i < seedSource.length; i++) h = ((h << 5) - h + seedSource.charCodeAt(i)) | 0;
+    let rng = Math.abs(h) || 1;
+    return Array.from({ length: WAVE_BAR_COUNT }, () => {
+      rng = (rng * 9301 + 49297) % 233280;
+      return 12 + (rng / 233280) * 42;
+    });
+  }, [selectedTrack?.trackId]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
@@ -66,11 +110,20 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
     }
   };
 
+  const waveformScrollRef = useRef<ScrollView>(null);
+
   const handleTrackSelect = (track: any) => {
     Keyboard.dismiss();
     setSelectedTrack(track);
+    setStartPoint(0);
     setTrimMode(true);
     setIsPlaying(true);
+    // Snap the waveform back to the start when switching tracks; otherwise
+    // the previous scroll position lingers and the start time disagrees with
+    // the visible selection.
+    requestAnimationFrame(() => {
+      waveformScrollRef.current?.scrollTo({ x: 0, animated: false });
+    });
   };
 
   const handleConfirm = () => {
@@ -80,22 +133,55 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
     onClose();
   };
 
+  // Play / pause control. We do NOT use native loop — instead the loop is
+  // confined to the selected window by the watcher effect below, so the user
+  // hears the actual clip they're choosing repeat seamlessly.
   useEffect(() => {
-    if (trimMode && player && selectedTrack) {
-      if (isPlaying) {
-        player.play();
-        player.loop = true;
-      } else {
-        player.pause();
-      }
+    if (!player) return;
+    if (trimMode && selectedTrack && isPlaying) {
+      player.loop = false;
+      // Make sure playback starts at the chosen start point, not wherever the
+      // player happened to be paused.
+      try { player.seekTo(startPoint); } catch {}
+      player.play();
     } else {
-      player?.pause();
+      player.pause();
     }
-  }, [trimMode, selectedTrack, visible, isPlaying]);
+    // Intentionally omit `startPoint` from deps — handleScroll already calls
+    // seekTo() on drag, and including it here would restart playback on every
+    // pixel of drag, killing audio continuity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trimMode, selectedTrack?.trackId, isPlaying]);
+
+  // Loop within the selected clip window. When the playhead crosses
+  // (startPoint + CLIP_LENGTH_S), jump back to startPoint. Polling at 100ms is
+  // fast enough to feel seamless on real devices.
+  useEffect(() => {
+    if (!player || !isPlaying || !trimMode) return;
+    const id = setInterval(() => {
+      const t = status?.currentTime ?? 0;
+      if (t >= startPoint + CLIP_LENGTH_S || t < startPoint - 0.2) {
+        try { player.seekTo(startPoint); } catch {}
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, [player, isPlaying, trimMode, startPoint, status?.currentTime]);
+
+  // Stop & reset when leaving trim mode or unmounting.
+  useEffect(() => {
+    if (!trimMode) {
+      player?.pause();
+      setIsPlaying(false);
+    }
+  }, [trimMode, player]);
 
   const togglePlayback = () => {
-    setIsPlaying(!isPlaying);
+    setIsPlaying(p => !p);
   };
+
+  // Map seconds → x offset on the waveform scrollview (and vice versa).
+  const secondsToX  = (s: number) => (s / previewDurationS) * SCROLL_TRACK_WIDTH;
+  const xToSeconds  = (x: number) => (x / SCROLL_TRACK_WIDTH) * previewDurationS;
 
   const renderTrimmer = () => {
     if (!selectedTrack) return null;
@@ -121,7 +207,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
         <View style={styles.trimmerSection}>
           <View style={styles.timeInfo}>
             <Text style={[styles.timeLabel, { color: colors.text }]}>
-              {Math.floor(startPoint)}s — {Math.floor(startPoint + 15)}s
+              {formatSeconds(startPoint)} — {formatSeconds(Math.min(previewDurationS, startPoint + CLIP_LENGTH_S))}
             </Text>
             <TouchableOpacity onPress={togglePlayback} style={styles.playToggle}>
               <Ionicons name={isPlaying ? 'pause' : 'play'} size={24} color={colors.accent} />
@@ -130,45 +216,68 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
 
           <View style={styles.waveformContainer}>
             <ScrollView
+              ref={waveformScrollRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               decelerationRate="fast"
-              snapToInterval={20}
               onScroll={(e) => {
                 const x = e.nativeEvent.contentOffset.x;
-                const newStart = (x / (width * 1.5)) * 30;
-                const clamped = Math.max(0, Math.min(15, newStart));
-                if (Math.abs(clamped - startPoint) > 0.5) {
-                   setStartPoint(clamped);
-                   player.seekTo(clamped * 1000);
+                const newStart = xToSeconds(x);
+                const clamped  = Math.max(0, Math.min(maxStartS, newStart));
+                // 0.1s threshold so we drop redundant seeks but still feel
+                // responsive (every ~7 px of drag at SCROLL_TRACK_WIDTH=W*1.8).
+                if (Math.abs(clamped - startPoint) > 0.1) {
+                  setStartPoint(clamped);
+                  // expo-audio seekTo() takes SECONDS — the old code passed ms
+                  // and seeked thousands of seconds past the end, silently
+                  // failing. This is the core bug behind "trim doesn't work".
+                  try { player.seekTo(clamped); } catch {}
                 }
               }}
               scrollEventThrottle={16}
               contentContainerStyle={{ paddingHorizontal: width / 2 }}
             >
-              <View style={[styles.waveBarContainer, { width: width * 1.5 }]}>
-                {[...Array(50)].map((_, i) => (
-                  <View 
-                    key={i} 
-                    style={[
-                      styles.waveBar, 
-                      { 
-                        height: 15 + Math.random() * 35, 
-                        backgroundColor: (i / 50) * 30 >= startPoint && (i / 50) * 30 <= startPoint + 15 
-                          ? colors.accent 
-                          : 'rgba(255,255,255,0.1)'
-                      }
-                    ]} 
-                  />
-                ))}
+              <View style={[styles.waveBarContainer, { width: SCROLL_TRACK_WIDTH }]}>
+                {waveformHeights.map((h, i) => {
+                  const barTimeS = (i / WAVE_BAR_COUNT) * previewDurationS;
+                  const inSelection = barTimeS >= startPoint && barTimeS <= startPoint + CLIP_LENGTH_S;
+                  return (
+                    <View
+                      key={i}
+                      style={[
+                        styles.waveBar,
+                        {
+                          height: h,
+                          backgroundColor: inSelection ? colors.accent : 'rgba(255,255,255,0.18)',
+                        },
+                      ]}
+                    />
+                  );
+                })}
               </View>
             </ScrollView>
-            
-            <View style={[styles.selectionWindow, { borderColor: colors.accent }]} pointerEvents="none">
-              <View style={[styles.indicatorLine, { backgroundColor: colors.accent }]} />
-            </View>
+
+            {/* Fixed selection window centered over the waveform */}
+            <View style={[styles.selectionWindow, { borderColor: colors.accent }]} pointerEvents="none" />
+
+            {/* Live playhead — moves with playback position INSIDE the window */}
+            {isPlaying && playheadS >= startPoint && playheadS <= startPoint + CLIP_LENGTH_S && (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.playhead,
+                  {
+                    left: (width / 2) - (width * 0.5 / 2)
+                          + ((playheadS - startPoint) / CLIP_LENGTH_S) * (width * 0.5),
+                    backgroundColor: '#fff',
+                  },
+                ]}
+              />
+            )}
           </View>
-          <Text style={[styles.caption, { color: colors.textMuted }]}>Drag to choose your 15s clip</Text>
+          <Text style={[styles.caption, { color: colors.textMuted }]}>
+            Drag the waveform to scrub. Tap play to preview the {CLIP_LENGTH_S}s clip.
+          </Text>
         </View>
       </View>
     );
@@ -291,15 +400,25 @@ const styles = StyleSheet.create({
   waveformContainer: { width: '100%', height: 100, alignItems: 'center', justifyContent: 'center' },
   waveBarContainer: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 100 },
   waveBar: { width: 4, borderRadius: 2, minHeight: 10 },
-  selectionWindow: { 
-    position: 'absolute', 
-    width: width * 0.5, 
-    height: 110, 
-    borderWidth: 2, 
+  selectionWindow: {
+    position: 'absolute',
+    width: width * 0.5,
+    height: 110,
+    borderWidth: 2,
     borderRadius: 16,
     zIndex: 10,
-    alignItems: 'center',
   },
-  indicatorLine: { width: 2, height: '100%', opacity: 0.5 },
+  playhead: {
+    position: 'absolute',
+    top: -4,
+    width: 2,
+    height: 118,
+    borderRadius: 1,
+    zIndex: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 3,
+  },
   caption: { fontSize: 14, marginTop: 30, textAlign: 'center', fontWeight: '500' },
 });

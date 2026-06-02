@@ -45,9 +45,11 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
   const { colors } = useTheme();
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  
-  // Track state for each item individually
-  const [itemsState, setItemsState] = useState(
+
+  // Track state for each item individually. We re-sync from props when the
+  // identity/length of `items` changes so that opening the editor for a fresh
+  // post/story/reel doesn't keep the previous batch's filters and overlays.
+  const [itemsState, setItemsState] = useState(() =>
     items.map(item => ({
       uri: item.uri,
       type: item.type,
@@ -57,7 +59,37 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
     }))
   );
 
+  const itemsKey = useMemo(() => items.map(i => i.uri).join('|'), [items]);
+  useEffect(() => {
+    setItemsState(items.map(item => ({
+      uri: item.uri,
+      type: item.type,
+      activeFilter: FILTERS[0],
+      textItems: [] as any[],
+      music: null as any,
+    })));
+    setCurrentIndex(0);
+  }, [itemsKey]);
+
+  // Container height is needed because <FlatList horizontal> doesn't auto-fill
+  // its parent vertically, and the item's `height: '100%'` would otherwise
+  // resolve to 0 → the whole editor renders as a blank black screen.
+  const [containerHeight, setContainerHeight] = useState(0);
+
   const currentItem = itemsState[currentIndex];
+  if (!currentItem) {
+    // Defensive — shouldn't happen because the parent guards with
+    // mediaAssets.length > 0, but if it ever does we'd otherwise crash on
+    // currentItem.textItems below.
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={{ color: 'rgba(255,255,255,0.6)' }}>No media selected.</Text>
+        <TouchableOpacity onPress={onCancel} style={{ marginTop: 16, padding: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   const [showFilters, setShowFilters] = useState(false);
   const [showMusicPicker, setShowMusicPicker] = useState(false);
@@ -95,36 +127,49 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
       <StatusBar hidden />
       
       {/* Background Media */}
-      {/* Background Media */}
-      <View style={styles.mediaContainer}>
-        <FlatList
-          data={itemsState}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          decelerationRate={0.992}
-          bounces={false}
-          disableIntervalMomentum
-          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-          initialNumToRender={2}
-          maxToRenderPerBatch={2}
-          onMomentumScrollEnd={(e) => {
-            const idx = Math.round(e.nativeEvent.contentOffset.x / width);
-            setCurrentIndex(idx);
-          }}
-          keyExtractor={(_, i) => String(i)}
-          renderItem={({ item }) => (
-            <View style={{ width, height: '100%' }}>
-              {item.type === 'image' ? (
-                <Image source={{ uri: item.uri }} style={styles.fullMedia} resizeMode="contain" />
-              ) : (
-                <VideoPreview uri={item.uri} />
-              )}
-              {/* Filter Overlay */}
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: item.activeFilter.overlay }]} pointerEvents="none" />
-            </View>
-          )}
-        />
+      <View
+        style={styles.mediaContainer}
+        onLayout={e => setContainerHeight(e.nativeEvent.layout.height)}
+      >
+        {containerHeight > 0 && (
+          <FlatList
+            // Without an explicit flex:1 the horizontal FlatList collapses
+            // its cross-axis, so items rendered with height:'100%' end up at
+            // height 0 and the editor looks completely blank.
+            style={{ flex: 1 }}
+            data={itemsState}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            decelerationRate={0.992}
+            bounces={false}
+            disableIntervalMomentum
+            getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+            initialNumToRender={2}
+            maxToRenderPerBatch={2}
+            onMomentumScrollEnd={(e) => {
+              const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+              setCurrentIndex(idx);
+            }}
+            keyExtractor={(_, i) => String(i)}
+            renderItem={({ item }) => (
+              // Explicit pixel height (measured from the container) instead of
+              // height: '100%' so this never resolves to zero on the cross-axis.
+              <View style={{ width, height: containerHeight }}>
+                {item.type === 'image' ? (
+                  <Image source={{ uri: item.uri }} style={styles.fullMedia} resizeMode="contain" />
+                ) : (
+                  <VideoPreview uri={item.uri} />
+                )}
+                {/* Filter Overlay */}
+                <View
+                  style={[StyleSheet.absoluteFill, { backgroundColor: item.activeFilter?.overlay ?? 'transparent' }]}
+                  pointerEvents="none"
+                />
+              </View>
+            )}
+          />
+        )}
       </View>
 
       {/* Text Overlays - Only show for current item */}

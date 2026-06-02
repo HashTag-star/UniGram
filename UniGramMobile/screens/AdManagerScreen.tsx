@@ -15,6 +15,7 @@ import {
   getCampaigns, createCampaignDraft, setPaymentRef,
   uploadAdMedia, initAdPayment, openAdCheckout,
   pauseCampaign, resumeCampaign, deleteCampaign,
+  planFromBudget, getAdCreditBalance, consumeAdCredit,
   type CampusAd,
 } from '../services/campusAds';
 
@@ -344,6 +345,9 @@ const CreateCampaignSheet: React.FC<{
   const [body, setBody]           = useState('');
   const [cta, setCta]             = useState('Learn More');
   const [link, setLink]           = useState('');
+  // Click-to-WhatsApp campaigns: when set, the ad CTA opens a wa.me chat with
+  // this number instead of opening `link`. Leave blank for a regular link ad.
+  const [whatsappNumber, setWhatsappNumber] = useState('');
   const [cards, setCards]         = useState<CarouselCard[]>([
     { id: uid(), imageUri: undefined, title: '', price: '', link: '' },
   ]);
@@ -366,7 +370,7 @@ const CreateCampaignSheet: React.FC<{
 
   const reset = () => {
     setStep(0); setObjective(null); setFormat(null);
-    setName(''); setMediaUri(''); setHeadline(''); setBody(''); setCta('Learn More'); setLink('');
+    setName(''); setMediaUri(''); setHeadline(''); setBody(''); setCta('Learn More'); setLink(''); setWhatsappNumber('');
     setCards([{ id: uid(), imageUri: undefined, title: '', price: '', link: '' }]);
     setPlacements(['feed']); setBudget(null); setDuration(null);
   };
@@ -395,7 +399,10 @@ const CreateCampaignSheet: React.FC<{
         }));
       }
 
-      // Create the campaign draft in Supabase
+      // Create the campaign draft in Supabase. Plan-tier-derived priority +
+      // reach_multiplier so higher-budget campaigns win slot competition and
+      // hit a tighter cadence (see planFromBudget in services/campusAds).
+      const plan = planFromBudget(budget);
       const draft = await createCampaignDraft({
         name,
         objective,
@@ -411,29 +418,51 @@ const CreateCampaignSheet: React.FC<{
           : null,
         status: 'pending',
         budget,
+        priority: plan.priority,
+        reach_multiplier: plan.reach_multiplier,
+        whatsapp_number: whatsappNumber.trim() || null,
         university: profile?.university ?? null,
         start_date: null,
         end_date: null,
       });
 
-      // Initialise Paystack transaction
-      const { authorization_url, reference } = await initAdPayment(draft.id, budget, duration);
-      await setPaymentRef(draft.id, reference);
+      // Burn down any available ad credit (refunded from previously paused /
+      // ended campaigns) against this campaign's budget BEFORE charging
+      // Paystack. If the credit covers the full bill we skip Paystack
+      // entirely and the campaign goes live immediately.
+      const budgetPesewas = budget * 100;
+      let consumedPesewas = 0;
+      try { consumedPesewas = await consumeAdCredit(draft.id, budgetPesewas); } catch { consumedPesewas = 0; }
+      const remainingPesewas = Math.max(0, budgetPesewas - consumedPesewas);
+      const remainingGhs     = Math.ceil(remainingPesewas / 100);
 
-      // Open in-app browser checkout
-      const success = await openAdCheckout(authorization_url, reference);
+      const now     = new Date().toISOString().split('T')[0];
+      const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      if (success) {
-        // Payment verified — activate the campaign immediately
-        const now = new Date().toISOString().split('T')[0];
-        const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      if (remainingGhs === 0) {
+        // Credit covered the whole campaign — activate without Paystack
         await supabase
           .from('campus_ads')
           .update({ status: 'active', start_date: now, end_date: endDate })
           .eq('id', draft.id);
-        showToast('Your campaign is live!', 'success');
+        showToast(`Your campaign is live! GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
       } else {
-        showToast('Campaign saved. Complete payment to go live.', 'info');
+        // Charge only the uncovered remainder via Paystack
+        const { authorization_url, reference } = await initAdPayment(draft.id, remainingGhs, duration);
+        await setPaymentRef(draft.id, reference);
+        const success = await openAdCheckout(authorization_url, reference);
+        if (success) {
+          await supabase
+            .from('campus_ads')
+            .update({ status: 'active', start_date: now, end_date: endDate })
+            .eq('id', draft.id);
+          const msg = consumedPesewas > 0
+            ? `Your campaign is live! GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`
+            : 'Your campaign is live!';
+          showToast(msg, 'success');
+        } else {
+          showToast('Campaign saved. Complete payment to go live.', 'info');
+        }
       }
       handleClose();
       onCreated?.();
@@ -665,6 +694,22 @@ const CreateCampaignSheet: React.FC<{
                 keyboardType="url"
                 autoCapitalize="none"
               />
+
+              {/* Click-to-WhatsApp number */}
+              <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 20 }]}>
+                WHATSAPP NUMBER <Text style={{ fontWeight: '400' }}>(optional, click-to-chat)</Text>
+              </Text>
+              <TextInput
+                style={[styles.textInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                placeholder="+233 24 000 0000"
+                placeholderTextColor={colors.textMuted}
+                value={whatsappNumber}
+                onChangeText={setWhatsappNumber}
+                keyboardType="phone-pad"
+              />
+              <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 6 }}>
+                When set, the ad's call-to-action opens a WhatsApp chat with this number instead of the destination link.
+              </Text>
             </ScrollView>
           )}
 
@@ -931,6 +976,14 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
     ]);
   }, [showToast]);
 
+  // Ad credit balance — refunds from paused/ended campaigns land here and can
+  // be applied to the next campaign at checkout.
+  const [creditGhs, setCreditGhs] = useState(0);
+  useEffect(() => {
+    if (!visible) return;
+    getAdCreditBalance().then(b => setCreditGhs(b.ghs)).catch(() => setCreditGhs(0));
+  }, [visible, campaigns]);
+
   useEffect(() => {
     if (visible) loadCampaigns();
   }, [visible, loadCampaigns]);
@@ -961,6 +1014,21 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+          {creditGhs > 0 && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              backgroundColor: '#22c55e15', borderColor: '#22c55e44',
+              borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 12,
+            }}>
+              <Ionicons name="wallet-outline" size={16} color="#22c55e" />
+              <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
+                GHS {creditGhs.toFixed(2)} credit available
+              </Text>
+              <Text style={{ color: colors.textMuted, fontSize: 12, marginLeft: 4 }}>
+                — applied to your next campaign
+              </Text>
+            </View>
+          )}
           <View style={styles.statsGrid}>
             {([
               { label: 'Active Ads',  value: String(stats.active),      icon: 'flash-outline',       color: '#22c55e' },
