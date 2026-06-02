@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
-  InteractionManager,
+  InteractionManager, BackHandler, Platform, ToastAndroid,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -37,10 +37,10 @@ import PagerView from 'react-native-pager-view';
 import { isOnboardingComplete } from './services/onboarding';
 import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
-import { supabase } from './lib/supabase';
+import { supabase, SupabaseTimeoutError } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { PopupProvider } from './context/PopupContext';
-import { ToastProvider } from './context/ToastContext';
+import { ToastProvider, useToast } from './context/ToastContext';
 import { createStory } from './services/stories';
 import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
@@ -367,6 +367,7 @@ function AppShell() {
   const { colors } = useTheme();
   const { setNotifBadge, setMessageBadge, setProfileRefreshKey, setFeedRefreshKey } = useAppState();
   const haptics = useAppHaptics();
+  const { showToast } = useToast();
   const [session, setSession] = useState<any>(undefined);
   const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
   const [, startTransition] = useTransition();
@@ -412,8 +413,10 @@ function AppShell() {
 
     // ── Fast startup: fonts + session + onboarding cache all in parallel ──
     const startup = async () => {
-      // All three kick off simultaneously — none waits on the others
-      const [, { data: { session: initialSession } }] = await Promise.all([
+      // All three kick off simultaneously — none waits on the others. Use
+      // Promise.allSettled to avoid one network timeout aborting the whole
+      // startup sequence; show a friendly toast on timeout.
+      const promises = [
         // Fonts: bundled assets, typically < 80ms
         Font.loadAsync({ ...Ionicons.font, ...AntDesign.font, ...MaterialIcons.font, ...FontAwesome.font })
           .then(() => { if (!cancelled) setFontsReady(true); })
@@ -423,8 +426,25 @@ function AppShell() {
         // Audio pre-warm: fire-and-forget
         setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'doNotMix', shouldRouteThroughEarpiece: false })
           .catch(() => {}),
-      ]);
+      ];
+
+      const settled = await Promise.allSettled(promises);
       if (cancelled) return;
+
+      // Session result is the second promise
+      const sessionResult = settled[1];
+      let initialSession: any = undefined;
+      if (sessionResult.status === 'fulfilled') {
+        initialSession = sessionResult.value?.data?.session ?? sessionResult.value?.data?.session;
+      } else {
+        const reason = sessionResult.reason;
+        if (reason instanceof SupabaseTimeoutError) {
+          try { showToast(reason.userMessage, 'error'); } catch {}
+          console.warn('Session fetch timed out — continuing without session.', reason.message);
+        } else {
+          console.warn('Session fetch failed — continuing without session.', reason);
+        }
+      }
 
       setSession(initialSession);
       const uid = initialSession?.user?.id ?? null;
@@ -595,6 +615,80 @@ function AppShell() {
   const onDiscoverPress = useCallback(() => setShowDiscoverPeople(true), []);
   const onTrendingPress = useCallback(() => setShowTrending(true), []);
   const onCameraOpen = useCallback(() => pagerRef.current?.setPage(0), []);
+
+  // ─── Android hardware back button ────────────────────────────────────────
+  // Without this, every back press bubbles to the OS and exits the app — a
+  // brutal UX. We pop the topmost "thing" instead:
+  //   1. open modals / overlays (close them)
+  //   2. camera page in the pager (return to feed pager page)
+  //   3. live / reels / non-feed tabs (back to feed)
+  //   4. viewing someone else's profile (clear to own)
+  //   5. otherwise: double-tap pattern — first press shows a toast,
+  //      second press within 2s actually exits.
+  const backExitArmedRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!session || !onboardingDone) return; // OS default while in auth/onboarding
+
+    const onBack = () => {
+      // Priority-ordered pop. First match wins.
+      if (activeLegal) { setActiveLegal(null); return true; }
+      if (notifPost)   { setNotifPost(null);   return true; }
+      if (showCreate)  { setShowCreate(false); return true; }
+      if (showVerification)  { setShowVerification(false);  return true; }
+      if (showNotifications) { setShowNotifications(false); return true; }
+      if (showTrending)      { setShowTrending(false);      return true; }
+      if (showDiscoverPeople){ setShowDiscoverPeople(false);return true; }
+      if (viewerLiveSession) { setViewerLiveSession(null);  return true; }
+      if (isLive)            { setIsLive(false);            return true; }
+      if (activeMedia)       { setActiveMedia(null);        return true; }
+
+      // Pager off the main page (e.g. camera) → return to main
+      if (pagerPage !== 1) { pagerRef.current?.setPage(1); return true; }
+
+      // Reels has its own immersive screen — back goes to the tab the user
+      // came from before opening reels.
+      if (activeTab === 'reels') {
+        const dest = prevTab && prevTab !== 'reels' ? prevTab : 'feed';
+        setActiveTab(dest);
+        setActiveTabVisual(dest);
+        setInitialReelId(undefined);
+        setInitialReels(undefined);
+        return true;
+      }
+
+      // Viewing someone else's profile → back to own profile
+      if (activeTab === 'profile' && viewedUserId) {
+        setViewedUserId(null);
+        return true;
+      }
+
+      // Any non-feed tab → back to feed
+      if (activeTab !== 'feed') {
+        setActiveTab('feed');
+        setActiveTabVisual('feed');
+        return true;
+      }
+
+      // On feed with nothing to pop → double-tap-to-exit
+      if (backExitArmedRef.current) {
+        backExitArmedRef.current = false;
+        return false; // let the OS exit the app
+      }
+      backExitArmedRef.current = true;
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      setTimeout(() => { backExitArmedRef.current = false; }, 2000);
+      return true;
+    };
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [
+    session, onboardingDone,
+    activeLegal, notifPost, showCreate, showVerification, showNotifications,
+    showTrending, showDiscoverPeople, viewerLiveSession, isLive, activeMedia,
+    pagerPage, activeTab, prevTab, viewedUserId,
+  ]);
 
   if (!minSplashDone || !fontsReady || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
   if (!session) {

@@ -45,9 +45,11 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
   const { colors } = useTheme();
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  
-  // Track state for each item individually
-  const [itemsState, setItemsState] = useState(
+
+  // Track state for each item individually. We re-sync from props when the
+  // identity/length of `items` changes so that opening the editor for a fresh
+  // post/story/reel doesn't keep the previous batch's filters and overlays.
+  const [itemsState, setItemsState] = useState(() =>
     items.map(item => ({
       uri: item.uri,
       type: item.type,
@@ -57,13 +59,38 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
     }))
   );
 
-  const currentItem = itemsState[currentIndex];
+  const itemsKey = useMemo(() => items.map(i => i.uri).join('|'), [items]);
+  useEffect(() => {
+    setItemsState(items.map(item => ({
+      uri: item.uri,
+      type: item.type,
+      activeFilter: FILTERS[0],
+      textItems: [] as any[],
+      music: null as any,
+    })));
+    setCurrentIndex(0);
+  }, [itemsKey]);
 
-  const [showFilters, setShowFilters] = useState(false);
+  // Container height is needed because <FlatList horizontal> doesn't auto-fill
+  // its parent vertically, and the item's `height: '100%'` would otherwise
+  // resolve to 0 → the whole editor renders as a blank black screen.
+  // Seed with the window height as a safe fallback so the editor is *never*
+  // gated on an onLayout callback (which can be slow on Android new arch);
+  // it gets refined to the real measured height on the very next frame.
+  const [containerHeight, setContainerHeight] = useState(height);
+
+  // ⚠️ ALL hooks must be declared above any conditional return. A previous
+  // version of this file put the `if (!currentItem) return ...` guard between
+  // the first batch of useState calls and these five — the moment
+  // `currentItem` evaluated falsy for a single frame React's hook-count check
+  // tripped and the error boundary swallowed it, surfacing as a blank screen.
+  const [showFilters,     setShowFilters]     = useState(false);
   const [showMusicPicker, setShowMusicPicker] = useState(false);
-  const [showCrop, setShowCrop] = useState(false);
-  const [isAddingText, setIsAddingText] = useState(false);
-  const [currentText, setCurrentText] = useState('');
+  const [showCrop,        setShowCrop]        = useState(false);
+  const [isAddingText,    setIsAddingText]    = useState(false);
+  const [currentText,     setCurrentText]     = useState('');
+
+  const currentItem = itemsState[currentIndex];
 
   const updateCurrentItem = (patch: Partial<(typeof itemsState)[0]>) => {
     setItemsState(prev => prev.map((it, i) => i === currentIndex ? { ...it, ...patch } : it));
@@ -79,7 +106,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
         color: '#fff',
         fontSize: 24,
       };
-      updateCurrentItem({ textItems: [...currentItem.textItems, newText] });
+      updateCurrentItem({ textItems: [...(currentItem?.textItems ?? []), newText] });
       setCurrentText('');
       setIsAddingText(false);
       haptics.medium();
@@ -88,16 +115,38 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
     }
   };
 
+  // Defensive fallback — rendered AFTER every hook so we never violate
+  // the Rules of Hooks.
+  if (!currentItem) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={{ color: 'rgba(255,255,255,0.6)' }}>Loading media…</Text>
+        <TouchableOpacity onPress={onCancel} style={{ marginTop: 16, padding: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const currentTextItems = currentItem.textItems;
 
   return (
     <View style={styles.container}>
       <StatusBar hidden />
       
-      {/* Background Media */}
-      {/* Background Media */}
-      <View style={styles.mediaContainer}>
+      {/* Background Media — rendered unconditionally with a window-height
+          fallback so the editor never blanks while waiting for onLayout. */}
+      <View
+        style={styles.mediaContainer}
+        onLayout={e => {
+          const h = e.nativeEvent.layout.height;
+          if (h > 0 && h !== containerHeight) setContainerHeight(h);
+        }}
+      >
         <FlatList
+          // Without an explicit flex:1 the horizontal FlatList collapses
+          // its cross-axis and items rendered with height:'100%' resolve to 0.
+          style={{ flex: 1 }}
           data={itemsState}
           horizontal
           pagingEnabled
@@ -114,14 +163,20 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
           }}
           keyExtractor={(_, i) => String(i)}
           renderItem={({ item }) => (
-            <View style={{ width, height: '100%' }}>
+            // Explicit pixel height (measured from the container OR the
+            // window-height fallback) instead of height:'100%' so this never
+            // resolves to zero on the cross-axis.
+            <View style={{ width, height: containerHeight }}>
               {item.type === 'image' ? (
                 <Image source={{ uri: item.uri }} style={styles.fullMedia} resizeMode="contain" />
               ) : (
                 <VideoPreview uri={item.uri} />
               )}
               {/* Filter Overlay */}
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: item.activeFilter.overlay }]} pointerEvents="none" />
+              <View
+                style={[StyleSheet.absoluteFill, { backgroundColor: item.activeFilter?.overlay ?? 'transparent' }]}
+                pointerEvents="none"
+              />
             </View>
           )}
         />

@@ -1,19 +1,53 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Linking, Dimensions, Alert,
+  ScrollView, Linking, Dimensions, Alert, DeviceEventEmitter,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { CachedImage } from './CachedImage';
 import { useTheme } from '../context/ThemeContext';
-import { recordCampusAdClick } from '../services/campusAds';
+import { recordCampusAdClick, buildWhatsAppCtaUrl } from '../services/campusAds';
 
 const { width } = Dimensions.get('window');
 
 interface SponsoredAdCardProps {
   ad: any;
+  isActive?: boolean;
   onImpression?: (adId: string) => void;
 }
+
+// ── Video Sub-component ──────────────────────────────────────────────────────
+const SponsoredAdVideo: React.FC<{
+  url: string;
+  isActive: boolean;
+  isMuted?: boolean;
+}> = React.memo(({ url, isActive, isMuted = true }) => {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = true;
+    p.muted = isMuted;
+    p.audioMixingMode = isMuted ? 'mixWithOthers' : 'duckOthers';
+  });
+
+  useEffect(() => {
+    if (isActive) player.play();
+    else player.pause();
+  }, [isActive, player]);
+
+  useEffect(() => {
+    player.muted = isMuted;
+    player.audioMixingMode = isMuted ? 'mixWithOthers' : 'duckOthers';
+  }, [isMuted, player]);
+
+  return (
+    <VideoView
+      player={player}
+      style={styles.creativeImage}
+      contentFit="cover"
+      nativeControls={false}
+    />
+  );
+});
 
 // Stable callback pattern — prevents impression re-firing when parent re-renders
 function useStableCallback<T extends (...args: any[]) => any>(fn: T | undefined): T {
@@ -22,25 +56,45 @@ function useStableCallback<T extends (...args: any[]) => any>(fn: T | undefined)
   return useRef((...args: any[]) => ref.current?.(...args)).current as T;
 }
 
-export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad, onImpression }) => {
+export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad, isActive = false, onImpression }) => {
   const { colors } = useTheme();
   const stableOnImpression = useStableCallback(onImpression);
   const [carouselIdx, setCarouselIdx] = useState(0);
+  const [isMuted, setIsMuted] = useState(true);
 
   // Fire impression once per unique ad rendered in this cell
   useEffect(() => {
     stableOnImpression(ad.id);
   }, [ad.id]);
 
+  // Self-managed active state for the video player — can be driven by 'feedActivePost'
+  // events if not explicitly passed by parent (similar to FeedPost).
+  const [isActiveInternal, setIsActiveInternal] = useState(false);
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('feedActivePost', (id: string | null) => {
+      // Ads have complex IDs like `__ad_ID_posN__`, so we check if it starts with the expected prefix
+      const isMyAd = id?.includes(`ad_${ad.id}`);
+      setIsActiveInternal(!!isMyAd);
+    });
+    return () => sub.remove();
+  }, [ad.id]);
+
+  const finalActive = isActive || isActiveInternal;
+
   const handleCTA = async () => {
     try {
       recordCampusAdClick(ad.id).catch(() => {});
-      if (ad.link) {
-        const supported = await Linking.canOpenURL(ad.link);
+      // Click-to-WhatsApp ads (migration 040): when an ad has a
+      // `whatsapp_number`, the CTA opens a wa.me chat with a prefilled
+      // intro message instead of an arbitrary web link.
+      const waUrl = buildWhatsAppCtaUrl(ad);
+      const targetUrl = waUrl || ad.link;
+      if (targetUrl) {
+        const supported = await Linking.canOpenURL(targetUrl);
         if (supported) {
-          await Linking.openURL(ad.link);
+          await Linking.openURL(targetUrl);
         } else {
-          Alert.alert('Cannot open link', ad.link);
+          Alert.alert('Cannot open link', targetUrl);
         }
       }
     } catch {}
@@ -99,20 +153,56 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
         <CachedImage uri={ad.media_url} style={styles.creativeImage} resizeMode="cover" />
       )}
 
-      {/* Video Ad — thumbnail with play overlay; tap opens link */}
+      {/* Video Ad — auto-plays when in view; tap creative toggles mute */}
       {ad.format === 'video' && (
-        <TouchableOpacity onPress={handleCTA} activeOpacity={0.95}>
-          {ad.media_url ? (
-            <CachedImage uri={ad.media_url} style={styles.creativeImage} resizeMode="cover" />
-          ) : (
-            <View style={[styles.creativeImage, styles.videoPlaceholder, { backgroundColor: colors.bg2 }]} />
-          )}
-          <View style={styles.playOverlay}>
-            <View style={styles.playBtn}>
-              <Ionicons name="play" size={32} color="#fff" />
+        <View style={{ position: 'relative' }}>
+          <TouchableOpacity 
+            onPress={() => setIsMuted(!isMuted)} 
+            activeOpacity={0.95}
+          >
+            {ad.media_url ? (
+              <SponsoredAdVideo 
+                url={ad.media_url} 
+                isActive={finalActive} 
+                isMuted={isMuted} 
+              />
+            ) : (
+              <View style={[styles.creativeImage, styles.videoPlaceholder, { backgroundColor: colors.bg2 }]} />
+            )}
+            
+            {/* Play/Mute Overlay */}
+            <View style={styles.playOverlay} pointerEvents="none">
+              {!finalActive && ad.media_url && (
+                <View style={styles.playBtn}>
+                  <Ionicons name="play" size={32} color="#fff" />
+                </View>
+              )}
             </View>
-          </View>
-        </TouchableOpacity>
+
+            {/* Mute toggle indicator */}
+            {finalActive && ad.media_url && (
+              <TouchableOpacity 
+                style={styles.muteBtn} 
+                onPress={() => setIsMuted(!isMuted)}
+              >
+                <Ionicons 
+                  name={isMuted ? "volume-mute" : "volume-high"} 
+                  size={16} 
+                  color="#fff" 
+                />
+              </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+
+          {/* CTA overlay button (optional, usually ads have a separate bar but some have it on video) */}
+          <TouchableOpacity 
+            style={[styles.videoCta, { bottom: 12, right: 12 }]} 
+            onPress={handleCTA}
+          >
+            <Text style={styles.videoCtaText}>{ad.cta || 'Learn More'}</Text>
+            <Ionicons name="arrow-forward" size={14} color="#fff" />
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* ── Premium CTA Bar ─────────────────────────────────────────────── */}
@@ -271,6 +361,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center', justifyContent: 'center',
   },
+  muteBtn: {
+    position: 'absolute', bottom: 12, left: 12,
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 10,
+  },
+  videoCta: {
+    position: 'absolute',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+  },
+  videoCtaText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   
   // Premium CTA Bar
   premiumCta: {

@@ -1044,28 +1044,50 @@ export const ReelsScreen: React.FC<{
   const adImpressionsRef = useRef(new Set<string>());
   const reelsListRef = useRef<any>(null);
 
+  // Stable seed so reel-ad slot offsets vary between cold starts but stay
+  // fixed during a session — without this the memo would shuffle ads as
+  // the user scrolled.
+  const reelAdSlotSeedRef = useRef(Math.floor(Math.random() * 1000));
+
   // Build mixed feed: inject live cards + sponsored reel ads
   const LIVE_INTERVAL = 5;
   const reels = React.useMemo(() => {
     const result: any[] = [];
     let liveIdx = 0;
     let adIdx = 0;
-    // Derive inject interval from the first ad's budget (or default 6)
-    const adInterval = reelAds.length > 0 ? adFrequencyInterval(reelAds[0].budget ?? 60) : 6;
+    // Derive inject interval from the top ad's plan (budget × reach multiplier).
+    // Multiply by 1.4 for reels — they're more immersive than feed posts, so a
+    // slightly wider gap between ads matches IG/TikTok feel.
+    const baseInterval = reelAds.length > 0
+      ? adFrequencyInterval(reelAds[0].budget ?? 60, reelAds[0].reach_multiplier ?? 1)
+      : 11;
+    const adInterval = Math.max(8, Math.round(baseInterval * 1.4));
+
+    // No ad until the user has watched at least the first 4 organic reels —
+    // matches the "warm up before monetising" pattern of IG / TikTok.
+    const FIRST_AD_MIN_INDEX = 4;
+    const seed = reelAdSlotSeedRef.current;
 
     rawReels.forEach((reel, i) => {
       result.push(reel);
       if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
       }
-      // Inject ads based on frequency, but ALWAYS force the first ad to appear after the first reel for testing
-      const isTestAdPos = (i === 0 && adIdx === 0);
-      const isIntervalAdPos = ((i + 1) % adInterval === 0);
 
-      if (reelAds.length > 0 && (isTestAdPos || isIntervalAdPos)) {
-        const ad = reelAds[adIdx % reelAds.length];
-        adIdx++;
-        result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
+      // Session-seeded offset within each chunk so two viewers see ads at
+      // different positions, but the same viewer sees stable positions.
+      // NOTE: this slot calc is independent of activeIndex on purpose — the
+      // previous version rebuilt the entire reels list every time you swiped,
+      // which thrashed FlatList and was a real perf cost.
+      if (reelAds.length > 0 && i >= FIRST_AD_MIN_INDEX) {
+        const chunkIndex = Math.floor((i - FIRST_AD_MIN_INDEX) / adInterval);
+        const offsetInChunk = (seed + chunkIndex * 13) % adInterval;
+        const shouldInjectAd = ((i - FIRST_AD_MIN_INDEX) % adInterval === offsetInChunk);
+        if (shouldInjectAd) {
+          const ad = reelAds[adIdx % reelAds.length];
+          adIdx++;
+          result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
+        }
       }
     });
     return result;
@@ -1076,17 +1098,37 @@ export const ReelsScreen: React.FC<{
   // active state to trigger immediate playback. This provides the "snappy"
   // experience found on top-tier social platforms.
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 51 }).current;
+  // Time the last reel ad was actually shown. If the user lands on a new ad
+  // slot less than COOLDOWN_MS after the previous one, we auto-swipe past it
+  // so the same person never sees two ads back-to-back even if the random
+  // slot offset put them close together.
+  const lastReelAdShownAtRef = useRef(0);
+  const REEL_AD_COOLDOWN_MS = 60_000;
   const onViewableItemsChanged = useCallback(({ viewableItems, changed }: any) => {
-    if (viewableItems.length > 0) {
-      const newIndex = viewableItems[0].index ?? 0;
-      setActiveIndex(prev => {
-        if (prev !== newIndex) {
-          impactLight(); // Subtle haptic click when snapping
-          return newIndex;
-        }
-        return prev;
-      });
+    if (viewableItems.length === 0) return;
+    const top = viewableItems[0];
+    const newIndex = top.index ?? 0;
+
+    // Cooldown skip — only when the newly-active item IS an ad
+    if (top.item?._type === 'reel_ad') {
+      const sinceLast = Date.now() - lastReelAdShownAtRef.current;
+      if (lastReelAdShownAtRef.current !== 0 && sinceLast < REEL_AD_COOLDOWN_MS) {
+        // Land on the next non-ad item without flickering the ad UI
+        try {
+          reelsListRef.current?.scrollToIndex({ index: newIndex + 1, animated: true });
+        } catch {}
+        return;
+      }
+      lastReelAdShownAtRef.current = Date.now();
     }
+
+    setActiveIndex(prev => {
+      if (prev !== newIndex) {
+        impactLight();
+        return newIndex;
+      }
+      return prev;
+    });
   }, [impactLight]);
 
   const load = useCallback(async () => {
@@ -1097,7 +1139,12 @@ export const ReelsScreen: React.FC<{
       setCurrentUserId(user.id);
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       const [reelsData, likedData, likedPostData, followingData, liveData, profData] = await Promise.all([
-        getPersonalizedReels(user.id, 10, 0).catch(() => getReels(10, 0).catch(() => [])),
+        // Fall through to the global reel feed not only on throw but also when
+        // the personalized query returns an empty array (new users / cold-start),
+        // otherwise the screen flashes "No reels yet" while reels exist globally.
+        getPersonalizedReels(user.id, 10, 0)
+          .then(r => (Array.isArray(r) && r.length > 0 ? r : getReels(10, 0).catch(() => [])))
+          .catch(() => getReels(10, 0).catch(() => [])),
         getLikedReelIds(user.id).catch(() => [] as string[]),
         getLikedPostIds(user.id).catch(() => [] as string[]),
         getFollowing(user.id).catch(() => [] as any[]),

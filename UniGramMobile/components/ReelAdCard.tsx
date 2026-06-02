@@ -8,21 +8,34 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from './CachedImage';
-import { recordCampusAdClick } from '../services/campusAds';
+import { recordCampusAdClick, isReelAdUnskippable, FORCED_REEL_AD_SECONDS, buildWhatsAppCtaUrl } from '../services/campusAds';
 
 const SKIP_DELAY = 5;
 
 // ── Video background ──────────────────────────────────────────────────────────
-const ReelAdVideo: React.FC<{ url: string; isActive: boolean }> = React.memo(({ url, isActive }) => {
+// `loop` is now controlled by the parent — forced-view ads should play through
+// once and then auto-advance rather than loop forever.
+const ReelAdVideo: React.FC<{
+  url: string;
+  isActive: boolean;
+  loop: boolean;
+  onEnded?: () => void;
+}> = React.memo(({ url, isActive, loop, onEnded }) => {
   const player = useVideoPlayer(url, p => {
-    p.loop = true;
+    p.loop = loop;
     p.muted = false;
     p.audioMixingMode = 'duckOthers';
   });
+  useEffect(() => { player.loop = loop; }, [loop, player]);
   useEffect(() => {
     if (isActive) player.play();
     else player.pause();
-  }, [isActive]);
+  }, [isActive, player]);
+  useEffect(() => {
+    if (!onEnded) return;
+    const sub = player.addListener('playToEnd', () => onEnded());
+    return () => sub.remove();
+  }, [player, onEnded]);
   return <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />;
 });
 
@@ -35,24 +48,51 @@ export const ReelAdCard: React.FC<{
   onImpression: (adId: string) => void;
 }> = React.memo(({ ad, isActive, itemHeight, onSkip, onImpression }) => {
   const insets = useSafeAreaInsets();
+
+  // ~1/3 of ads are forced-view (no skip) per Instagram-style monetization.
+  // Decision is stable per ad id so the same ad behaves the same every view.
+  const forced = isReelAdUnskippable(ad);
+
+  // Duration the user must endure on a forced ad. For static creatives we use
+  // FORCED_REEL_AD_SECONDS; for videos we let the clip's `playToEnd` event
+  // trigger auto-advance and use this as a safety cap (clamped 6-15s).
+  const forcedDuration = Math.min(15, Math.max(6, FORCED_REEL_AD_SECONDS));
+
   const [canSkip, setCanSkip] = useState(false);
-  const [countdown, setCountdown] = useState(SKIP_DELAY);
+  const [countdown, setCountdown] = useState(forced ? forcedDuration : SKIP_DELAY);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Re-entrancy guard so we don't trigger onSkip multiple times when both the
+  // timer reaches zero AND the video playToEnd event fires.
+  const advancedRef = useRef(false);
 
   const isVideo = ad.format === 'video' && !!ad.media_url;
   const advertiserName = ad.profiles?.full_name || (ad.profiles?.username ? `@${ad.profiles.username}` : ad.name);
   const avatarUri = ad.profiles?.avatar_url ?? null;
 
+  const autoAdvance = () => {
+    if (advancedRef.current) return;
+    advancedRef.current = true;
+    if (timerRef.current) clearInterval(timerRef.current);
+    onSkip();
+  };
+
   useEffect(() => {
     if (isActive) {
       onImpression(ad.id);
+      advancedRef.current = false;
       setCanSkip(false);
-      setCountdown(SKIP_DELAY);
+      const startCount = forced ? forcedDuration : SKIP_DELAY;
+      setCountdown(startCount);
       timerRef.current = setInterval(() => {
         setCountdown(prev => {
           if (prev <= 1) {
             clearInterval(timerRef.current!);
-            setCanSkip(true);
+            if (forced) {
+              // Forced ad finished — auto-advance to next reel.
+              autoAdvance();
+            } else {
+              setCanSkip(true);
+            }
             return 0;
           }
           return prev - 1;
@@ -60,19 +100,24 @@ export const ReelAdCard: React.FC<{
       }, 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
+      advancedRef.current = false;
       setCanSkip(false);
-      setCountdown(SKIP_DELAY);
+      setCountdown(forced ? forcedDuration : SKIP_DELAY);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isActive, ad.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, ad.id, forced]);
 
   const handleCTA = async () => {
     recordCampusAdClick(ad.id).catch(() => {});
-    if (!ad.link) return;
+    // Prefer the WhatsApp deep-link when the campaign opted into
+    // click-to-WhatsApp; fall back to the generic link otherwise.
+    const targetUrl = buildWhatsAppCtaUrl(ad) || ad.link;
+    if (!targetUrl) return;
     try {
-      const ok = await Linking.canOpenURL(ad.link);
-      if (ok) await Linking.openURL(ad.link);
-      else Alert.alert('Cannot open link', ad.link);
+      const ok = await Linking.canOpenURL(targetUrl);
+      if (ok) await Linking.openURL(targetUrl);
+      else Alert.alert('Cannot open link', targetUrl);
     } catch {}
   };
 
@@ -81,7 +126,14 @@ export const ReelAdCard: React.FC<{
 
       {/* ── Background creative ────────────────────────────────────────── */}
       {isVideo ? (
-        <ReelAdVideo url={ad.media_url} isActive={isActive} />
+        <ReelAdVideo
+          url={ad.media_url}
+          isActive={isActive}
+          // Forced ads play through once and auto-advance; skippable ads loop
+          // until the user swipes.
+          loop={!forced}
+          onEnded={forced ? autoAdvance : undefined}
+        />
       ) : ad.media_url ? (
         <CachedImage uri={ad.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
       ) : (
@@ -105,9 +157,19 @@ export const ReelAdCard: React.FC<{
         pointerEvents="none"
       />
 
-      {/* ── Top-right: skip / countdown ────────────────────────────────── */}
+      {/* ── Top-right: skip / countdown ──────────────────────────────────
+          - Skippable ad: shows a numeric countdown for 5s, then "Skip Ad".
+          - Forced-view ad: shows "Ad · 12s" (no skip), counts to 0, then
+            auto-advances. The pill stays visible the whole time so the user
+            knows the ad will end. */}
       <View style={[styles.skipWrap, { top: insets.top + 12 }]}>
-        {canSkip ? (
+        {forced ? (
+          <View style={[styles.countdownPill, styles.forcedPill]}>
+            <Text style={styles.forcedPillLabel}>Ad</Text>
+            <View style={styles.forcedDot} />
+            <Text style={styles.countdownText}>{countdown}s</Text>
+          </View>
+        ) : canSkip ? (
           <TouchableOpacity style={styles.skipBtn} onPress={onSkip} activeOpacity={0.85}>
             <Text style={styles.skipBtnText}>Skip Ad</Text>
             <Ionicons name="play-skip-forward" size={12} color="#fff" />
@@ -221,6 +283,26 @@ const styles = StyleSheet.create({
     minWidth: 32, alignItems: 'center',
   },
   countdownText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  forcedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    minWidth: 0,
+  },
+  forcedPillLabel: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  forcedDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+  },
 
   // Bottom overlay
   bottomOverlay: {
