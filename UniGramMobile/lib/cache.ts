@@ -64,7 +64,60 @@ export const Cache = {
       }
     }
   },
+
+  /**
+   * Get cached value or run `fetcher` to refresh. Implements in-flight
+   * deduplication and stale-while-revalidate: returns fresh memory value
+   * if available, otherwise returns AsyncStorage value if fresh, and
+   * ensures only one fetcher runs per key at a time. If a stale value is
+   * returned, the fetcher runs in background to refresh the cache.
+   */
+  async getOrFetch<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T | null> {
+    const memHit = this.getSync<T>(key, ttlMs);
+    if (memHit !== null) return memHit;
+
+    // Check AsyncStorage quickly
+    try {
+      const raw = await AsyncStorage.getItem(PREFIX + key);
+      if (raw) {
+        const e: Entry<T> = JSON.parse(raw);
+        if (Date.now() - e.ts < ttlMs) {
+          // Fresh persisted hit — return and let background refresh happen
+          // (but only if not already refreshing)
+          mem.set(key, e);
+          if (!inflight.has(key)) triggerFetch(key, fetcher);
+          return e.data;
+        }
+      }
+    } catch { /* ignore */ }
+
+    // No fresh cached value — run fetcher (deduplicated)
+    return await fetcherWithDedup<T>(key, fetcher).catch(() => null);
+  },
 };
+// In-flight fetch dedupe map
+const inflight = new Map<string, Promise<any>>();
+
+function triggerFetch<T>(key: string, fetcher: () => Promise<T>) {
+  // fire-and-forget but deduped
+  fetcherWithDedup(key, fetcher).catch(() => {});
+}
+
+async function fetcherWithDedup<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const existing = inflight.get(key);
+  if (existing) return existing as Promise<T>;
+  const p = (async () => {
+    try {
+      const data = await fetcher();
+      Cache.set(key, data);
+      return data;
+    } finally {
+      inflight.delete(key);
+    }
+  })();
+  inflight.set(key, p);
+  return p;
+}
 
 // ─── TTLs (tune per data type) ───────────────────────────────────────────────
 export const TTL = {

@@ -10,6 +10,30 @@ const _reportsCache = new Map<string, { counts: Record<string, number>; at: numb
 const BLOCKED_TTL = 5 * 60 * 1000;  // 5 min
 const REPORTS_TTL = 2 * 60 * 1000;  // 2 min
 
+// Impression batching to reduce write load on backend
+const IMPRESSION_BATCH_SIZE = 25;
+const IMPRESSION_FLUSH_MS = 2000;
+const _impressionBuffer = new Map<string, { post_id: string; user_id: string }>();
+let _impressionFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function _flushImpressions() {
+  if (_impressionFlushTimer) { clearTimeout(_impressionFlushTimer); _impressionFlushTimer = null; }
+  if (_impressionBuffer.size === 0) return;
+  const rows = Array.from(_impressionBuffer.values());
+  _impressionBuffer.clear();
+  try {
+    await supabase.from('post_impressions').upsert(rows, { onConflict: ['post_id', 'user_id'] });
+  } catch (err) {
+    console.warn('Impression batch failed', err);
+    // Best-effort: ignore failures to avoid blocking the app
+  }
+}
+
+function _scheduleImpressionFlush() {
+  if (_impressionFlushTimer) return;
+  _impressionFlushTimer = setTimeout(() => { _flushImpressions().catch(() => {}); }, IMPRESSION_FLUSH_MS);
+}
+
 async function getCachedBlockedIds(userId: string): Promise<string[]> {
   const c = _blockedCache.get(userId);
   if (c && Date.now() - c.at < BLOCKED_TTL) return c.ids;
@@ -46,97 +70,103 @@ async function getCachedReportCounts(postIds: string[]): Promise<Record<string, 
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
 export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0) {
-  // Run blocked-IDs fetch in parallel with the main RPC so neither waits on the other.
-  const [feedResult, blockedResult] = await Promise.allSettled([
-    supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset }),
-    getCachedBlockedIds(userId),
-  ]);
+  const cacheKey = `feed:${userId}:${limit}:${offset}`;
 
-  // [Ama Mensah - Lead Dev] If the RPC itself timed out (Supabase paused, DB
-  // unreachable, etc.) bail early — the followed-users fallback would just
-  // burn another 20s on the same dead connection and emit another AbortError.
-  if (feedResult.status === 'rejected' && feedResult.reason instanceof SupabaseTimeoutError) {
-    console.warn('Feed RPC timed out — skipping fallback to avoid stacking 20s waits.', feedResult.reason.message);
-    return [];
-  }
+  const fetched = await Cache.getOrFetch<any[]>(cacheKey, TTL.feed, async () => {
+    // Run blocked-IDs fetch in parallel with the main RPC so neither waits on the other.
+    const [feedResult, blockedResult] = await Promise.allSettled([
+      supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset }),
+      getCachedBlockedIds(userId),
+    ]);
 
-  const { data, error } = feedResult.status === 'fulfilled'
-    ? feedResult.value
-    : { data: null, error: { message: 'Feed RPC failed' } as any };
-  const blockedIds: string[] = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
-
-  let results = data ?? [];
-
-  // If the RPC succeeded but quote_of/repost_of are missing from its schema
-  // (pre-026 migration), backfill them from a single batch SELECT.
-  if (!error && results.length > 0 && results[0].quote_of === undefined) {
-    const { data: refs } = await supabase
-      .from('posts')
-      .select('id, quote_of, repost_of')
-      .in('id', results.map((p: any) => p.id));
-    if (refs?.length) {
-      const refMap = new Map(refs.map((r: any) => [r.id, r]));
-      results = results.map((p: any) => ({
-        ...p,
-        quote_of: refMap.get(p.id)?.quote_of ?? null,
-        repost_of: refMap.get(p.id)?.repost_of ?? null,
-      }));
+    if (feedResult.status === 'rejected' && feedResult.reason instanceof SupabaseTimeoutError) {
+      console.warn('Feed RPC timed out — skipping fallback to avoid stacking 20s waits.', feedResult.reason.message);
+      return [];
     }
-  }
 
-  if (error) {
-    // Fallback: followed users' posts, most recent first
-    console.warn('Feed RPC fallback:', error.message);
-    const { data: fallback } = await supabase
-      .from('posts')
-      .select(`
-        id, user_id, caption, type, media_url, media_urls,
-        likes_count, comments_count, location, song, tagged_users,
-        repost_of, quote_of, created_at,
-        profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
-      `)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-    results = fallback ?? [];
-  }
+    const { data, error } = feedResult.status === 'fulfilled'
+      ? feedResult.value
+      : { data: null, error: { message: 'Feed RPC failed' } as any };
+    const blockedIds: string[] = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
 
-  if (results.length === 0) return [];
+    let results = data ?? [];
 
-  // 2. Batch check for moderated content — cached per 2 min to avoid a DB round-trip on every feed refresh
-  const postIds = results.map((p: any) => p.id);
-  const reportCounts = await getCachedReportCounts(postIds);
+    // Backfill missing refs if needed
+    if (!error && results.length > 0 && results[0].quote_of === undefined) {
+      const { data: refs } = await supabase
+        .from('posts')
+        .select('id, quote_of, repost_of')
+        .in('id', results.map((p: any) => p.id));
+      if (refs?.length) {
+        const refMap = new Map(refs.map((r: any) => [r.id, r]));
+        results = results.map((p: any) => ({
+          ...p,
+          quote_of: refMap.get(p.id)?.quote_of ?? null,
+          repost_of: refMap.get(p.id)?.repost_of ?? null,
+        }));
+      }
+    }
 
-  // 3. Client-side filtering + soft-hide annotation (Final safety layer)
-  const HARD_HIDE_THRESHOLD = 10;  // full removal
-  const SOFT_HIDE_THRESHOLD = 5;   // blurred with warning, user can reveal
-  const blockedSet = new Set(blockedIds);
+    if (error) {
+      // Fallback: followed users' posts, most recent first
+      console.warn('Feed RPC fallback:', error.message);
+      const { data: fallback } = await supabase
+        .from('posts')
+        .select(`
+          id, user_id, caption, type, media_url, media_urls,
+          likes_count, comments_count, location, song, tagged_users,
+          repost_of, quote_of, created_at,
+          profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
+        `)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+      results = fallback ?? [];
+    }
 
-  const filtered = results
-    .filter((post: any) => {
-      if (blockedSet.has(post.user_id)) return false;
-      if ((reportCounts[post.id] || 0) >= HARD_HIDE_THRESHOLD) return false;
-      return true;
-    })
-    .map((post: any) => ({
-      ...post,
-      profiles: typeof post.profiles === 'string' ? JSON.parse(post.profiles) : post.profiles,
-      // Flag posts between soft and hard threshold — UI shows blurred overlay
-      is_flagged: (reportCounts[post.id] || 0) >= SOFT_HIDE_THRESHOLD,
-      report_count: reportCounts[post.id] || 0,
-    }));
+    if (results.length === 0) return [];
 
-  return assembleFeed(filtered);
+    // 2. Batch check for moderated content — cached per 2 min to avoid a DB round-trip on every feed refresh
+    const postIds = results.map((p: any) => p.id);
+    const reportCounts = await getCachedReportCounts(postIds);
+
+    // 3. Client-side filtering + soft-hide annotation (Final safety layer)
+    const HARD_HIDE_THRESHOLD = 10;  // full removal
+    const SOFT_HIDE_THRESHOLD = 5;   // blurred with warning, user can reveal
+    const blockedSet = new Set(blockedIds);
+
+    const filtered = results
+      .filter((post: any) => {
+        if (blockedSet.has(post.user_id)) return false;
+        if ((reportCounts[post.id] || 0) >= HARD_HIDE_THRESHOLD) return false;
+        return true;
+      })
+      .map((post: any) => ({
+        ...post,
+        profiles: typeof post.profiles === 'string' ? JSON.parse(post.profiles) : post.profiles,
+        // Flag posts between soft and hard threshold — UI shows blurred overlay
+        is_flagged: (reportCounts[post.id] || 0) >= SOFT_HIDE_THRESHOLD,
+        report_count: reportCounts[post.id] || 0,
+      }));
+
+    return assembleFeed(filtered);
+  });
+
+  return fetched ?? [];
 }
 
 
 export async function recordImpression(postId: string, userId: string) {
   try {
-    await supabase
-      .from('post_impressions')
-      .upsert({ post_id: postId, user_id: userId });
+    // Buffer impressions and flush in batches to reduce DB write load
+    const key = `${postId}:${userId}`;
+    _impressionBuffer.set(key, { post_id: postId, user_id: userId });
+    if (_impressionBuffer.size >= IMPRESSION_BATCH_SIZE) {
+      await _flushImpressions();
+    } else {
+      _scheduleImpressionFlush();
+    }
   } catch (err) {
-    // Ignore engagement tracking failure
-    console.warn('Impression log failed', err);
+    console.warn('Impression buffer failed', err);
   }
 }
 

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
 import { DeviceEventEmitter } from 'react-native';
+import { GlobalRateLimiter } from './rateLimiter';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -19,13 +20,12 @@ const SecureStoreAdapter = {
     try {
       const chunkCount = await SecureStore.getItemAsync(`${key}_chunks`);
       if (!chunkCount) return await SecureStore.getItemAsync(key);
-      const chunks: string[] = [];
-      for (let i = 0; i < parseInt(chunkCount, 10); i++) {
-        const chunk = await SecureStore.getItemAsync(`${key}_${i}`);
-        if (chunk === null) return null;
-        chunks.push(chunk);
-      }
-      return chunks.join('');
+      // Parallelize chunk reads but preserve order
+      const total = parseInt(chunkCount, 10);
+      const promises = Array.from({ length: total }, (_, i) => SecureStore.getItemAsync(`${key}_${i}`));
+      const parts = await Promise.all(promises);
+      if (parts.some(p => p === null)) return null;
+      return parts.join('');
     } catch {
       // SecureStore unavailable — fall back to AsyncStorage
       return AsyncStorage.getItem(key);
@@ -41,12 +41,14 @@ const SecureStoreAdapter = {
       }
       const total = Math.ceil(value.length / CHUNK_SIZE);
       await SecureStore.setItemAsync(`${key}_chunks`, total.toString());
-      for (let i = 0; i < total; i++) {
-        await SecureStore.setItemAsync(
+      // Write chunks in parallel to reduce latency on large values
+      const writes = Array.from({ length: total }, (_, i) =>
+        SecureStore.setItemAsync(
           `${key}_${i}`,
           value.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
-        );
-      }
+        ).catch(() => {})
+      );
+      await Promise.allSettled(writes);
     } catch {
       await AsyncStorage.setItem(key, value);
     }
@@ -105,13 +107,23 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
   const targetUrl = typeof url === 'string' ? url : (url?.url ?? String(url));
   const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   
-  return fetch(url, { ...options, signal: controller.signal })
+  // Acquire global rate limiter token before issuing network request
+  const allowedP = GlobalRateLimiter.acquire(2000);
+  return allowedP.then((allowed) => {
+    if (!allowed) {
+      // Rate limiter timed out — fail fast with a descriptive error
+      clearTimeout(id);
+      throw new SupabaseTimeoutError(targetUrl, FETCH_TIMEOUT_MS);
+    }
+    return fetch(url, { ...options, signal: controller.signal })
     .then((res) => {
       // If we were previously offline and this request succeeded, notify the app
       if (_wasOffline) {
         _wasOffline = false;
         DeviceEventEmitter.emit('app_online');
       }
+      // Release one token back for long-polling / streaming endpoints? Keep
+      // conservative and do not auto-release here — releases can be done by callers.
       return res;
     })
     .catch((err: any) => {
@@ -123,6 +135,7 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
       throw err;
     })
     .finally(() => clearTimeout(id));
+  });
 };
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {

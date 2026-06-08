@@ -8,10 +8,11 @@ interface ToastItem {
   id: number;
   message: string;
   type: ToastType;
+  key?: string;
 }
 
 interface ToastContextType {
-  showToast: (message: string, type?: ToastType) => void;
+  showToast: (message: string, type?: ToastType, opts?: { replaceKey?: string }) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -22,9 +23,16 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const insets = useSafeAreaInsets();
 
-  const showToast = useCallback((message: string, type: ToastType = 'info') => {
+  const showToast = useCallback((message: string, type: ToastType = 'info', opts?: { replaceKey?: string }) => {
     const id = ++_id;
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => {
+      // If caller provided a replaceKey, remove any existing toast with same key
+      let next = prev;
+      if (opts?.replaceKey) {
+        next = prev.filter(t => t.key !== opts.replaceKey);
+      }
+      return [...next, { id, message, type, key: opts?.replaceKey } as ToastItem];
+    });
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3500);

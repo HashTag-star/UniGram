@@ -44,7 +44,8 @@ import { sendPushToUser } from '../services/pushNotifications';
 import { getPersonalizedFeed, recordImpression, recordShare, getFollowSuggestions, getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { sendFollowSuggestionNotif } from '../services/notifications';
 import { getReels } from '../services/reels';
-import { followUser, unfollowUser, blockUser } from '../services/profiles';
+import { followUser, unfollowUser, blockUser, getProfile } from '../services/profiles';
+import { Cache, TTL } from '../lib/cache';
 import { createReport } from '../services/reports';
 import { AIContextCard, type AIContextResult } from '../components/AIContextCard';
 import { getPostAIContext } from '../services/aiEngine';
@@ -1206,6 +1207,15 @@ export const FeedScreen = React.memo(({
       if (!user) { isLoadingRef.current = false; return; }
       setCurrentUserId(user.id);
 
+      // Attempt to read profile from fast memory cache so "Your Story" avatar appears instantly
+      try {
+        const profCached = Cache.getSync<any>(`profile:${user.id}`, TTL.profile);
+        if (profCached) {
+          setCurrentProfile(profCached);
+          cachedCurrentProfile = profCached;
+        }
+      } catch (e) {}
+
       // Attempt to load from cache immediately to bypass skeleton on cold start
       if (feedItemsRef.current.length === 0 && !isManualRefresh) {
         try {
@@ -1227,9 +1237,9 @@ export const FeedScreen = React.memo(({
         getActiveStories(),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
-        supabase.from('profiles')
-          .select('id, username, full_name, avatar_url, is_verified, verification_type, university')
-          .eq('id', user.id).single().then(r => r.data),
+        // Use Cache.getOrFetch so a persisted profile (AsyncStorage) or memory hit
+        // returns immediately; fetch from network only if stale.
+        Cache.getOrFetch<any>(`profile:${user.id}`, TTL.profile, () => getProfile(user.id)),
       ]);
 
       setCurrentProfile(prof);

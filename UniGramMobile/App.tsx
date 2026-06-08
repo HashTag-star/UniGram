@@ -35,6 +35,8 @@ import TermsOfServiceScreen from './screens/legal/TermsOfServiceScreen';
 import CommunityGuidelinesScreen from './screens/legal/CommunityGuidelinesScreen';
 import PagerView from 'react-native-pager-view';
 import { isOnboardingComplete } from './services/onboarding';
+import { getPersonalizedExplorePosts, getPersonalizedReels } from './services/algorithm';
+import { Cache, TTL } from './lib/cache';
 import { getUnreadNotificationCount } from './services/notifications';
 import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
 import { supabase, SupabaseTimeoutError } from './lib/supabase';
@@ -113,7 +115,7 @@ const LoadingScreen: React.FC = () => {
   const bgOrbAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.sequence([
+    const seq = Animated.sequence([
       // Phase 1 — logo pops in (300ms)
       Animated.parallel([
         Animated.spring(logoScale, { toValue: 1, tension: 100, friction: 10, useNativeDriver: true }),
@@ -141,23 +143,32 @@ const LoadingScreen: React.FC = () => {
         Animated.timing(textOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]),
       Animated.timing(indicatorOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
-    ]).start();
+    ]);
 
-    setTimeout(() => {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(ring3Scale, { toValue: 1.15, duration: 2000, useNativeDriver: true }),
-          Animated.timing(ring3Scale, { toValue: 1, duration: 2000, useNativeDriver: true }),
-        ])
-      ).start();
-    }, 700);
+    seq.start();
 
-    Animated.loop(
+    const ring3LoopRef = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ring3Scale, { toValue: 1.15, duration: 2000, useNativeDriver: true }),
+        Animated.timing(ring3Scale, { toValue: 1, duration: 2000, useNativeDriver: true }),
+      ])
+    );
+    const bgOrbLoopRef = Animated.loop(
       Animated.sequence([
         Animated.timing(bgOrbAnim, { toValue: 1.2, duration: 3000, useNativeDriver: true }),
         Animated.timing(bgOrbAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
       ])
-    ).start();
+    );
+
+    const ring3Timer = setTimeout(() => ring3LoopRef.start(), 700);
+    bgOrbLoopRef.start();
+
+    return () => {
+      clearTimeout(ring3Timer);
+      try { ring3LoopRef.stop(); } catch (e) {}
+      try { bgOrbLoopRef.stop(); } catch (e) {}
+      try { seq.stop?.(); } catch (e) {}
+    };
   }, []);
 
   return (
@@ -464,7 +475,7 @@ function AppShell() {
     startup();
 
     // Auth state changes: sign-in, sign-out, token refresh, etc.
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: any, sess: any) => {
       const newUid = sess?.user?.id ?? null;
       setSession(sess);
       // Only reset onboardingDone when the user actually changes, not on token refresh
@@ -477,30 +488,47 @@ function AppShell() {
     // Splash shows briefly — 50ms to ensure a smooth transition
     const splashTimer = setTimeout(() => setMinSplashDone(true), 50);
 
-    // Preload other tabs after the feed has had time to fully load (2 seconds)
-    const preloadTimer = setTimeout(() => {
-      setMountedTabs(prev => {
-        const next = new Set(prev);
-        ['explore', 'reels', 'market', 'messages', 'profile'].forEach(t => next.add(t as Tab));
-        return next;
+    // Pre-mount other tabs after interactions settle but stagger mounts to avoid jank.
+    const timers: Array<any> = [];
+    const task = InteractionManager.runAfterInteractions(() => {
+      startTransition(() => {
+        const tabsToMount: Tab[] = ['explore', 'market', 'messages', 'profile', 'reels'];
+        tabsToMount.forEach((t, i) => {
+          const id = setTimeout(() => {
+            setMountedTabs(prev => prev.has(t) ? prev : new Set([...prev, t]));
+            // Background-prefetch light data for faster navigation
+            try {
+              const uid = session?.user?.id;
+              if (!uid) return;
+              if (t === 'explore') {
+                Cache.getOrFetch(`explore:${uid}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(uid, 24, 0)).catch(() => {});
+              }
+              if (t === 'reels') {
+                Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0)).catch(() => {});
+              }
+            } catch {}
+          }, i * 300);
+          timers.push(id);
+        });
       });
-    }, 2000);
+    });
 
     const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
     const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);
     const hSu = DeviceEventEmitter.addListener('haptic_success', haptics.success);
     const hOn = DeviceEventEmitter.addListener('app_online', () => {
-      showToast("You're back online! Continue messaging.", 'success');
+      showToast("You're back online! Continue messaging.", 'success', { replaceKey: 'network-status' });
     });
     const hOff = DeviceEventEmitter.addListener('app_offline', (data) => {
-      showToast(data?.message || "You're offline.", 'error');
+      showToast(data?.message || "You're offline.", 'error', { replaceKey: 'network-status' });
     });
 
     return () => {
       cancelled = true;
       listener.subscription.unsubscribe();
       clearTimeout(splashTimer);
-      clearTimeout(preloadTimer);
+      timers.forEach(t => clearTimeout(t));
+      try { task.cancel(); } catch {}
       hS.remove();
       hM.remove();
       hSu.remove();
@@ -765,7 +793,7 @@ function AppShell() {
         </View>
       </PagerView>
       {showTabBar && <BottomTabBar activeTabVisual={activeTabVisual} onTabChange={handleTabChange} colors={colors} />}
-      {showNotifications && <View style={styles.notifOverlay}><NotificationsScreen userId={session.user.id} myAvatarUrl={userProfile?.avatar_url ?? null} onBadgeClear={() => setNotifBadge(0)} onBack={() => setShowNotifications(false)} onUserPress={(uid: string) => { setViewedUserId(uid); setActiveTabVisual('profile'); setActiveTab('profile'); setShowNotifications(false); }} onPostPress={(pid: any) => { supabase.from('posts').select('*, profiles(*)').eq('id', pid).single().then(({data}) => { setNotifPost(data); }); }} onMessagePress={navigateToMessages} onDiscoverPress={() => setShowDiscoverPeople(true)} /></View>}
+      {showNotifications && <View style={styles.notifOverlay}><NotificationsScreen userId={session.user.id} myAvatarUrl={userProfile?.avatar_url ?? null} onBadgeClear={() => setNotifBadge(0)} onBack={() => setShowNotifications(false)} onUserPress={(uid: string) => { setViewedUserId(uid); setActiveTabVisual('profile'); setActiveTab('profile'); setShowNotifications(false); }} onPostPress={(pid: any) => { supabase.from('posts').select('*, profiles(*)').eq('id', pid).single().then(({data}: any) => { setNotifPost(data); }); }} onMessagePress={navigateToMessages} onDiscoverPress={() => setShowDiscoverPeople(true)} /></View>}
       <CreatePostModal visible={showCreate} userId={session.user.id} initialType={createInitialType} onClose={() => setShowCreate(false)} onPosted={() => setFeedRefreshKey(k => k + 1)} preCapturedMedia={activeMedia} />
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
       {showDiscoverPeople && <View style={styles.notifOverlay}><DiscoverPeopleScreen onClose={() => setShowDiscoverPeople(false)} onUserPress={(u: any) => { setViewedUserId(u.id); setActiveTabVisual('profile'); setActiveTab('profile'); setShowDiscoverPeople(false); }} /></View>}
