@@ -28,6 +28,15 @@ interface VerificationRequest {
   sheerid_verified: boolean;
 }
 
+const BADGE_STYLES: Record<string, string> = {
+  student: "text-indigo-400 bg-indigo-500/10 border border-indigo-500/20",
+  professor: "text-amber-400 bg-amber-500/10 border border-amber-500/20",
+  club: "text-purple-400 bg-purple-500/10 border border-purple-500/20",
+  influencer: "text-rose-400 bg-rose-500/10 border border-rose-500/20",
+  staff: "text-green-400 bg-green-500/10 border border-green-500/20",
+  alumni: "text-teal-400 bg-teal-500/10 border border-teal-500/20",
+};
+
 export default function VerificationsPage() {
   const [requests, setRequests] = useState<VerificationRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,17 +80,6 @@ export default function VerificationsPage() {
       
       // Update local state
       setRequests(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-      
-      // If approved, we might also want to update the profile's is_verified flag
-      if (status === 'approved') {
-        const request = requests.find(r => r.id === id);
-        if (request) {
-           await supabase.from('profiles').update({ 
-             is_verified: true,
-             university: request.university // Ensure university is synced
-           }).eq('id', request.user_id);
-        }
-      }
     } catch (error) {
       console.error("Error updating status:", error);
     }
@@ -257,8 +255,8 @@ export default function VerificationsPage() {
                     <p className="text-sm text-white/70">{req.university}</p>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-400/10 px-2 py-1 rounded-md">
-                      {req.type}
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md ${BADGE_STYLES[req.type] || BADGE_STYLES.student}`}>
+                      {req.type === 'influencer' ? 'Notable' : req.type}
                     </span>
                   </td>
                   <td className="px-6 py-4">

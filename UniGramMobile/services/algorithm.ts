@@ -22,7 +22,7 @@ async function _flushImpressions() {
   const rows = Array.from(_impressionBuffer.values());
   _impressionBuffer.clear();
   try {
-    await supabase.from('post_impressions').upsert(rows, { onConflict: ['post_id', 'user_id'] });
+    await supabase.from('post_impressions').upsert(rows, { onConflict: 'post_id,user_id' });
   } catch (err) {
     console.warn('Impression batch failed', err);
     // Best-effort: ignore failures to avoid blocking the app
@@ -307,7 +307,7 @@ async function _legacyGetExplorePosts(userId: string, limit: number, offset: num
     .select(`
       id, user_id, caption, type, media_url, media_urls,
       likes_count, comments_count, saves_count, location, created_at,
-      profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type, university)
+      profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type, university, is_pro, pro_disabled, pro_expires_at)
     `)
     .neq('user_id', userId)
     .not('media_url', 'is', null)
@@ -325,7 +325,10 @@ async function _legacyGetExplorePosts(userId: string, limit: number, offset: num
       (post.likes_count ?? 0) * 0.3 +
       (post.comments_count ?? 0) * 1.5 +
       (post.saves_count ?? 0) * 4.0;
-    const proBonus = post.profiles?.is_pro ? 15 : 0;
+    const isPro = post.profiles?.is_pro && 
+                  !post.profiles?.pro_disabled && 
+                  (!post.profiles?.pro_expires_at || new Date(post.profiles.pro_expires_at).getTime() > Date.now());
+    const proBonus = isPro ? 15 : 0;
     return { ...post, _score: engagementScore + interestBonus + uniBonus + proBonus };
   });
 

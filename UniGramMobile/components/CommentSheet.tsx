@@ -26,6 +26,9 @@ import {
   deleteReelComment, likeReelComment, unlikeReelComment,
   REEL_COMMENTS_PAGE_SIZE,
 } from '../services/reels';
+import {
+  getAdComments, addAdComment, deleteAdComment
+} from '../services/campusAds';
 import { useTheme } from '../context/ThemeContext';
 import { VerifiedBadge } from './VerifiedBadge';
 import { createReport } from '../services/reports';
@@ -60,7 +63,7 @@ function renderMentions(text: string, colors: any): React.ReactNode {
 interface Props {
   visible: boolean;
   targetId: string;
-  targetType: 'post' | 'reel';
+  targetType: 'post' | 'reel' | 'ad';
   currentUserId: string;
   authorId?: string;
   onClose: () => void;
@@ -536,6 +539,8 @@ export const CommentSheet: React.FC<Props> = ({
     try {
       const result = targetType === 'post'
         ? await getPostComments(targetId, currentUserId, pageNum)
+        : targetType === 'ad'
+        ? await getAdComments(targetId, currentUserId, pageNum)
         : await getReelComments(targetId, currentUserId, pageNum);
       if (reqId !== loadRequestId.current) return;
       const { items, hasMore: more, total } = result;
@@ -580,6 +585,8 @@ export const CommentSheet: React.FC<Props> = ({
 
     (targetType === 'post'
       ? getPostComments(targetId, currentUserId, 0)
+      : targetType === 'ad'
+      ? getAdComments(targetId, currentUserId, 0)
       : getReelComments(targetId, currentUserId, 0)
     ).then(({ items, hasMore: more, total }) => {
       if (reqId !== loadRequestId.current) return;
@@ -665,6 +672,8 @@ export const CommentSheet: React.FC<Props> = ({
       onCountChangeRef.current?.(-1);
       const del = targetType === 'post'
         ? deletePostComment(comment.id, currentUserId)
+        : targetType === 'ad'
+        ? deleteAdComment(comment.id, currentUserId)
         : deleteReelComment(comment.id, currentUserId);
       del.then(() => hapticSuccess()).catch(() => {
         showPopup({
@@ -752,6 +761,8 @@ export const CommentSheet: React.FC<Props> = ({
     try {
       const newComment = targetType === 'post'
         ? await addPostComment(targetId, currentUserId, t, parentId)
+        : targetType === 'ad'
+        ? await addAdComment(targetId, currentUserId, t)
         : await addReelComment(targetId, currentUserId, t, parentId);
       setComments(prev => prev.map(c => c.id === tempId ? { ...newComment, isLiked: false } : c));
       hapticSuccess();

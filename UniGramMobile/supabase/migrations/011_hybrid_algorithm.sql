@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.post_shares (
 );
 
 -- Refined Hybrid Feed RPC
+DROP FUNCTION IF EXISTS get_hybrid_campus_feed(uuid, int, int);
 CREATE OR REPLACE FUNCTION get_hybrid_campus_feed(
   p_user_id uuid,
   p_limit   int DEFAULT 20,

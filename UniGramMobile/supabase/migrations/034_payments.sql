@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS payments (
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 
 -- Users can only see their own payment records
+DROP POLICY IF EXISTS "users_own_payments" ON payments;
 CREATE POLICY "users_own_payments" ON payments
   FOR SELECT USING (user_id = auth.uid());
 

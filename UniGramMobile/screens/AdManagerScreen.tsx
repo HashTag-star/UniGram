@@ -443,9 +443,9 @@ const CreateCampaignSheet: React.FC<{
         // Credit covered the whole campaign — activate without Paystack
         await supabase
           .from('campus_ads')
-          .update({ status: 'active', start_date: now, end_date: endDate })
+          .update({ status: 'pending', start_date: now, end_date: endDate })
           .eq('id', draft.id);
-        showToast(`Your campaign is live! GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
+        showToast(`Campaign submitted for review. GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
       } else {
         // Charge only the uncovered remainder via Paystack
         const { authorization_url, reference } = await initAdPayment(draft.id, remainingGhs, duration);
@@ -454,11 +454,11 @@ const CreateCampaignSheet: React.FC<{
         if (success) {
           await supabase
             .from('campus_ads')
-            .update({ status: 'active', start_date: now, end_date: endDate })
+          .update({ status: 'pending', start_date: now, end_date: endDate })
             .eq('id', draft.id);
           const msg = consumedPesewas > 0
-            ? `Your campaign is live! GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`
-            : 'Your campaign is live!';
+            ? `Payment confirmed. Campaign submitted for review; GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`
+            : 'Payment confirmed. Campaign submitted for review.';
           showToast(msg, 'success');
         } else {
           showToast('Campaign saved. Complete payment to go live.', 'info');

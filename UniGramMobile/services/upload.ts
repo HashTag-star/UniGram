@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, getPublicMediaUrl } from '../lib/supabase';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 
@@ -32,8 +32,7 @@ export async function uploadFile(
 
   if (error) throw new Error(`Upload failed: ${error.message}`);
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl;
+  return getPublicMediaUrl(bucket, path);
 }
 
 function guessExt(uri: string, mimeType?: string): string | undefined {

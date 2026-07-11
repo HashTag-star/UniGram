@@ -1,74 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { callAiWithFallback, repairJson, sanitizeError, CORS } from '../_shared/groq.ts'
 
 const VALID_TYPES = ['none', 'info', 'warning', 'misleading'] as const
 type ContextType = typeof VALID_TYPES[number]
-
-// ─── Groq helpers ─────────────────────────────────────────────────────────────
-
-async function callGroqText(apiKey: string, prompt: string): Promise<string> {
-  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 300,
-    }),
-  })
-  if (!resp.ok) throw new Error(`Groq HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`)
-  const result = await resp.json()
-  if (result.error) throw new Error(`Groq error: ${result.error.message}`)
-  return result.choices?.[0]?.message?.content ?? ''
-}
-
-async function callGroqVision(
-  apiKey: string,
-  imageBase64: string,
-  mimeType: string,
-  textPrompt: string,
-): Promise<string> {
-  const visionModels = [
-    'meta-llama/llama-4-scout-17b-16e-instruct',
-    'llama-3.2-11b-vision-preview',
-  ]
-  for (const model of visionModels) {
-    try {
-      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
-              { type: 'text', text: textPrompt },
-            ],
-          }],
-          temperature: 0.1,
-          max_tokens: 300,
-        }),
-      })
-      if (!resp.ok) throw new Error(`Groq vision HTTP ${resp.status}`)
-      const result = await resp.json()
-      if (result.error) throw new Error(result.error.message)
-      const text = result.choices?.[0]?.message?.content ?? ''
-      if (text) {
-        console.log(`[post-ai-context] vision succeeded with ${model}`)
-        return text
-      }
-    } catch (e: any) {
-      console.warn(`[post-ai-context] vision model ${model} failed:`, e.message)
-    }
-  }
-  throw new Error('All vision models failed')
-}
 
 async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string } | null> {
   try {
@@ -76,7 +10,6 @@ async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeTy
     if (!resp.ok) return null
     const buffer = await resp.arrayBuffer()
     const bytes = new Uint8Array(buffer)
-    // btoa on Uint8Array — Deno supports this
     let binary = ''
     for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
     const base64 = btoa(binary)
@@ -87,12 +20,6 @@ async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeTy
     return null
   }
 }
-
-function stripJson(raw: string): string {
-  return raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
-}
-
-// ─── Prompt ───────────────────────────────────────────────────────────────────
 
 function buildPrompt(caption: string | null, postType: string, hasImage: boolean): string {
   const imageNote = hasImage
@@ -134,8 +61,6 @@ Respond ONLY with valid JSON (no markdown, no extra text):
 
 type values: "none" (fine), "info" (extra context readers might value), "warning" (likely misleading), "misleading" (clearly false/harmful)`
 }
-
-// ─── Handler ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -180,36 +105,49 @@ Deno.serve(async (req) => {
       }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     }
 
-    const groqKey = Deno.env.get('GROQ_API_KEY')
-    if (!groqKey) throw new Error('GROQ_API_KEY not configured')
-
     const prompt = buildPrompt(caption ?? null, postType ?? 'general', hasAnalyzableImage)
 
-    let raw: string
+    let raw = ''
     let usedVision = false
 
     if (hasAnalyzableImage) {
       const img = await fetchImageAsBase64(mediaUrl)
       if (img) {
         try {
-          raw = await callGroqVision(groqKey, img.base64, img.mimeType, prompt)
+          const visionMessages = [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } },
+              { type: 'text', text: prompt },
+            ]
+          }]
+          
+          raw = await callAiWithFallback({
+            messages: visionMessages,
+            temperature: 0.1,
+            maxTokens: 300,
+            modelOverride: 'llama-3.2-11b-vision-preview'
+          })
           usedVision = true
         } catch (visionErr: any) {
           console.warn('[post-ai-context] vision failed, falling back to text:', visionErr.message)
-          // Fall through to text-only
         }
       }
     }
 
-    if (!raw!) {
+    if (!raw) {
       if (!hasCaption) {
-        // No caption and no vision — nothing to judge
         return new Response(JSON.stringify(empty), { headers: { ...CORS, 'Content-Type': 'application/json' } })
       }
-      raw = await callGroqText(groqKey, prompt)
+      raw = await callAiWithFallback({
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        maxTokens: 300,
+        modelOverride: 'llama-3.1-8b-instant'
+      })
     }
 
-    const parsed = JSON.parse(stripJson(raw))
+    const parsed = JSON.parse(repairJson(raw))
 
     const result = {
       type: (VALID_TYPES.includes(parsed.type) ? parsed.type : 'none') as ContextType,
@@ -233,7 +171,8 @@ Deno.serve(async (req) => {
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   } catch (err: any) {
-    console.error('[post-ai-context]', err.message)
+    sanitizeError(err, 'post-ai-context')
+    // Fail-open for client safety: do not block post display if AI check throws
     return new Response(JSON.stringify(empty), {
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })

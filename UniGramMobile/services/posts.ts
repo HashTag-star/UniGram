@@ -5,6 +5,7 @@ import { randomId } from '../lib/uuid';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
 import { Cache, TTL } from '../lib/cache';
+import { assertUuid, cleanUserText, requireText } from '../lib/contentSafety';
 
 const POST_SELECT = `
   id, user_id, type, caption, media_url, media_urls, location, song, 
@@ -72,6 +73,9 @@ export async function createPost(
 ): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  assertUuid(userId, 'User ID');
+  const safeCaption = cleanUserText(caption, 'postCaption');
+  const safeLocation = cleanUserText(extras?.location, 'location') || undefined;
 
   const uploadedUrls: string[] = [];
   if (mediaUris && mediaUris.length > 0) {
@@ -95,11 +99,11 @@ export async function createPost(
     .from('posts')
     .insert({
       user_id: userId,
-      caption,
+      caption: safeCaption,
       type,
       media_url: uploadedUrls[0] || null,
       media_urls: uploadedUrls,
-      location: extras?.location,
+      location: safeLocation,
       song: extras?.song,
       tagged_users: extras?.taggedUsers,
       aspect_ratio: extras?.aspectRatio ?? 1.0,
@@ -202,9 +206,15 @@ export async function createPost(
 export async function updatePost(postId: string, userId: string, updates: { caption?: string; location?: string; tagged_users?: string[] }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  assertUuid(postId, 'Post ID');
+  const safeUpdates = {
+    ...updates,
+    caption: updates.caption === undefined ? undefined : cleanUserText(updates.caption, 'postCaption'),
+    location: updates.location === undefined ? undefined : cleanUserText(updates.location, 'location'),
+  };
   const { data, error } = await supabase
     .from('posts')
-    .update(updates)
+    .update(safeUpdates)
     .eq('id', postId)
     .eq('user_id', userId)
     .select()
@@ -219,6 +229,7 @@ export async function updatePost(postId: string, userId: string, updates: { capt
 export async function deletePost(postId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  assertUuid(postId, 'Post ID');
 
   // 1. Get post data to find media paths (single media_url + carousel media_urls)
   // [Ama Mensah - Lead Dev] Previously only media_url was cleaned up, leaving
@@ -376,6 +387,8 @@ export async function getRepostedPostIds(userId: string): Promise<string[]> {
 export async function quotePost(postId: string, userId: string, caption: string): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  assertUuid(postId, 'Post ID');
+  const safeCaption = requireText(cleanUserText(caption, 'postCaption'), 'Quote');
 
   const { data, error } = await supabase
     .from('posts')
@@ -383,7 +396,7 @@ export async function quotePost(postId: string, userId: string, caption: string)
       user_id: userId,
       type: 'quote',
       quote_of: postId,
-      caption,
+      caption: safeCaption,
       media_urls: [],
     })
     .select(`*, profiles!posts_user_id_fkey(*)`)
@@ -532,12 +545,15 @@ export async function getPostComments(
 export async function addPostComment(postId: string, userId: string, text: string, parentId?: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  assertUuid(postId, 'Post ID');
+  if (parentId) assertUuid(parentId, 'Parent comment ID');
+  const safeText = requireText(cleanUserText(text, 'comment'), 'Comment');
   
   // Try inserting with parent_id, fallback if column doesn't exist
   let res: any;
   const { data, error } = await supabase
     .from('post_comments')
-    .insert({ post_id: postId, user_id: userId, text, parent_id: parentId })
+    .insert({ post_id: postId, user_id: userId, text: safeText, parent_id: parentId })
     .select(`*, profiles!post_comments_user_id_fkey(*)`)
     .single();
   
@@ -550,7 +566,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
     if (isColumnError) {
       const { data: d2, error: e2 } = await supabase
         .from('post_comments')
-        .insert({ post_id: postId, user_id: userId, text })
+        .insert({ post_id: postId, user_id: userId, text: safeText })
         .select(`*, profiles!post_comments_user_id_fkey(*)`)
         .single();
       if (e2) throw e2;
@@ -590,7 +606,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
 
   // 2. Parse Mentions (@username)
   // [Ama Mensah - Lead Dev] Use Promise.allSettled — forEach+async swallows errors and gives no await
-  const mentions = text.match(/@(\w+)/g);
+  const mentions = safeText.match(/@(\w+)/g);
   if (mentions) {
     const uniqueUsernames = Array.from(new Set(mentions.map(m => m.substring(1))));
     await Promise.allSettled(uniqueUsernames.map(async (uname) => {
@@ -669,11 +685,14 @@ export async function reportContent(
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== reporterId) throw new Error('Unauthorized');
+  assertUuid(reporterId, 'Reporter ID');
+  assertUuid(targetId, 'Target ID');
+  const safeReason = requireText(cleanUserText(reason, 'reportReason'), 'Report reason');
   const { error } = await supabase.from('reports').insert({
     reporter_id: reporterId,
     target_type: targetType,
     target_id: targetId,
-    reason,
+    reason: safeReason,
   });
   // If reports table doesn't exist yet, fail silently
   if (error && !error.message.includes('does not exist')) throw error;

@@ -73,6 +73,7 @@
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
     "react-refresh": "^0.18.0",
+    "supabase": "^2.106.0",
     "typescript": "~5.9.2"
   },
   "private": true

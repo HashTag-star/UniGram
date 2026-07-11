@@ -1,32 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-async function callGroq(apiKey: string, prompt: string, temperature = 0.1, maxTokens = 2048): Promise<string> {
-  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature,
-      max_tokens: maxTokens,
-    }),
-  })
-  if (!resp.ok) throw new Error(`Groq HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`)
-  const result = await resp.json()
-  if (result.error) throw new Error(`Groq error: ${result.error.message}`)
-  const text: string = result.choices?.[0]?.message?.content ?? ''
-  if (!text) throw new Error('Groq returned empty response')
-  return text
-}
-
-function stripJson(raw: string): string {
-  return raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
-}
+import { callAiWithFallback, repairJson, sanitizeError, CORS } from '../_shared/groq.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -50,9 +23,6 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS })
     }
     // ─────────────────────────────────────────────────────────────────────────
-
-    const groqKey = Deno.env.get('GROQ_API_KEY')
-    if (!groqKey) throw new Error('GROQ_API_KEY not configured in edge function secrets.')
 
     const [{ data: reports }, { data: verifications }] = await Promise.all([
       supabase
@@ -111,15 +81,20 @@ Respond ONLY with valid JSON (no markdown fences):
 Reports data: ${JSON.stringify((reports || []).slice(0, 25))}
 Verifications data: ${JSON.stringify((verifications || []).slice(0, 15))}`
 
-    const raw = await callGroq(groqKey, prompt, 0.1, 2048)
-    console.log('[ai-regulation-scan] Groq response length:', raw.length)
+    const raw = await callAiWithFallback({
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      maxTokens: 2048,
+      modelOverride: 'llama-3.3-70b-versatile'
+    })
+    console.log('[ai-regulation-scan] AI response length:', raw.length)
 
     let parsed: any
     try {
-      parsed = JSON.parse(stripJson(raw))
+      parsed = JSON.parse(repairJson(raw))
     } catch (parseErr: any) {
       console.error('[ai-regulation-scan] JSON parse failed. Raw (first 500):', raw.slice(0, 500))
-      throw new Error(`Failed to parse Groq response as JSON: ${parseErr.message}`)
+      throw new Error(`Failed to parse AI response as JSON: ${parseErr.message}`)
     }
 
     if (parsed.findings?.length) {
@@ -140,9 +115,11 @@ Verifications data: ${JSON.stringify((verifications || []).slice(0, 15))}`
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    const errorDetails = sanitizeError(err, 'ai-regulation-scan')
+    return new Response(JSON.stringify(errorDetails), {
       status: 500,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   }
 })
+

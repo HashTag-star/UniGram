@@ -1,10 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { callAiWithFallback, repairJson, sanitizeError, CORS } from "../_shared/groq.ts";
 
 type Outlook = 'positive' | 'neutral' | 'needs_work';
 
@@ -29,7 +25,7 @@ function deriveOutlook(pa: any): Outlook {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: CORS });
   }
 
   try {
@@ -78,34 +74,17 @@ Data:
 Return format (JSON array only, no other text):
 ["insight 1", "insight 2", "insight 3"]`;
 
-    const groqKey = Deno.env.get('GROQ_API_KEY');
-    if (!groqKey) throw new Error('GROQ_API_KEY not configured');
-
-    const aiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${groqKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        max_tokens: 512,
-        temperature: 0.7,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    // Invoke via unified fallback client
+    const rawText = await callAiWithFallback({
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      maxTokens: 512,
+      modelOverride: 'llama-3.1-8b-instant'
     });
-
-    if (!aiRes.ok) {
-      const errBody = await aiRes.text();
-      throw new Error(`Groq API error ${aiRes.status}: ${errBody.slice(0, 200)}`);
-    }
-
-    const aiData = await aiRes.json();
-    const rawText: string = aiData.choices?.[0]?.message?.content ?? '[]';
 
     let insights: string[];
     try {
-      insights = JSON.parse(rawText);
+      insights = JSON.parse(repairJson(rawText));
       if (!Array.isArray(insights)) throw new Error('not array');
     } catch {
       insights = rawText.split('\n').filter((l: string) => l.trim().length > 10).slice(0, 4);
@@ -115,13 +94,13 @@ Return format (JSON array only, no other text):
 
     return new Response(
       JSON.stringify({ insights, outlook }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
+      { headers: { ...CORS, 'Content-Type': 'application/json' }, status: 200 },
     );
   } catch (e: any) {
-    console.error('[analytics-insights]', e);
+    const errorDetails = sanitizeError(e, 'analytics-insights');
     return new Response(
-      JSON.stringify({ error: e.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
+      JSON.stringify(errorDetails),
+      { headers: { ...CORS, 'Content-Type': 'application/json' }, status: 400 },
     );
   }
 });

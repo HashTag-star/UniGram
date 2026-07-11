@@ -401,6 +401,7 @@ function AppShell() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [minSplashDone, setMinSplashDone] = useState(false);
+  const initialLoadRef = useRef(false);
   const [fontsReady, setFontsReady] = useState(false);
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['feed'] as Tab[]));
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
@@ -412,6 +413,7 @@ function AppShell() {
   const [notifPost, setNotifPost] = useState<any>(null);
   const [notifPostComments, setNotifPostComments] = useState(false);
   const [notifCommentId, setNotifCommentId] = useState<string | undefined>(undefined);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   useLastSeen(session?.user?.id ?? null);
 
@@ -474,8 +476,28 @@ function AppShell() {
 
     startup();
 
+    // Handle deep links for password reset redirection
+    const handleUrl = (url: string) => {
+      if (!url) return;
+      // Supabase sends recovery links like: scheme://auth-callback#access_token=...&type=recovery
+      if (url.includes('type=recovery') || url.includes('recovery')) {
+        setShowResetPassword(true);
+      }
+    };
+
+    Linking.getInitialURL().then(url => {
+      if (url) handleUrl(url);
+    });
+
+    const urlSub = Linking.addEventListener('url', (event) => {
+      if (event.url) handleUrl(event.url);
+    });
+
     // Auth state changes: sign-in, sign-out, token refresh, etc.
-    const { data: listener } = supabase.auth.onAuthStateChange((_event: any, sess: any) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event: any, sess: any) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowResetPassword(true);
+      }
       const newUid = sess?.user?.id ?? null;
       setSession(sess);
       // Only reset onboardingDone when the user actually changes, not on token refresh
@@ -525,6 +547,7 @@ function AppShell() {
 
     return () => {
       cancelled = true;
+      urlSub.remove();
       listener.subscription.unsubscribe();
       clearTimeout(splashTimer);
       timers.forEach(t => clearTimeout(t));
@@ -545,7 +568,7 @@ function AppShell() {
     const fetchProfile = async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned, is_pro, pro_expires_at, pro_disabled')
+        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned, is_pro, pro_expires_at, pro_disabled, pro_auto_renew')
         .eq('id', uid)
         .single();
       if (data) {
@@ -726,7 +749,13 @@ function AppShell() {
     pagerPage, activeTab, prevTab, viewedUserId,
   ]);
 
-  if (!minSplashDone || !fontsReady || session === undefined || (session && onboardingDone === null)) return <LoadingScreen />;
+  useEffect(() => {
+    if (minSplashDone && fontsReady && session !== undefined) initialLoadRef.current = true;
+  }, [minSplashDone, fontsReady, session]);
+
+  const shouldShowLoading = !minSplashDone || !fontsReady || (!initialLoadRef.current && session === undefined) || (session && onboardingDone === null);
+  if (shouldShowLoading) return <LoadingScreen />;
+  if (showResetPassword) return <ResetPasswordScreen onDone={() => { setShowResetPassword(false); setAuthScreen('login'); }} />;
   if (!session) {
     if (authScreen === 'signup') return (
       <View style={{ flex: 1 }}>

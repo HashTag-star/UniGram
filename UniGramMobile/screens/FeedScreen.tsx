@@ -128,7 +128,7 @@ const LiveStoryBubble: React.FC<{ ls: any; onPress: () => void }> = ({ ls, onPre
         <View style={{ width: 66, height: 66, borderRadius: 33, borderWidth: 2, borderColor: '#ff3b30', alignItems: 'center', justifyContent: 'center' }}>
           <View style={styles.storyAvatarClip}>
             {ls.profiles?.avatar_url
-              ? <Image source={{ uri: ls.profiles.avatar_url }} style={styles.storyAvatar} />
+              ? <CachedImage uri={ls.profiles.avatar_url} style={styles.storyAvatar} />
               : <View style={[styles.storyAvatar, { backgroundColor: '#2a0a0a', alignItems: 'center', justifyContent: 'center' }]}>
                   <Ionicons name="person" size={22} color="#ff3b30" />
                 </View>
@@ -191,7 +191,7 @@ const StoryBarInternal: React.FC<{
         <View style={[styles.storyRing, hasOwnStories && styles.storyRingOwnActive]}>
           <View style={styles.storyAvatarClip}>
             {thumbUri
-              ? <Image source={{ uri: thumbUri }} style={styles.storyAvatar} />
+              ? <CachedImage uri={thumbUri} style={styles.storyAvatar} />
               : <View style={[styles.storyAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
                   <Ionicons name="person" size={22} color="#555" />
                 </View>}
@@ -277,7 +277,7 @@ const ViewersSheet: React.FC<{
             viewers.map((v, i) => (
               <View key={i} style={vv.item}>
                 {v.avatar_url ? (
-                  <Image source={{ uri: v.avatar_url }} style={vv.avatar} />
+                  <CachedImage uri={v.avatar_url} style={vv.avatar} />
                 ) : (
                   <View style={[vv.avatar, { backgroundColor: '#333', alignItems: 'center', justifyContent: 'center' }]}>
                     <Ionicons name="person" size={20} color="#555" />
@@ -430,7 +430,8 @@ const StoryViewer: React.FC<{
       onViewed(story.id);
       fetchStats();
     } else {
-      recordCampusAdImpression(story.ad.id).catch(() => {});
+      // Server-side delivery events deduplicate this per viewer/placement/day.
+      recordCampusAdImpression(story.ad.id, 'stories').catch(() => {});
     }
     startProgress();
     return () => { progressAnim.current?.stop(); };
@@ -518,7 +519,7 @@ const StoryViewer: React.FC<{
       <View style={[sv.bg, isReshared && { backgroundColor: '#0f0f0f' }]}>
         <StatusBar hidden />
         {isAdStory && story.ad?.media_url && (
-          <Image source={{ uri: story.ad.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <CachedImage uri={story.ad.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
         )}
         {isAdStory && story.ad?.media_url && (story.ad?.headline || story.ad?.body) && (
           // Headline/body overlaid on the creative — WhatsApp/Instagram style
@@ -543,12 +544,12 @@ const StoryViewer: React.FC<{
           </View>
         )}
         {!isAdStory && !isReshared && (
-          <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <CachedImage uri={story.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
         )}
         {isReshared && (
           <View style={sv.reshareCardWrap} pointerEvents="none">
             <View style={sv.reshareCard}>
-              <Image source={{ uri: story.media_url }} style={sv.reshareCardMedia} resizeMode="cover" />
+              <CachedImage uri={story.media_url} style={sv.reshareCardMedia} resizeMode="cover" />
               <View style={sv.reshareCreatorBar}>
                 <Ionicons name="person-circle-outline" size={20} color="rgba(255,255,255,0.55)" />
                 <Text style={sv.reshareCreatorText} numberOfLines={1}>@{originalUsername ?? 'user'}</Text>
@@ -585,14 +586,14 @@ const StoryViewer: React.FC<{
             <TouchableOpacity onPress={() => { if (!isAdStory) { setPaused(true); onUserPress?.(group.profile); } }}>
               {isAdStory ? (
                 story.ad?.profiles?.avatar_url ? (
-                  <Image source={{ uri: story.ad.profiles.avatar_url }} style={sv.avatar} />
+                  <CachedImage uri={story.ad.profiles.avatar_url} style={sv.avatar} />
                 ) : (
                   <View style={[sv.avatar, { backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' }]}>
                     <Ionicons name="megaphone" size={18} color="#fff" />
                   </View>
                 )
               ) : group.profile.avatar_url ? (
-                <Image source={{ uri: group.profile.avatar_url }} style={sv.avatar} />
+                <CachedImage uri={group.profile.avatar_url} style={sv.avatar} />
               ) : (
                 <View style={[sv.avatar, { backgroundColor: '#333' }]} />
               )}
@@ -685,7 +686,7 @@ const StoryViewer: React.FC<{
                 borderRadius: 16, paddingVertical: 14,
               }}
               onPress={() => {
-                recordCampusAdClick(story.ad.id).catch(() => {});
+                recordCampusAdClick(story.ad.id, 'stories').catch(() => {});
                 if (story.ad?.link) Linking.openURL(story.ad.link).catch(() => {});
               }}
               activeOpacity={0.8}
@@ -1072,7 +1073,13 @@ export const FeedScreen = React.memo(({
       // Record impressions for all visible items if not already done this session.
       viewableItems.forEach((info: any) => {
         const id = info.key;
-        if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
+        if (info.item?._type === 'sponsored_ad') {
+          const adId = info.item?.ad?.id;
+          if (adId && !adImpressionsRef.current.has(adId)) {
+            adImpressionsRef.current.add(adId);
+            recordCampusAdImpression(adId, 'feed').catch(() => {});
+          }
+        } else if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
           recordedImpressions.current.add(id);
           const uid = currentUserIdRef.current;
           if (uid) recordImpression(id, uid);
@@ -1237,9 +1244,8 @@ export const FeedScreen = React.memo(({
         getActiveStories(),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
-        // Use Cache.getOrFetch so a persisted profile (AsyncStorage) or memory hit
-        // returns immediately; fetch from network only if stale.
-        Cache.getOrFetch<any>(`profile:${user.id}`, TTL.profile, () => getProfile(user.id)),
+        // getProfile already uses cache internally, so avoid nested Cache.getOrFetch
+        getProfile(user.id),
       ]);
 
       setCurrentProfile(prof);
@@ -1401,6 +1407,7 @@ export const FeedScreen = React.memo(({
           }
 
           if (payload.new.type === 'new_story') {
+            try { Cache.invalidate(`stories:active`); } catch (e) {}
             getActiveStories().then(setStoryGroups).catch(() => {});
           }
 
@@ -1660,18 +1667,7 @@ export const FeedScreen = React.memo(({
     const result = [...storyGroups];
     let adIdx = 0;
 
-    // Force first ad at the second position (index 1) for testing
-    if (storyAds.length > 0) {
-      const ad = storyAds[adIdx % storyAds.length];
-      adIdx++;
-      result.splice(1, 0, {
-        _isAdGroup: true,
-        profile: { id: `__story_ad_${ad.id}__`, username: ad.profiles?.full_name || ad.name || 'Sponsored', avatar_url: ad.profiles?.avatar_url ?? null },
-        stories: [{ id: `__story_ad_story_${ad.id}__`, _isAd: true, ad, created_at: ad.created_at }],
-      });
-    }
-
-    // Insert subsequent from end
+    // Keep the opening story bubbles organic, then insert at a paced cadence.
     for (let i = result.length - 1; i >= 3; i--) {
       if (i % interval === 0) {
         const ad = storyAds[adIdx % storyAds.length];

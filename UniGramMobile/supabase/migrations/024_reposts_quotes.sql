@@ -11,9 +11,11 @@ CREATE TABLE IF NOT EXISTS public.post_reposts (
 
 ALTER TABLE public.post_reposts ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "post_reposts: read" ON public.post_reposts;
 CREATE POLICY "post_reposts: read"
   ON public.post_reposts FOR SELECT TO authenticated USING (true);
 
+DROP POLICY IF EXISTS "post_reposts: own write" ON public.post_reposts;
 CREATE POLICY "post_reposts: own write"
   ON public.post_reposts FOR ALL TO authenticated
   USING (user_id = auth.uid())

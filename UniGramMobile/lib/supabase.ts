@@ -149,3 +149,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     fetch: fetchWithTimeout as unknown as typeof fetch,
   },
 });
+
+/**
+ * Resolves a media file path in a Supabase bucket to its Cloudflare CDN proxy URL
+ * to avoid expensive Supabase storage egress fees.
+ */
+export function getPublicMediaUrl(bucket: string, path: string): string {
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  const cdnUrl = process.env.EXPO_PUBLIC_CDN_URL;
+  if (cdnUrl && SUPABASE_URL) {
+    return data.publicUrl.replace(SUPABASE_URL, cdnUrl);
+  }
+  return data.publicUrl;
+}
+

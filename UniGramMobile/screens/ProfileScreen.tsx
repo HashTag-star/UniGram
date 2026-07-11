@@ -419,17 +419,18 @@ export const ProfileScreen = React.memo<Props>(({
                   <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
                     <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
                   </TouchableOpacity>
-                  {!profile?.is_verified ? (
+                  {!profile?.is_verified && (
                     <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
                       <Ionicons name="shield-checkmark" size={16} color="#fff" />
                       <Text style={styles.verifyText}>Get Verified</Text>
                     </TouchableOpacity>
-                  ) : !isPro ? (
+                  )}
+                  {!isPro && (
                     <TouchableOpacity style={styles.proBtn} onPress={() => setShowProSheet(true)}>
                       <Ionicons name="flash" size={14} color="#fff" />
                       <Text style={styles.proText}>Go Pro</Text>
                     </TouchableOpacity>
-                  ) : null}
+                  )}
                 </>
               ) : (
                 <>
@@ -456,7 +457,7 @@ export const ProfileScreen = React.memo<Props>(({
         <View style={{ marginTop: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
-            {isOwn && isPro && (
+            {isPro && (
               <View style={styles.proBadge}>
                 <Ionicons name="flash" size={11} color="#fff" />
                 <Text style={styles.proBadgeText}>PRO</Text>
@@ -935,7 +936,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
       ) : posts.map((p: any) => {
         const barWidth = maxViews > 0 ? Math.max(4, Math.round(((p.views ?? 0) / maxViews) * 100)) : 4;
         return (
-          <View key={p.post_id} style={{ backgroundColor: colors.bg2, borderRadius: 16, padding: 14, marginBottom: 10 }}>
+          <View key={p.id} style={{ backgroundColor: colors.bg2, borderRadius: 16, padding: 14, marginBottom: 10 }}>
             <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
               {p.media_url ? (
                 <CachedImage uri={p.media_url} style={{ width: 48, height: 48, borderRadius: 10 }} resizeMode="cover" />

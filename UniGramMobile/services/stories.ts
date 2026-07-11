@@ -1,24 +1,28 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
 import { sendPushToUser } from './pushNotifications';
+import { Cache, TTL } from '../lib/cache';
 
 export async function getActiveStories() {
-  const { data, error } = await supabase
-    .from('stories')
-    .select(`*, profiles!stories_user_id_fkey(*)`)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false });
-  if (error) throw error;
+  const key = `stories:active`;
+  return await Cache.getOrFetch<any[]>(key, TTL.stories, async () => {
+    const { data, error } = await supabase
+      .from('stories')
+      .select(`*, profiles!stories_user_id_fkey(*)`)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false });
+    if (error) throw error;
 
-  // Group by user
-  const grouped: Record<string, { profile: any; stories: any[] }> = {};
-  for (const story of data ?? []) {
-    const uid = story.user_id;
-    if (!story.profiles?.id) continue; // skip orphaned stories from deleted users
-    if (!grouped[uid]) grouped[uid] = { profile: story.profiles, stories: [] };
-    grouped[uid].stories.push(story);
-  }
-  return Object.values(grouped);
+    // Group by user
+    const grouped: Record<string, { profile: any; stories: any[] }> = {};
+    for (const story of data ?? []) {
+      const uid = story.user_id;
+      if (!story.profiles?.id) continue; // skip orphaned stories from deleted users
+      if (!grouped[uid]) grouped[uid] = { profile: story.profiles, stories: [] };
+      grouped[uid].stories.push(story);
+    }
+    return Object.values(grouped);
+  }) ?? [];
 }
 
 export async function getUserStories(userId: string) {
@@ -86,7 +90,15 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
     } catch (_) {}
   })();
 
+  // Bust active stories cache so followers see the new story quickly
+  try { Cache.invalidate(`stories:active`); } catch (e) {}
+
   return data;
+}
+
+// Bust stories cache when stories are created elsewhere
+export function invalidateStoriesCache() {
+  Cache.invalidate(`stories:active`);
 }
 
 export async function createStoryFromPost(userId: string, post: any): Promise<any> {
@@ -108,6 +120,7 @@ export async function createStoryFromPost(userId: string, post: any): Promise<an
     .select(`*, profiles!stories_user_id_fkey(*)`)
     .single();
   if (error) throw error;
+  try { Cache.invalidate(`stories:active`); } catch (e) {}
   return data;
 }
 
@@ -214,4 +227,5 @@ export async function deleteStory(storyId: string, userId: string) {
   // 3. Delete from DB
   const { error } = await supabase.from('stories').delete().eq('id', storyId).eq('user_id', userId);
   if (error) throw error;
+  try { Cache.invalidate(`stories:active`); } catch (e) {}
 }

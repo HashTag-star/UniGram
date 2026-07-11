@@ -32,23 +32,28 @@ ALTER TABLE public.live_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.live_comments ENABLE ROW LEVEL SECURITY;
 
 -- Sessions: Anyone authenticated can read; creators can insert/update
+DROP POLICY IF EXISTS "anyone can see live sessions" ON public.live_sessions;
 CREATE POLICY "anyone can see live sessions" 
   ON public.live_sessions FOR SELECT 
   USING (true);
 
+DROP POLICY IF EXISTS "users can start sessions" ON public.live_sessions;
 CREATE POLICY "users can start sessions" 
   ON public.live_sessions FOR INSERT 
   WITH CHECK (auth.uid() = creator_id);
 
+DROP POLICY IF EXISTS "creators can end sessions" ON public.live_sessions;
 CREATE POLICY "creators can end sessions" 
   ON public.live_sessions FOR UPDATE 
   USING (auth.uid() = creator_id);
 
 -- Comments: Anyone authenticated can read and insert; creators can delete
+DROP POLICY IF EXISTS "anyone can read live comments" ON public.live_comments;
 CREATE POLICY "anyone can read live comments" 
   ON public.live_comments FOR SELECT 
   USING (true);
 
+DROP POLICY IF EXISTS "authenticated users can post live comments" ON public.live_comments;
 CREATE POLICY "authenticated users can post live comments" 
   ON public.live_comments FOR INSERT 
   WITH CHECK (auth.uid() = user_id);
@@ -65,6 +70,20 @@ RETURNS void LANGUAGE sql AS $$
 $$;
 
 -- 5. Realtime for Live Comments
--- Explicitly add live_comments to the supabase_realtime publication
-ALTER PUBLICATION supabase_realtime ADD TABLE live_comments;
-ALTER PUBLICATION supabase_realtime ADD TABLE live_sessions;
+-- Explicitly add live_comments and live_sessions to the supabase_realtime publication (safely)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'live_comments'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE live_comments;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'live_sessions'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE live_sessions;
+  END IF;
+END $$;

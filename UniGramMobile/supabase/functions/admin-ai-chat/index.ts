@@ -1,9 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { callAiMessageWithFallback, sanitizeError, CORS } from '../_shared/groq.ts'
 
 const TOOLS = [
   {
@@ -81,28 +77,6 @@ const TOOLS = [
   }
 ]
 
-async function callGroq(apiKey: string, messages: any[], tools: any[] | null = null): Promise<any> {
-  const body: any = {
-    model: 'llama-3.3-70b-versatile',
-    messages,
-    temperature: 0.2,
-    max_tokens: 1000,
-  }
-  if (tools && tools.length > 0) body.tools = tools
-
-  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
-  })
-  if (!resp.ok) {
-    const errorText = await resp.text()
-    throw new Error(`Groq API Error (${resp.status}): ${errorText.slice(0, 200)}`)
-  }
-  const result = await resp.json()
-  return result.choices?.[0]?.message
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
@@ -114,13 +88,9 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    const groqKey = Deno.env.get('GROQ_API_KEY')
 
     if (!supabaseUrl || !supabaseKey) {
       return new Response(JSON.stringify({ error: 'Supabase URL/Key environment variables are missing on the server' }), { status: 200, headers: CORS })
-    }
-    if (!groqKey) {
-      return new Response(JSON.stringify({ error: 'GROQ_API_KEY is not set in Supabase secrets' }), { status: 200, headers: CORS })
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey)
@@ -229,8 +199,16 @@ RULES:
 2. Be professional and concise.`
     }
 
-    let currentMessages = [systemMessage, ...incomingMessages]
-    let responseMessage = await callGroq(groqKey, currentMessages, TOOLS)
+    const currentMessages = [systemMessage, ...incomingMessages]
+    
+    // Call the fallback completion client
+    const responseMessage = await callAiMessageWithFallback({
+      messages: currentMessages,
+      temperature: 0.2,
+      maxTokens: 1000,
+      tools: TOOLS,
+      modelOverride: 'llama-3.3-70b-versatile'
+    })
 
     // Handle tool calls
     if (responseMessage.tool_calls) {
@@ -276,7 +254,13 @@ RULES:
       }
 
       const finalMessages = [...currentMessages, responseMessage, ...toolResults]
-      const finalResponse = await callGroq(groqKey, finalMessages, null)
+      const finalResponse = await callAiMessageWithFallback({
+        messages: finalMessages,
+        temperature: 0.2,
+        maxTokens: 1000,
+        tools: null,
+        modelOverride: 'llama-3.3-70b-versatile'
+      })
       
       return new Response(JSON.stringify({ 
         answer: finalResponse.content,
@@ -290,9 +274,9 @@ RULES:
     }
 
     // Handle Proposals
-    const proposalMatch = responseMessage.content.match(/\[PROPOSALS\]([\s\S]*?)\[\/PROPOSALS\]/)
+    const proposalMatch = (responseMessage.content || '').match(/\[PROPOSALS\]([\s\S]*?)\[\/PROPOSALS\]/)
     let proposals = null
-    let answer = responseMessage.content
+    let answer = responseMessage.content || ''
     if (proposalMatch) {
       try {
         proposals = JSON.parse(proposalMatch[1].trim())
@@ -306,9 +290,9 @@ RULES:
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   } catch (err: any) {
-    console.error('Edge Function Fatal Error:', err.message)
-    return new Response(JSON.stringify({ error: `Server Error: ${err.message}` }), {
-      status: 200,
+    const errorDetails = sanitizeError(err, 'admin-ai-chat')
+    return new Response(JSON.stringify(errorDetails), {
+      status: 200, // Kept as 200 for client schema compatibility
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   }

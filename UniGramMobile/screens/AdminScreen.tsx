@@ -474,7 +474,7 @@ const OverviewTab: React.FC<{
                   title={`@${item.profiles?.username}`}
                   subtitle={item.type === 'influencer' ? 'Notable' : item.type.toUpperCase()}
                   badge={item.type === 'influencer' ? 'Notable' : item.type}
-                  badgeColor={item.type === 'influencer' ? '#818cf8' : undefined}
+                  badgeColor={item.type === 'influencer' ? '#f43f5e' : item.type === 'alumni' ? '#14b8a6' : undefined}
                   onPress={() => setActiveTab('verifications')}
                 />
               )}
@@ -1478,8 +1478,8 @@ const VerificationsTab: React.FC = () => {
           <Text style={styles.userName}>@{r.profiles?.username ?? 'unknown'}</Text>
           <Text style={styles.userMeta}>{timeAgo(r.submitted_at)} · {r.type === 'influencer' ? 'NOTABLE' : r.type.toUpperCase()}</Text>
         </View>
-        <View style={[styles.badge, styles.badgeAdmin, { backgroundColor: r.type === 'influencer' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)' }]}>
-          <Text style={[styles.badgeText, { color: r.type === 'influencer' ? '#818cf8' : 'rgba(255,255,255,0.4)' }]}>
+        <View style={[styles.badge, styles.badgeAdmin, { backgroundColor: r.type === 'influencer' ? 'rgba(244,63,94,0.2)' : r.type === 'alumni' ? 'rgba(20,184,166,0.2)' : 'rgba(255,255,255,0.05)' }]}>
+          <Text style={[styles.badgeText, { color: r.type === 'influencer' ? '#f43f5e' : r.type === 'alumni' ? '#14b8a6' : 'rgba(255,255,255,0.4)' }]}>
             {r.type === 'influencer' ? 'Notable' : r.type}
           </Text>
         </View>

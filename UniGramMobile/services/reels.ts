@@ -1,57 +1,61 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
 import { uploadFile } from './upload';
+import { Cache, TTL } from '../lib/cache';
 
 export async function getReels(limit = 20, offset = 0) {
-  const { data: { user } } = await supabase.auth.getUser();
-  const userId = user?.id;
+  const cacheKey = `reels:feed:${limit}:${offset}`;
+  return await Cache.getOrFetch<any[]>(cacheKey, TTL.reels, async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id;
 
-  // 1. Get blocked users to hide their content
-  let blockedIds: string[] = [];
-  if (userId) {
-    try {
-      const { getBlockedUserIds } = require('./profiles');
-      blockedIds = await getBlockedUserIds(userId);
-    } catch (err) {
-      console.warn('Failed to fetch blocked IDs for reels filtering', err);
+    // 1. Get blocked users to hide their content
+    let blockedIds: string[] = [];
+    if (userId) {
+      try {
+        const { getBlockedUserIds } = require('./profiles');
+        blockedIds = await getBlockedUserIds(userId);
+      } catch (err) {
+        console.warn('Failed to fetch blocked IDs for reels filtering', err);
+      }
     }
-  }
 
-  const { data, error } = await supabase
-    .from('reels')
-    .select(`*, profiles!reels_user_id_fkey(*)`)
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-  if (error) throw error;
+    const { data, error } = await supabase
+      .from('reels')
+      .select(`*, profiles!reels_user_id_fkey(*)`)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
 
-  const results = data ?? [];
-  if (results.length === 0) return [];
+    const results = data ?? [];
+    if (results.length === 0) return [];
 
-  // 2. Batch check for moderated content
-  const reelIds = results.map(r => r.id);
-  const { data: reportsData } = await supabase
-    .from('reports')
-    .select('target_id')
-    .in('target_id', reelIds)
-    .eq('status', 'pending');
-  
-  const reportCounts: Record<string, number> = {};
-  (reportsData || []).forEach(r => {
-    reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
-  });
+    // 2. Batch check for moderated content
+    const reelIds = results.map(r => r.id);
+    const { data: reportsData } = await supabase
+      .from('reports')
+      .select('target_id')
+      .in('target_id', reelIds)
+      .eq('status', 'pending');
+    
+    const reportCounts: Record<string, number> = {};
+    (reportsData || []).forEach(r => {
+      reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
+    });
 
-  // 3. Filtering
-  const filtered = results.filter(reel => {
-    // Skip if author is blocked
-    if (blockedIds.includes(reel.user_id)) return false;
+    // 3. Filtering
+    const filtered = results.filter(reel => {
+      // Skip if author is blocked
+      if (blockedIds.includes(reel.user_id)) return false;
 
-    // Skip if content is moderated (threshold met: >= 5 reports)
-    if ((reportCounts[reel.id] || 0) >= 5) return false;
+      // Skip if content is moderated (threshold met: >= 5 reports)
+      if ((reportCounts[reel.id] || 0) >= 5) return false;
 
-    return true;
-  });
+      return true;
+    });
 
-  return filtered;
+    return filtered;
+  }) ?? [];
 }
 
 
@@ -109,7 +113,15 @@ export async function createReel(
     });
   }
 
+    // Bust reels cache so feed/reels consumers see the new reel
+    try { Cache.invalidatePattern('reels:'); } catch (e) {}
+
   return data;
+}
+
+// Invalidate reels cache on creations so users see new reels without long TTL waits
+export async function invalidateReelsCache() {
+  try { Cache.invalidatePattern('reels:'); } catch (e) {}
 }
 
 export async function likeReel(reelId: string, userId: string) {

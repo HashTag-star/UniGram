@@ -116,29 +116,27 @@ export default function Home() {
   };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       {/* Header Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total Users" value={stats.totalUsers.toLocaleString()} sub={`+${stats.newUsers7d} this week`} icon={<Users className="text-blue-400" />} />
         <StatCard label="Pending Verifications" value={stats.pendingVerifications.toString()} sub="awaiting review" icon={<ShieldCheck className="text-green-400" />} />
         <StatCard label="Active Reports" value={stats.activeReports.toString()} sub="pending action" icon={<AlertTriangle className="text-red-400" />} />
         <StatCard label="Live Sessions" value={stats.liveSessions.toString()} sub="on right now" icon={<TrendingUp className="text-purple-400" />} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* AI Assistant */}
-        <div className="lg:col-span-2 space-y-8">
-          <div className="glass rounded-3xl p-8 overflow-hidden relative group">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/10 blur-[100px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-
+        <div className="lg:col-span-2 space-y-6">
+          <div className="glass rounded-lg p-5 sm:p-6 overflow-hidden relative group">
             <div className="relative space-y-6">
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-2xl font-bold flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
+                  <h2 className="text-xl font-bold flex items-center gap-3">
                     <BrainCircuit className="text-indigo-400" />
-                    How can I help you today?
+                    Admin Assistant
                   </h2>
-                  <a href="/agent" className="glass-button px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2 hover:bg-indigo-500/10">
+                  <a href="/agent" className="glass-button px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2 hover:bg-indigo-500/10 w-fit">
                     Open Agent Dashboard <ChevronRight size={12} />
                   </a>
                 </div>
@@ -154,7 +152,7 @@ export default function Home() {
                     key={p.label}
                     onClick={() => askAI(p.query)}
                     disabled={aiLoading}
-                    className="bg-white/5 border border-white/10 hover:border-indigo-500/40 hover:bg-indigo-500/5 disabled:opacity-40 px-4 py-2 rounded-xl text-xs font-bold transition-all text-white/70 hover:text-white"
+                    className="bg-white/5 border border-white/10 hover:border-indigo-500/40 hover:bg-indigo-500/5 disabled:opacity-40 px-3 py-2 rounded-lg text-xs font-bold transition-all text-white/70 hover:text-white"
                   >
                     {p.label}
                   </button>
@@ -162,20 +160,20 @@ export default function Home() {
               </div>
 
               {/* Input */}
-              <form onSubmit={handleSubmit} className="flex items-center gap-3 bg-black/40 border border-white/10 rounded-2xl p-3 focus-within:border-indigo-500/40 transition-colors">
+              <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row sm:items-center gap-3 bg-black/40 border border-white/10 rounded-lg p-3 focus-within:border-indigo-500/40 transition-colors">
                 <input
                   ref={inputRef}
                   type="text"
                   value={aiQuery}
                   onChange={e => setAiQuery(e.target.value)}
                   placeholder="e.g. 'Summarise last week's verification requests'"
-                  className="flex-1 bg-transparent border-none focus:outline-none text-sm text-white placeholder:text-white/30"
+                  className="w-full flex-1 bg-transparent border-none focus:outline-none text-sm text-white placeholder:text-white/30"
                   disabled={aiLoading}
                 />
                 <button
                   type="submit"
                   disabled={aiLoading || !aiQuery.trim()}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0"
+                  className="w-full sm:w-auto justify-center flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shrink-0"
                 >
                   {aiLoading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
                   {aiLoading ? "Thinking..." : "Ask"}
@@ -184,7 +182,7 @@ export default function Home() {
 
               {/* Answer */}
               {(aiAnswer || aiError) && (
-                <div className={`rounded-2xl p-5 border text-sm leading-relaxed ${
+                <div className={`rounded-lg p-5 border text-sm leading-relaxed ${
                   aiError
                     ? 'bg-red-500/10 border-red-500/20 text-red-300'
                     : 'bg-indigo-600/10 border-indigo-500/20 text-white/80'
@@ -203,7 +201,7 @@ export default function Home() {
           </div>
 
           {/* Recent Verifications */}
-          <div className="glass rounded-3xl p-8">
+          <div className="glass rounded-lg p-5 sm:p-6">
             <h3 className="text-lg font-bold mb-6">Recent Verifications</h3>
             <div className="space-y-4">
               {loading ? (
@@ -211,9 +209,9 @@ export default function Home() {
               ) : recentVerifications.length === 0 ? (
                 <div className="py-12 text-center text-white/20">No recent activity.</div>
               ) : recentVerifications.map(req => (
-                <div key={req.id} className="flex items-center justify-between p-4 rounded-2xl hover:bg-white/5 transition-colors border border-transparent hover:border-white/5">
+                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg hover:bg-white/5 transition-colors border border-transparent hover:border-white/5">
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center">
                       <Users size={18} className="text-white/60" />
                     </div>
                     <div>
@@ -237,7 +235,7 @@ export default function Home() {
 
         {/* Platform Health */}
         <div className="space-y-8">
-          <div className="glass rounded-3xl p-8 h-full">
+          <div className="glass rounded-lg p-5 sm:p-6 h-full">
             <h3 className="text-lg font-bold mb-6">Platform Health</h3>
             <div className="space-y-6">
               <HealthRow
@@ -266,7 +264,7 @@ export default function Home() {
               />
             </div>
 
-            <div className="mt-10 p-5 rounded-2xl bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/20">
+            <div className="mt-10 p-5 rounded-lg bg-indigo-600/15 border border-indigo-500/20">
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest mb-2">Status</p>
               <p className="text-sm text-indigo-50/80 leading-relaxed">
                 {stats.pendingVerifications > 10
@@ -285,9 +283,9 @@ export default function Home() {
 
 function StatCard({ label, value, sub, icon }: { label: string; value: string; sub: string; icon: React.ReactNode }) {
   return (
-    <div className="glass rounded-3xl p-6 transition-all">
+    <div className="glass rounded-lg p-5 transition-all">
       <div className="flex items-center justify-between mb-4">
-        <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center">{icon}</div>
+        <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">{icon}</div>
       </div>
       <p className="text-white/40 text-xs font-medium uppercase tracking-wider">{label}</p>
       <h4 className="text-2xl font-bold mt-1 tracking-tight text-white">{value}</h4>

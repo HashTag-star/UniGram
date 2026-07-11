@@ -7,6 +7,11 @@ DROP POLICY IF EXISTS "campus_events: authenticated insert" ON public.campus_eve
 DROP POLICY IF EXISTS "campus_events: authenticated update" ON public.campus_events;
 DROP POLICY IF EXISTS "campus_events: authenticated delete" ON public.campus_events;
 
+DROP POLICY IF EXISTS "campus_events: read" ON public.campus_events;
+DROP POLICY IF EXISTS "campus_events: admin insert" ON public.campus_events;
+DROP POLICY IF EXISTS "campus_events: admin update" ON public.campus_events;
+DROP POLICY IF EXISTS "campus_events: admin delete" ON public.campus_events;
+
 -- Mobile: active events only. Admins: all events.
 CREATE POLICY "campus_events: read"
   ON public.campus_events FOR SELECT

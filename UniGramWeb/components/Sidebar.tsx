@@ -15,6 +15,21 @@ import {
   Megaphone,
 } from "lucide-react";
 
+export const NAV_ITEMS = [
+  { href: "/", icon: <LayoutDashboard size={18} />, label: "Overview" },
+  { href: "/verifications", icon: <ShieldCheck size={18} />, label: "Verifications" },
+  { href: "/reports", icon: <AlertTriangle size={18} />, label: "Reports" },
+  { href: "/users", icon: <Users size={18} />, label: "Users" },
+  { href: "/analytics", icon: <TrendingUp size={18} />, label: "Analytics" },
+];
+
+export const AI_NAV_ITEMS = [
+  { href: "/agent", icon: <BrainCircuit size={18} />, label: "AI Agent", color: "text-indigo-400" },
+  { href: "/ai-regulator", icon: <BrainCircuit size={18} />, label: "AI Regulator", color: "text-purple-400" },
+  { href: "/keyword-manager", icon: <Filter size={18} />, label: "Keyword Filters", color: "text-yellow-400" },
+  { href: "/campus-content", icon: <Megaphone size={18} />, label: "Campus Content", color: "text-green-400" },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
 
@@ -24,7 +39,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-64 glass border-r border-white/5 flex flex-col h-screen sticky top-0">
+    <aside className="hidden lg:flex w-64 glass border-r border-white/5 flex-col h-screen sticky top-0">
       <div className="p-6 flex items-center gap-3">
         <Link href="/" className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
@@ -35,18 +50,19 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-4 py-4 space-y-1">
-        <NavItem href="/" icon={<LayoutDashboard size={18} />} label="Overview" active={pathname === "/"} />
-        <NavItem href="/verifications" icon={<ShieldCheck size={18} />} label="Verifications" active={isLinkActive("/verifications")} />
-        <NavItem href="/reports" icon={<AlertTriangle size={18} />} label="Reports" active={isLinkActive("/reports")} />
-        <NavItem href="/users" icon={<Users size={18} />} label="Users" active={isLinkActive("/users")} />
-        <NavItem href="/analytics" icon={<TrendingUp size={18} />} label="Analytics" active={isLinkActive("/analytics")} />
+        {NAV_ITEMS.map((item) => (
+          <NavItem
+            key={item.href}
+            {...item}
+            active={item.href === "/" ? pathname === "/" : isLinkActive(item.href)}
+          />
+        ))}
         
         <div className="pt-4 mt-4 border-t border-white/5">
           <span className="px-3 text-[10px] font-bold text-white/30 uppercase tracking-[2px]">Core AI</span>
-          <NavItem href="/agent" icon={<BrainCircuit size={18} />} label="AI Agent" color="text-indigo-400" active={isLinkActive("/agent")} />
-          <NavItem href="/ai-regulator" icon={<BrainCircuit size={18} />} label="AI Regulator" color="text-purple-400" active={isLinkActive("/ai-regulator")} />
-          <NavItem href="/keyword-manager" icon={<Filter size={18} />} label="Keyword Filters" color="text-yellow-400" active={isLinkActive("/keyword-manager")} />
-          <NavItem href="/campus-content" icon={<Megaphone size={18} />} label="Campus Content" color="text-green-400" active={isLinkActive("/campus-content")} />
+          {AI_NAV_ITEMS.map((item) => (
+            <NavItem key={item.href} {...item} active={isLinkActive(item.href)} />
+          ))}
         </div>
       </nav>
 
@@ -57,11 +73,11 @@ export function Sidebar() {
   );
 }
 
-function NavItem({ href, icon, label, active = false, color }: { href: string, icon: React.ReactNode, label: string, active?: boolean, color?: string }) {
+export function NavItem({ href, icon, label, active = false, color }: { href: string, icon: React.ReactNode, label: string, active?: boolean, color?: string }) {
   return (
     <Link href={href}>
       <div className={`
-        flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200
+        flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-200
         ${active ? 'bg-indigo-600 shadow-lg shadow-indigo-600/20 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'}
         ${color}
       `}>

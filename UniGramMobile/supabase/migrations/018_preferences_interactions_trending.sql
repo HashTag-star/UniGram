@@ -13,14 +13,17 @@ CREATE TABLE IF NOT EXISTS public.user_preferences (
 
 ALTER TABLE public.user_preferences ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "user_preferences: own read" ON public.user_preferences;
 CREATE POLICY "user_preferences: own read"
   ON public.user_preferences FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "user_preferences: own insert" ON public.user_preferences;
 CREATE POLICY "user_preferences: own insert"
   ON public.user_preferences FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "user_preferences: own update" ON public.user_preferences;
 CREATE POLICY "user_preferences: own update"
   ON public.user_preferences FOR UPDATE
   USING (auth.uid() = user_id);
@@ -50,10 +53,12 @@ CREATE INDEX IF NOT EXISTS interactions_processed_created_idx
 
 ALTER TABLE public.interactions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "interactions: own insert" ON public.interactions;
 CREATE POLICY "interactions: own insert"
   ON public.interactions FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "interactions: own read" ON public.interactions;
 CREATE POLICY "interactions: own read"
   ON public.interactions FOR SELECT
   USING (auth.uid() = user_id);
@@ -100,6 +105,7 @@ CREATE INDEX IF NOT EXISTS connection_moments_pair_idx
 
 ALTER TABLE public.connection_moments ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "connection_moments: authenticated read" ON public.connection_moments;
 -- Authenticated users can read moments from their own university
 CREATE POLICY "connection_moments: authenticated read"
   ON public.connection_moments FOR SELECT

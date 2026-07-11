@@ -19,9 +19,11 @@ CREATE INDEX IF NOT EXISTS profile_views_profile_idx ON profile_views(profile_id
 
 ALTER TABLE profile_views ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "owner_reads_own_profile_views" ON profile_views;
 CREATE POLICY "owner_reads_own_profile_views" ON profile_views
   FOR SELECT USING (profile_id = auth.uid());
 
+DROP POLICY IF EXISTS "authenticated_can_record_view" ON profile_views;
 CREATE POLICY "authenticated_can_record_view" ON profile_views
   FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 

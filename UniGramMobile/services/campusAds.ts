@@ -3,6 +3,7 @@ import { uploadFile } from './upload';
 import { randomId } from '../lib/uuid';
 import { AppState } from 'react-native';
 import * as Linking from 'expo-linking';
+import { Cache, TTL } from '../lib/cache';
 
 export interface CampusAd {
   id: string;
@@ -206,6 +207,9 @@ export async function getActiveAdsForPlacement(
   university: string | null,
   userId: string,
 ): Promise<any[]> {
+  // Previews and eligibility are viewer-specific; do not share their cache.
+  const cacheKey = `ads:placement:${placement}:uni:${university ?? 'none'}:viewer:${userId}`;
+  return await Cache.getOrFetch<any[]>(cacheKey, TTL.explore, async () => {
   // NOTE: campus_ads.user_id references auth.users(id), NOT public.profiles(id),
   // so the PostgREST relationship embed `profiles:user_id(...)` can't be inferred
   // and the join silently errors out. We fetch the ads and the advertiser
@@ -242,7 +246,8 @@ export async function getActiveAdsForPlacement(
   const previews = (previewAds ?? []) as any[];
   if (ads.length === 0 && previews.length === 0) return [];
 
-  const allAds = [...previews, ...ads];
+  // Owners can inspect explicit previews, but paid delivery never targets them.
+  const allAds = [...previews, ...ads.filter(a => a.user_id !== userId)];
   const ownerIds = Array.from(new Set(allAds.map(a => a.user_id).filter(Boolean)));
   let profileMap = new Map<string, any>();
   if (ownerIds.length > 0) {
@@ -272,14 +277,14 @@ export async function getActiveAdsForPlacement(
     }
   }
 
-  return combined
+    return combined
     .filter((a): a is any => {
       if (!a) return false;
       // placement filtering: if placements configured, ad must include this placement
       if (placement && Array.isArray(a.placements) && a.placements.length > 0
           && !a.placements.includes(placement)) return false;
       // university targeting: skip ads targeted to other campuses
-      if (a.university && university && a.university !== university) return false;
+      if (a.university && a.university !== university) return false;
       return true;
     })
     // final client-side sort based on explicit priority + budget to control reach
@@ -293,6 +298,7 @@ export async function getActiveAdsForPlacement(
       // Randomize among equal priority/budget to ensure variety
       return Math.random() - 0.5;
     });
+  }) ?? [];
 }
 
 export async function getActiveFeedAds(university: string | null, userId: string): Promise<any[]> {
@@ -302,23 +308,37 @@ export async function getActiveFeedAds(university: string | null, userId: string
 export async function pauseCampaign(id: string): Promise<void> {
   const { error } = await supabase.from('campus_ads').update({ status: 'paused' }).eq('id', id);
   if (error) throw error;
+  try { Cache.invalidatePattern('ads:'); } catch (e) {}
 }
 
 export async function resumeCampaign(id: string): Promise<void> {
   const { error } = await supabase.from('campus_ads').update({ status: 'active' }).eq('id', id);
   if (error) throw error;
+  try { Cache.invalidatePattern('ads:'); } catch (e) {}
 }
 
 export async function deleteCampaign(id: string): Promise<void> {
   const { error } = await supabase.from('campus_ads').delete().eq('id', id);
   if (error) throw error;
+  try { Cache.invalidatePattern('ads:'); } catch (e) {}
 }
 
-export async function recordCampusAdImpression(adId: string): Promise<void> {
+export async function recordCampusAdImpression(adId: string, placement?: string): Promise<void> {
+  if (placement) {
+    const { error } = await supabase.rpc('record_campus_ad_delivery', { p_ad_id: adId, p_placement: placement });
+    // Compatibility for installations that have not yet applied migration 053.
+    if (!error) return;
+    if (error.code !== '42883') throw error;
+  }
   await supabase.rpc('record_campus_ad_impression', { p_ad_id: adId });
 }
 
-export async function recordCampusAdClick(adId: string): Promise<void> {
+export async function recordCampusAdClick(adId: string, placement?: string): Promise<void> {
+  if (placement) {
+    const { error } = await supabase.rpc('record_campus_ad_click_event', { p_ad_id: adId, p_placement: placement });
+    if (!error) return;
+    if (error.code !== '42883') throw error;
+  }
   await supabase.rpc('record_campus_ad_click', { p_ad_id: adId });
 }
 
@@ -377,4 +397,74 @@ export async function consumeAdCredit(
   });
   if (error) throw error;
   return Number(data ?? 0);
+}
+
+export async function likeAd(adId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc('like_ad', { p_ad_id: adId, p_user_id: userId });
+  if (error) throw error;
+}
+
+export async function unlikeAd(adId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc('unlike_ad', { p_ad_id: adId, p_user_id: userId });
+  if (error) throw error;
+}
+
+export async function getLikedAdIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('campus_ad_likes')
+    .select('ad_id')
+    .eq('user_id', userId);
+  if (error) throw error;
+  return data?.map((r: any) => r.ad_id) ?? [];
+}
+
+export const AD_COMMENTS_PAGE_SIZE = 20;
+
+export async function getAdComments(
+  adId: string,
+  currentUserId?: string,
+  page = 0,
+): Promise<{ items: any[]; hasMore: boolean; total: number }> {
+  const from = page * AD_COMMENTS_PAGE_SIZE;
+  const to = from + AD_COMMENTS_PAGE_SIZE;
+
+  const { data, count, error } = await supabase
+    .from('campus_ad_comments')
+    .select(`*, profiles!campus_ad_comments_user_id_fkey(*)`, { count: 'exact' })
+    .eq('ad_id', adId)
+    .order('created_at', { ascending: true })
+    .range(from, to);
+
+  if (error) throw error;
+
+  const hasMore = (data ?? []).length > AD_COMMENTS_PAGE_SIZE;
+  const items = (data ?? []).slice(0, AD_COMMENTS_PAGE_SIZE);
+  const total = count ?? 0;
+
+  return { items, hasMore, total };
+}
+
+export async function addAdComment(
+  adId: string,
+  userId: string,
+  content: string,
+): Promise<any> {
+  const { data, error } = await supabase
+    .from('campus_ad_comments')
+    .insert({ ad_id: adId, user_id: userId, content })
+    .select(`*, profiles!campus_ad_comments_user_id_fkey(*)`)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteAdComment(commentId: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('campus_ad_comments')
+    .delete()
+    .eq('id', commentId)
+    .eq('user_id', userId);
+
+  if (error) throw error;
 }

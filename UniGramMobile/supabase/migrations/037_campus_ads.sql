@@ -32,21 +32,23 @@ CREATE INDEX IF NOT EXISTS campus_ads_active_idx  ON campus_ads(status, universi
 
 ALTER TABLE campus_ads ENABLE ROW LEVEL SECURITY;
 
--- Owner can read, update, delete their own ads
+DROP POLICY IF EXISTS "campus_ads_owner_select" ON campus_ads;
 CREATE POLICY "campus_ads_owner_select" ON campus_ads
   FOR SELECT USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "campus_ads_owner_update" ON campus_ads;
 CREATE POLICY "campus_ads_owner_update" ON campus_ads
   FOR UPDATE USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "campus_ads_owner_delete" ON campus_ads;
 CREATE POLICY "campus_ads_owner_delete" ON campus_ads
   FOR DELETE USING (user_id = auth.uid());
 
--- Any authenticated user can insert (user_id enforced by check)
+DROP POLICY IF EXISTS "campus_ads_insert" ON campus_ads;
 CREATE POLICY "campus_ads_insert" ON campus_ads
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
--- Active, in-flight ads are readable by all authenticated users (feed injection)
+DROP POLICY IF EXISTS "campus_ads_active_readable" ON campus_ads;
 CREATE POLICY "campus_ads_active_readable" ON campus_ads
   FOR SELECT USING (
     status = 'active'

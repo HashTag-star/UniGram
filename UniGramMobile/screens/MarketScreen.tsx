@@ -1108,7 +1108,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
             onImpression={(adId) => {
               if (!adImpressionsRef.current.has(adId)) {
                 adImpressionsRef.current.add(adId);
-                recordCampusAdImpression(adId).catch(() => {});
+                recordCampusAdImpression(adId, 'market').catch(() => {});
               }
             }}
           />
@@ -1140,11 +1140,9 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     let adIdx = 0;
     browseItems.forEach((item, i) => {
       result.push(item);
-      // Inject ads based on frequency, but ALWAYS force the first ad to appear after the first item for testing
-      const isTestAdPos = (i === 0 && adIdx === 0);
       const isIntervalAdPos = (i === 3 || (i > 3 && (i - 3) % interval === 0));
 
-      if (isTestAdPos || isIntervalAdPos) {
+      if (isIntervalAdPos) {
         const ad = marketAds[adIdx % marketAds.length];
         adIdx++;
         result.push({ id: `__market_ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });

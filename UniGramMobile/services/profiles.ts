@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, getPublicMediaUrl } from '../lib/supabase';
 import { SocialSync } from './social_sync';
 import { Cache, TTL } from '../lib/cache';
 import * as ImagePicker from 'expo-image-picker';
@@ -86,16 +86,16 @@ export async function uploadAvatar(userId: string) {
     });
   if (uploadError) throw uploadError;
 
-  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-  await supabase.from('profiles').update({ avatar_url: data.publicUrl }).eq('id', userId);
-  return data.publicUrl;
+  const avatarUrl = getPublicMediaUrl('avatars', path);
+  await supabase.from('profiles').update({ avatar_url: avatarUrl }).eq('id', userId);
+  return avatarUrl;
 }
 
 export async function searchUsers(query: string) {
   const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 50);
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, username, full_name, avatar_url, is_verified, verification_type, university')
     .or(`username.ilike.%${safe}%,full_name.ilike.%${safe}%`)
     .limit(20);
   if (error) throw error;

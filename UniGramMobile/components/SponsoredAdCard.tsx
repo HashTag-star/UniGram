@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Linking, Dimensions, Alert, DeviceEventEmitter,
+  ScrollView, Linking, Dimensions, Alert, DeviceEventEmitter, Share
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { CachedImage } from './CachedImage';
 import { useTheme } from '../context/ThemeContext';
-import { recordCampusAdClick, buildWhatsAppCtaUrl } from '../services/campusAds';
+import { recordCampusAdClick, buildWhatsAppCtaUrl, likeAd, unlikeAd } from '../services/campusAds';
+import { CommentSheet } from './CommentSheet';
+import { VerifiedBadge } from './VerifiedBadge';
 
 const { width } = Dimensions.get('window');
 
@@ -15,6 +17,8 @@ interface SponsoredAdCardProps {
   ad: any;
   isActive?: boolean;
   onImpression?: (adId: string) => void;
+  isLiked?: boolean;
+  currentUserId: string;
 }
 
 // ── Video Sub-component ──────────────────────────────────────────────────────
@@ -61,11 +65,6 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
   const stableOnImpression = useStableCallback(onImpression);
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
-
-  // Fire impression once per unique ad rendered in this cell
-  useEffect(() => {
-    stableOnImpression(ad.id);
-  }, [ad.id]);
 
   // Self-managed active state for the video player — can be driven by 'feedActivePost'
   // events if not explicitly passed by parent (similar to FeedPost).

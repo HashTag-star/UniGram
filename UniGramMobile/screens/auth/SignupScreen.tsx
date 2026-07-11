@@ -521,7 +521,7 @@ export default function SignupScreen({
               <View style={styles.personalHint}>
                 <Ionicons name="information-circle-outline" size={13} color="#6366f1" />
                 <Text style={styles.personalHintText}>
-                  Personal email — switch to your .edu for campus verification
+                  Personal email works too. Use your school email later for verification.
                 </Text>
               </View>
             )}

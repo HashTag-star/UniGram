@@ -23,11 +23,13 @@ CREATE TABLE IF NOT EXISTS public.message_reads (
 ALTER TABLE public.message_reads ENABLE ROW LEVEL SECURITY;
 
 -- Policy for message_reads: users can insert their own reads
+DROP POLICY IF EXISTS "Users can insert their own message reads" ON public.message_reads;
 CREATE POLICY "Users can insert their own message reads"
 ON public.message_reads FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
 -- Policy for message_reads: users can view reads for messages in their conversations
+DROP POLICY IF EXISTS "Users can view reads for their conversations" ON public.message_reads;
 CREATE POLICY "Users can view reads for their conversations"
 ON public.message_reads FOR SELECT
 USING (

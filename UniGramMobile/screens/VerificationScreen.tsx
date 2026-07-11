@@ -11,7 +11,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { submitVerificationRequest } from '../services/verification';
-import { supabase } from '../lib/supabase';
+import { supabase, getPublicMediaUrl } from '../lib/supabase';
 import { randomId } from '../lib/uuid';
 import { usePopup } from '../context/PopupContext';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
@@ -76,7 +76,7 @@ const TIERS: Array<{
     type: 'influencer',
     title: 'Notable Account',
     subtitle: 'For campus creators',
-    color: '#1d4ed8',
+    color: '#f43f5e',
     icon: '⭐',
     requirements: ['1,000+ followers', 'Consistent posting', 'Campus presence'],
   },
@@ -139,7 +139,27 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
       });
 
       if (!res.canceled) {
-        setDocuments(prev => [...prev, ...res.assets]);
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB limit
+        const validAssets = res.assets.filter(asset => {
+          if (asset.size && asset.size > MAX_SIZE) {
+            return false;
+          }
+          return true;
+        });
+
+        if (validAssets.length < res.assets.length) {
+          showPopup({
+            title: 'File Too Large',
+            message: 'Some files were skipped because they exceed the 5MB size limit.',
+            icon: 'warning-outline',
+            iconColor: '#ef4444',
+            buttons: [{ text: 'OK', onPress: () => {} }]
+          });
+        }
+
+        if (validAssets.length > 0) {
+          setDocuments(prev => [...prev, ...validAssets]);
+        }
       }
     } catch (e) {
       showPopup({
@@ -162,8 +182,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
 
     if (error) throw error;
 
-    const { data } = supabase.storage.from('verifications').getPublicUrl(path);
-    return data.publicUrl;
+    return getPublicMediaUrl('verifications', path);
   };
 
   const isEmailValid = (email: string, type: VerificationType) => {

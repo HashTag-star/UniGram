@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { EditProfileModal } from './EditProfileModal';
 import { AdManagerScreen } from './AdManagerScreen';
 import { deleteUserAccount } from '../services/profiles';
-import { isProActive, isProPeriodActive, setProDisabled } from '../services/pro';
+import { isProActive, isProPeriodActive, setProDisabled, setProAutoRenew } from '../services/pro';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -520,6 +520,76 @@ export const SettingsScreen: React.FC<Props> = ({
     }
   };
 
+  const [proAutoRenewPending, setProAutoRenewPending] = useState(false);
+  const handleProAutoRenewToggle = async (val: boolean) => {
+    if (proAutoRenewPending) return;
+    const prevAutoRenew = profile?.pro_auto_renew !== false;
+    if (prevAutoRenew === val) return;
+    
+    onProfileUpdated({ ...profile, pro_auto_renew: val });
+    setProAutoRenewPending(true);
+    try {
+      await setProAutoRenew(val);
+      showPopup({
+        title: val ? 'Auto-billing Enabled' : 'Auto-billing Disabled',
+        message: val 
+          ? 'Your UniGram Pro subscription will auto-renew next month.' 
+          : 'Auto-billing turned off. Your features remain active until your period ends, and you will not be charged again.',
+        icon: val ? 'checkmark-circle-outline' : 'warning-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
+    } catch (e: any) {
+      onProfileUpdated({ ...profile, pro_auto_renew: prevAutoRenew });
+      showPopup({
+        title: 'Could not update billing',
+        message: e?.message ?? 'Please try again.',
+        icon: 'alert-circle-outline',
+        buttons: [{ text: 'OK', onPress: () => {} }],
+      });
+    } finally {
+      setProAutoRenewPending(false);
+    }
+  };
+
+  const handleProCancel = async () => {
+    if (proAutoRenewPending) return;
+    
+    showPopup({
+      title: 'Cancel Subscription?',
+      message: 'This will turn off auto-renew. Your Pro features and analytics will remain fully active until your current period ends, after which they will expire.',
+      icon: 'trash-outline',
+      buttons: [
+        { text: 'Keep Subscription', style: 'cancel', onPress: () => {} },
+        { 
+          text: 'Cancel Subscription', 
+          style: 'destructive', 
+          onPress: async () => {
+            setProAutoRenewPending(true);
+            try {
+              await setProAutoRenew(false);
+              onProfileUpdated({ ...profile, pro_auto_renew: false });
+              showPopup({
+                title: 'Subscription Cancelled',
+                message: 'Your subscription has been cancelled. No further charges will be made. Pro benefits remain active until your expiration date.',
+                icon: 'checkmark-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }],
+              });
+            } catch (e: any) {
+              showPopup({
+                title: 'Error cancelling',
+                message: e?.message ?? 'Please try again.',
+                icon: 'alert-circle-outline',
+                buttons: [{ text: 'OK', onPress: () => {} }],
+              });
+            } finally {
+              setProAutoRenewPending(false);
+            }
+          } 
+        },
+      ],
+    });
+  };
+
   const handleLogout = () => {
     showPopup({
       title: 'Log Out',
@@ -704,8 +774,33 @@ export const SettingsScreen: React.FC<Props> = ({
                     thumbColor="#fff"
                   />
                 }
-                noBorder
               />
+              <Row
+                icon="card-outline"
+                iconColor="#34d399"
+                label="Monthly Auto-Billing"
+                sublabel="Automatically renew subscription"
+                right={
+                  <Switch
+                    value={profile?.pro_auto_renew !== false}
+                    onValueChange={handleProAutoRenewToggle}
+                    disabled={proAutoRenewPending}
+                    trackColor={{ false: '#333', true: '#34d399' }}
+                    thumbColor="#fff"
+                  />
+                }
+                noBorder={profile?.pro_auto_renew === false}
+              />
+              {profile?.pro_auto_renew !== false && (
+                <Row
+                  icon="close-circle-outline"
+                  iconColor="#ef4444"
+                  label="Cancel Subscription"
+                  sublabel="Stop automatic renewals"
+                  onPress={handleProCancel}
+                  noBorder
+                />
+              )}
             </Section>
           )}
 

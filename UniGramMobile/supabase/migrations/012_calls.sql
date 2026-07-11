@@ -30,20 +30,25 @@ CREATE INDEX IF NOT EXISTS idx_ice_call_sender      ON call_ice_candidates(call_
 ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_ice_candidates ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "call participants can read" ON calls;
 CREATE POLICY "call participants can read" ON calls
   FOR SELECT USING (auth.uid() = caller_id OR auth.uid() = callee_id);
 
+DROP POLICY IF EXISTS "caller can insert" ON calls;
 CREATE POLICY "caller can insert" ON calls
   FOR INSERT WITH CHECK (auth.uid() = caller_id);
 
+DROP POLICY IF EXISTS "participants can update" ON calls;
 CREATE POLICY "participants can update" ON calls
   FOR UPDATE USING (auth.uid() = caller_id OR auth.uid() = callee_id);
 
+DROP POLICY IF EXISTS "ice participants can read" ON call_ice_candidates;
 CREATE POLICY "ice participants can read" ON call_ice_candidates
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM calls WHERE id = call_id AND (caller_id = auth.uid() OR callee_id = auth.uid()))
   );
 
+DROP POLICY IF EXISTS "ice participants can insert" ON call_ice_candidates;
 CREATE POLICY "ice participants can insert" ON call_ice_candidates
   FOR INSERT WITH CHECK (
     auth.uid() = sender_id AND

@@ -109,7 +109,7 @@ export const ReelAdCard: React.FC<{
   }, [isActive, ad.id, forced]);
 
   const handleCTA = async () => {
-    recordCampusAdClick(ad.id).catch(() => {});
+    recordCampusAdClick(ad.id, 'reels').catch(() => {});
     // Prefer the WhatsApp deep-link when the campaign opted into
     // click-to-WhatsApp; fall back to the generic link otherwise.
     const targetUrl = buildWhatsAppCtaUrl(ad) || ad.link;

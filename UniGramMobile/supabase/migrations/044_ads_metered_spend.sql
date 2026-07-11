@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS ad_credit_ledger_user_idx
 
 ALTER TABLE public.ad_credit_ledger ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "ad_credit_ledger_owner_select" ON public.ad_credit_ledger;
 CREATE POLICY "ad_credit_ledger_owner_select" ON public.ad_credit_ledger
   FOR SELECT USING (user_id = auth.uid());
 

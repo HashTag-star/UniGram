@@ -122,7 +122,7 @@ const StoryRingAvatar: React.FC<{
         justifyContent: 'center', alignItems: 'center'
       }}>
         {uri ? (
-          <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} />
+          <CachedImage uri={uri} style={{ width: size, height: size, borderRadius: size / 2 }} />
         ) : (
           <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="person" size={size * 0.6} color={colors.textMuted} />

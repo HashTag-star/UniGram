@@ -20,11 +20,13 @@ CREATE TABLE IF NOT EXISTS sponsored_posts (
 -- Only admins can manage ads; everyone can read active ones
 ALTER TABLE sponsored_posts ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "admins_all" ON sponsored_posts;
 CREATE POLICY "admins_all" ON sponsored_posts
   FOR ALL USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)
   );
 
+DROP POLICY IF EXISTS "active_ads_readable" ON sponsored_posts;
 CREATE POLICY "active_ads_readable" ON sponsored_posts
   FOR SELECT USING (
     is_active = true

@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { assertUuid, cleanUserText, requireText } from '../lib/contentSafety';
 
 export interface AdminReport {
   id: string;
@@ -37,6 +38,7 @@ export async function getReports() {
 }
 
 export async function updateReportStatus(reportId: string, status: 'resolved' | 'dismissed') {
+  assertUuid(reportId, 'Report ID');
   const { error } = await supabase
     .from('reports')
     .update({ status })
@@ -45,6 +47,7 @@ export async function updateReportStatus(reportId: string, status: 'resolved' | 
 }
 
 export async function banUser(userId: string) {
+  assertUuid(userId, 'User ID');
   const { error } = await supabase
     .from('profiles')
     .update({ is_banned: true })
@@ -52,6 +55,7 @@ export async function banUser(userId: string) {
   if (error) throw error;
 }
 export async function suspendUser(userId: string, suspended: boolean) {
+  assertUuid(userId, 'User ID');
   const { error } = await supabase
     .from('profiles')
     .update({ is_suspended: suspended })
@@ -70,13 +74,16 @@ export async function createReport(
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('You must be signed in to report content.');
+  assertUuid(targetId, 'Target ID');
+  const safeReason = requireText(cleanUserText(reason, 'reportReason'), 'Report reason');
+  const safeDetails = cleanUserText(details, 'reportDetails');
 
   const { error } = await supabase.from('reports').insert({
     reporter_id: user.id,
     target_id: targetId,
     target_type: targetType,
-    reason,
-    details,
+    reason: safeReason,
+    details: safeDetails,
     status: 'pending'
   });
 
@@ -86,7 +93,7 @@ export async function createReport(
   const { notifyAdmins } = require('./notifications');
   notifyAdmins({
     type: 'admin_report',
-    text: `reported ${targetType} content: "${reason}"`,
+    text: `reported ${targetType} content: "${safeReason}"`,
     actorId: user.id,
     postId: targetType === 'post' ? targetId : undefined,
   }).catch(() => {});
@@ -97,6 +104,7 @@ export async function createReport(
  * Default threshold is 5 reports.
  */
 export async function shouldHideContent(targetId: string) {
+  assertUuid(targetId, 'Target ID');
   const { count, error } = await supabase
     .from('reports')
     .select('*', { count: 'exact', head: true })
@@ -111,6 +119,7 @@ export async function shouldHideContent(targetId: string) {
  * Deletes the content associated with a report.
  */
 export async function deleteReportedContent(targetId: string, targetType: AdminReport['target_type']) {
+  assertUuid(targetId, 'Target ID');
   let table = '';
   switch (targetType) {
     case 'post': table = 'posts'; break;
@@ -128,6 +137,7 @@ export async function deleteReportedContent(targetId: string, targetType: AdminR
  * Finds the author ID of a reported piece of content.
  */
 export async function getAuthorIdForReport(targetId: string, targetType: AdminReport['target_type']): Promise<string | null> {
+  assertUuid(targetId, 'Target ID');
   if (targetType === 'member') return targetId;
 
   let table = '';

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS post_ai_context (
 ALTER TABLE post_ai_context ENABLE ROW LEVEL SECURITY;
 
 -- Anyone can read AI context (public feed feature)
+DROP POLICY IF EXISTS "public_read_ai_context" ON post_ai_context;
 CREATE POLICY "public_read_ai_context"
   ON post_ai_context FOR SELECT
   USING (true);

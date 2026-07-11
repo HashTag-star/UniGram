@@ -9,11 +9,13 @@ CREATE TABLE IF NOT EXISTS public.blocks (
 
 ALTER TABLE public.blocks ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can manage their own blocks" ON public.blocks;
 CREATE POLICY "Users can manage their own blocks"
     ON public.blocks
     FOR ALL
     USING (auth.uid() = blocker_id);
 
+DROP POLICY IF EXISTS "Anyone can see if they are blocked" ON public.blocks;
 CREATE POLICY "Anyone can see if they are blocked"
     ON public.blocks
     FOR SELECT

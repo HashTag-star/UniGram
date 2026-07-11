@@ -19,22 +19,26 @@ CREATE INDEX IF NOT EXISTS campus_events_university_idx
 ALTER TABLE public.campus_events ENABLE ROW LEVEL SECURITY;
 
 -- Authenticated users (mobile + admin) can read active events
+DROP POLICY IF EXISTS "campus_events: authenticated read" ON public.campus_events;
 CREATE POLICY "campus_events: authenticated read"
   ON public.campus_events FOR SELECT
   TO authenticated
   USING (is_active = true);
 
 -- Authenticated users (admin dashboard) can insert/update/delete
+DROP POLICY IF EXISTS "campus_events: authenticated insert" ON public.campus_events;
 CREATE POLICY "campus_events: authenticated insert"
   ON public.campus_events FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "campus_events: authenticated update" ON public.campus_events;
 CREATE POLICY "campus_events: authenticated update"
   ON public.campus_events FOR UPDATE
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "campus_events: authenticated delete" ON public.campus_events;
 CREATE POLICY "campus_events: authenticated delete"
   ON public.campus_events FOR DELETE
   TO authenticated

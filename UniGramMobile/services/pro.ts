@@ -91,6 +91,16 @@ export async function setProDisabled(disabled: boolean): Promise<void> {
   if (error) throw error;
 }
 
+export async function setProAutoRenew(enabled: boolean): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('profiles')
+    .update({ pro_auto_renew: enabled })
+    .eq('id', user.id);
+  if (error) throw error;
+}
+
 export async function initProPayment(): Promise<{ authorization_url: string; reference: string }> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user?.email) throw new Error('Account email required for payment');

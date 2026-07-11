@@ -14,7 +14,7 @@ const BADGE_COLORS: Record<VerificationType, string> = {
   student: '#6366f1',    // Indigo
   professor: '#eab308',  // Amber
   club: '#a855f7',       // Purple
-  influencer: '#1d4ed8', // Royal Blue (Notable)
+  influencer: '#f43f5e', // Rose (Notable)
   staff: '#22c55e',      // Green
   alumni: '#14b8a6',     // Teal
 };
