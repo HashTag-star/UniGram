@@ -356,6 +356,15 @@ const CreateCampaignSheet: React.FC<{
   const [placements, setPlacements] = useState<Placement[]>(['feed']);
   const [budget, setBudget]         = useState<number | null>(null);
   const [duration, setDuration]     = useState<number | null>(null);
+  // Advanced options
+  const [advancedOptions, setAdvancedOptions] = useState(false);
+  const [bidType, setBidType] = useState<'CPM' | 'CPC' | 'CPA'>('CPM');
+  const [bidAmount, setBidAmount] = useState<number | null>(null); // in GHS per unit
+  const [ageMin, setAgeMin] = useState<number | null>(null);
+  const [ageMax, setAgeMax] = useState<number | null>(null);
+  const [gender, setGender] = useState<'all' | 'male' | 'female' | 'non_binary'>('all');
+  const [interests, setInterests] = useState<string>(''); // comma-separated
+  const [deliveryType, setDeliveryType] = useState<'STANDARD' | 'ACCELERATED'>('STANDARD');
 
   const canGoNext = useMemo(() => {
     if (step === 0) return objective !== null && format !== null;
@@ -373,6 +382,15 @@ const CreateCampaignSheet: React.FC<{
     setName(''); setMediaUri(''); setHeadline(''); setBody(''); setCta('Learn More'); setLink(''); setWhatsappNumber('');
     setCards([{ id: uid(), imageUri: undefined, title: '', price: '', link: '' }]);
     setPlacements(['feed']); setBudget(null); setDuration(null);
+    // Advanced options reset
+    setAdvancedOptions(false);
+    setBidType('CPM');
+    setBidAmount(null);
+    setAgeMin(null);
+    setAgeMax(null);
+    setGender('all');
+    setInterests('');
+    setDeliveryType('STANDARD');
   };
 
   const handleClose = () => { reset(); onClose(); };
@@ -420,7 +438,25 @@ const CreateCampaignSheet: React.FC<{
         budget,
         priority: plan.priority,
         reach_multiplier: plan.reach_multiplier,
-        whatsapp_number: whatsappNumber.trim() || null,
+        // Bidding and targeting fields (migration 054)
+        bid_amount: bidAmount ? bidAmount * 100 : null, // convert GHS to pesewas
+        bid_type: bidType,
+        bid_strategy: 'LOWEST_COST',
+        estimated_action_rate: 0.01, // default 1% CTR/CVR
+        age_min: ageMin,
+        age_max: ageMax,
+        gender: gender,
+        detailed_targeting: interests ? { interests: interests.split(',').map(i => i.trim()) } : {},
+        custom_audience_ids: [],
+        lookalike_audience_id: null,
+        excluded_custom_audience_ids: [],
+        // Relevance and quality score
+        relevance_score: 5.0,
+        // Delivery and pacing controls
+        delivery_type: deliveryType,
+        ad_schedule: {}, // placeholder for dayparting
+        // Existing fields
+        whatsapp_number: whatsappNumber.trim() ?? null,
         university: profile?.university ?? null,
         start_date: null,
         end_date: null,
@@ -793,6 +829,161 @@ const CreateCampaignSheet: React.FC<{
                       : `Total budget: GHS ${budget} · Select a duration to see daily spend`
                     }
                   </Text>
+                </View>
+              )}
+
+              {/* Advanced Options Toggle */}
+              <TouchableOpacity style={{ paddingVertical: 12, paddingHorizontal: 16 }} onPress={() => setAdvancedOptions(!advancedOptions)}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>{advancedOptions ? 'Hide advanced options' : 'Show advanced options'}</Text>
+                  <Ionicons name={advancedOptions ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textMuted} />
+                </View>
+              </TouchableOpacity>
+
+              {advancedOptions && (
+                <View style={{ backgroundColor: colors.card, borderRadius: 12, padding: 16, marginVertical: 12 }}>
+                  {/* Bid type and amount */}
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={styles.fieldLabel}>BET TYPE & AMOUNT</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                      {[ 'CPM', 'CPC', 'CPA' ].map((type, index) => (
+                        <TouchableOpacity
+                          key={type}
+                          style={[
+                            styles.pill,
+                            {
+                              borderColor: bidType === type ? '#6366f1' : colors.border,
+                              backgroundColor: bidType === type ? '#6366f110' : colors.card,
+                            },
+                            { flexShrink: 1 }
+                          ]}
+                          onPress={() => setBidType(type)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ color: bidType === type ? '#fff' : colors.text, fontWeight: bidType === type ? '600' : '500' }}>
+                            {type === 'CPM' ? 'CPM (per 1000 impressions)' : type === 'CPC' ? 'CPC (per click)' : 'CPA (per action)'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder="Bid amount (GHS per unit)"
+                      placeholderTextColor={colors.textMuted}
+                      value={bidAmount?.toString() ?? ''}
+                      onChangeText={text => {
+                        const num = parseFloat(text);
+                        setBidAmount(isNaN(num) ? null : num);
+                      }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+
+                  {/* Targeting */}
+                  <View style={{ marginVertical: 16 }}>
+                    <Text style={styles.fieldLabel}>TARGETING</Text>
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={{ marginBottom: 4, fontWeight: '500' }}>Age range</Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TextInput
+                          style={{ flex: 1, ...styles.textInput }}
+                          placeholder="Min age"
+                          placeholderTextColor={colors.textMuted}
+                          value={ageMin?.toString() ?? ''}
+                          onChangeText={text => {
+                            const num = parseInt(text, 10);
+                            setAgeMin(num === null || isNaN(num) ? null : num);
+                          }}
+                          keyboardType="numeric"
+                        />
+                        <TextInput
+                          style={{ flex: 1, ...styles.textInput }}
+                          placeholder="Max age"
+                          placeholderTextColor={colors.textMuted}
+                          value={ageMax?.toString() ?? ''}
+                          onChangeText={text => {
+                            const num = parseInt(text, 10);
+                            setAgeMax(num === null || isNaN(num) ? null : num);
+                          }}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ marginBottom: 4, fontWeight: '500' }}>Gender</Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          {[
+                            { value: 'all', label: 'All' },
+                            { value: 'male', label: 'Male' },
+                            { value: 'female', label: 'Female' },
+                            { value: 'non_binary', label: 'Non-binary' },
+                          ].map((opt) => (
+                            <TouchableOpacity
+                              key={opt.value}
+                              style={[
+                                styles.pill,
+                                {
+                                  borderColor: gender === opt.value ? '#6366f1' : colors.border,
+                                  backgroundColor: gender === opt.value ? '#6366f110' : colors.card,
+                                },
+                                { paddingHorizontal: 12, paddingVertical: 6 }
+                              ]}
+                              onPress={() => setGender(opt.value)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ color: gender === opt.value ? '#fff' : colors.text }}>{opt.label}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ marginBottom: 4, fontWeight: '500' }}>Interests (comma-separated)</Text>
+                        <TextInput
+                          style={styles.textInput}
+                          placeholder="e.g. football, music, fashion"
+                          placeholderTextColor={colors.textMuted}
+                          value={interests}
+                          onChangeText={setInterests}
+                        />
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Delivery type and schedule */}
+                  <View style={{ marginVertical: 16 }}>
+                    <Text style={styles.fieldLabel}>DELIVERY</Text>
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={{ marginBottom: 4, fontWeight: '500' }}>Delivery type</Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {[
+                          { value: 'STANDARD', label: 'Standard (even pacing)' },
+                          { value: 'ACCELERATED', label: 'Accelerated (spend budget quickly)' },
+                        ].map((opt) => (
+                          <TouchableOpacity
+                            key={opt.value}
+                            style={[
+                              styles.pill,
+                              {
+                                borderColor: deliveryType === opt.value ? '#6366f1' : colors.border,
+                                backgroundColor: duration === opt.value ? '#6366f110' : colors.card,
+                              },
+                              { paddingHorizontal: 12, paddingVertical: 6 }
+                            ]}
+                            onPress={() => setDeliveryType(opt.value)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ color: deliveryType === opt.value ? '#fff' : colors.text }}>{opt.label}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      {/* Schedule note */}
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ marginBottom: 4, fontWeight: '500' }}>Schedule (dayparting)</Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                          Advanced scheduling (specific days/times) coming soon.
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
                 </View>
               )}
 

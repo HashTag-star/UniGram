@@ -110,6 +110,13 @@
             }
           }
         }
+      ],
+      [
+        "@sentry/react-native",
+        {
+          "organization": "heis-hashtag",
+          "project": "unigram-mobile-v2"
+        }
       ]
     ],
     "extra": {

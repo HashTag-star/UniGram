@@ -480,7 +480,7 @@ function AppShell() {
     const handleUrl = (url: string) => {
       if (!url) return;
       // Supabase sends recovery links like: scheme://auth-callback#access_token=...&type=recovery
-      if (url.includes('type=recovery') || url.includes('recovery')) {
+      if (url.includes('type=recovery')) {
         setShowResetPassword(true);
       }
     };

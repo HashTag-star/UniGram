@@ -1,8 +1,8 @@
-const { getDefaultConfig } = require("expo/metro-config");
+const { getSentryExpoConfig } = require("@sentry/react-native/metro");
 const { withNativeWind } = require("nativewind/metro");
 const path = require("path");
 
-const config = getDefaultConfig(__dirname);
+const config = getSentryExpoConfig(__dirname);
 
 // Reanimated 4.x points its "react-native" field to TypeScript source (src/index.ts),
 // which Metro can't resolve through third-party packages like react-native-css-interop.

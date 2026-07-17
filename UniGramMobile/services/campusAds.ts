@@ -18,7 +18,7 @@ export interface CampusAd {
   link: string | null;
   media_url: string | null;
   cards: { title: string; price: string; link: string; image_url?: string }[] | null;
-  status: 'active' | 'paused' | 'ended' | 'pending';
+  status: 'active' | 'paused' | 'ended' | 'pending' | 'rejected';
   budget: number;
   spent: number;
   impressions: number;
@@ -37,6 +37,26 @@ export interface CampusAd {
   cost_per_impression_pesewas?: number;
   cost_per_click_pesewas?: number;
   whatsapp_number?: string | null;
+  // Bidding and targeting (migration 054)
+  bid_amount?: number;          // bid in pesewas (or micros if changed)
+  bid_type?: 'CPM' | 'CPC' | 'CPA';
+  bid_strategy?: 'LOWEST_COST' | 'COST_CAP' | 'BID_CAP' | 'TARGET_COST';
+  estimated_action_rate?: number; // estimated CTR for CPC, CVR for CPA, or base rate for CPM
+  age_min?: number;
+  age_max?: number;
+  gender?: 'all' | 'male' | 'female' | 'non_binary';
+  detailed_targeting?: any;     // JSONB object for interests, behaviors, etc.
+  custom_audience_ids?: string[];
+  lookalike_audience_id?: string | null;
+  excluded_custom_audience_ids?: string[];
+  // Relevance and quality score
+  relevance_score?: number;     // 1-10, updated via feedback
+  // Delivery and pacing controls
+  delivery_type?: 'STANDARD' | 'ACCELERATED';
+  ad_schedule?: any;            // JSONB schedule for dayparting
+  // Engagement fields (from later migrations)
+  likes_count?: number;
+  comments_count?: number;
 }
 
 /** Map a Paystack budget tier to a plan-priority bucket. Higher-paying ads
@@ -94,6 +114,28 @@ export async function createCampaignDraft(
     start_date: ad.start_date ?? now.toISOString(),
     end_date:   ad.end_date   ?? defaultEnd.toISOString(),
   };
+
+  // Derive cost per impression and click from bid fields if bid_amount is provided
+  if (ad.bid_amount !== undefined && ad.bid_amount !== null && ad.bid_amount > 0) {
+    if (ad.bid_type === 'CPM') {
+      payload.cost_per_impression_pesewas = ad.bid_amount;
+      // For CPM, we typically don't charge per click; set to 0 to avoid double charging
+      payload.cost_per_click_pesewas = 0;
+    } else if (ad.bid_type === 'CPC') {
+      payload.cost_per_click_pesewas = ad.bid_amount;
+      // For CPC, we typically don't charge per impression; set to 0
+      payload.cost_per_impression_pesewas = 0;
+    } else if (ad.bid_type === 'CPA') {
+      // For CPA, we charge per conversion, not per impression or click
+      payload.cost_per_impression_pesewas = 0;
+      payload.cost_per_click_pesewas = 0;
+    }
+    // Note: If the ad already had explicit cost_per_* fields, they are overridden by bid-derived values.
+    // This ensures the charging logic uses the bid-based costs.
+  }
+  // If bid_amount is not provided or zero, we keep the existing cost_per_* fields (they may be undefined,
+  // but the database has default values from migrations).
+
   const { data, error } = await supabase
     .from('campus_ads')
     .insert(payload)
@@ -210,21 +252,188 @@ export async function getActiveAdsForPlacement(
   // Previews and eligibility are viewer-specific; do not share their cache.
   const cacheKey = `ads:placement:${placement}:uni:${university ?? 'none'}:viewer:${userId}`;
   return await Cache.getOrFetch<any[]>(cacheKey, TTL.explore, async () => {
-  // NOTE: campus_ads.user_id references auth.users(id), NOT public.profiles(id),
-  // so the PostgREST relationship embed `profiles:user_id(...)` can't be inferred
-  // and the join silently errors out. We fetch the ads and the advertiser
-  // profiles in two steps and stitch them together client-side.
-  const now = new Date().toISOString();
-  // Fetch only active, in-window campaigns and prefer higher-priority / higher-budget
-  const [{ data: activeAds, error: activeErr }, { data: previewAds }] = await Promise.all([
-    supabase
-      .from('campus_ads')
-      .select('*')
-      .eq('status', 'active')
-      .lte('start_date', now)
-      .or('end_date.is.null,end_date.gt.' + now)
-      .order('priority', { ascending: false })
-      .order('budget', { ascending: false })
+    // NOTE: campus_ads.user_id references auth.users(id), NOT public.profiles(id),
+    // so the PostgREST relationship embed `profiles:user_id(...)` can't be inferred
+    // and the join silently errors out. We fetch the ads and the advertiser
+    // profiles in two steps and stitch them together client-side.
+    const now = new Date();
+    const nowISO = now.toISOString();
+    // Fetch only active, in-window campaigns and prefer higher-priority / higher-budget
+    // Increase limit to get more candidates for auction
+    const [{ data: activeAds, error: activeErr }, { data: previewAds }] = await Promise.all([
+      supabase
+        .from('campus_ads')
+        .select('*')
+        .eq('status', 'active')
+        .lte('start_date', nowISO)
+        .or('end_date.is.null,end_date.gt.' + nowISO)
+        .order('priority', { ascending: false })
+        .order('budget', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(100),
+      // Allow the campaign owner to see preview_live campaigns (preview mode)
+      supabase
+        .from('campus_ads')
+        .select('*')
+        .eq('preview_live', true)
+        .eq('user_id', userId)
+        .limit(10),
+    ]);
+
+    if (activeErr) {
+      console.warn('[campusAds] getActiveAdsForPlacement select failed:', activeErr.message);
+      return [];
+    }
+    const ads = (activeAds ?? []) as CampusAd[];
+    const previews = (previewAds ?? []) as CampusAd[];
+    if (ads.length === 0 && previews.length === 0) return [];
+
+    // Owners can inspect explicit previews, but paid delivery never targets them.
+    const allAds = [...previews, ...ads.filter(a => a.user_id !== userId)];
+    const ownerIds = Array.from(new Set(allAds.map(a => a.user_id).filter(Boolean)));
+    let profileMap = new Map<string, any>();
+    if (ownerIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, username, full_name, avatar_url, age, gender')
+        .in('id', ownerIds);
+      if (profs) profileMap = new Map(profs.map((p: any) => [p.id, p]));
+    }
+
+    // Merge previews first (they are intentionally shown to the owner),
+    // then active ads. Deduplicate to avoid the owner seeing their own ad twice
+    // in both preview and active states.
+    const combined: any[] = [];
+    const seenIds = new Set<string>();
+
+    for (const p of previews) {
+      if (!seenIds.has(p.id)) {
+        combined.push({ ...p, _isPreview: true, profiles: profileMap.get(p.user_id) });
+        seenIds.add(p.id);
+      }
+    }
+    for (const a of ads) {
+      if (!seenIds.has(a.id)) {
+        combined.push({ ...a, _isPreview: false, profiles: profileMap.get(a.user_id) });
+        seenIds.add(a.id);
+      }
+    }
+
+    // Filter by targeting and compute auction score
+    const scoredAds = combined
+      .filter((ad): ad is any => {
+        if (!ad) return false;
+        // Placement filtering: if placements configured, ad must include this placement
+        if (placement && Array.isArray(ad.placements) && ad.placements.length > 0
+            && !ad.placements.includes(placement)) return false;
+        // University targeting: skip ads targeted to other campuses
+        if (ad.university && ad.university !== university) return false;
+        // TODO: Implement additional targeting (age, gender, etc.) using profileMap
+        // For now, we skip advanced targeting to keep the MVP simple.
+        return true;
+      })
+      .map(ad => {
+        const score = computeAuctionScore(ad, profileMap.get(ad.user_id ?? ''), now, placement);
+        return { ad, score };
+      })
+      .filter(item => item.score >= 0) // filter out any invalid scores (though we don't produce negative)
+      .sort((a, b) => b.score - a.score) // descending by score
+      .map(item => item.ad);
+
+    return scoredAds;
+  });
+}
+
+// Helper function to compute auction score for an ad
+function computeAuctionScore(ad: CampusAd, userProfile: any | null, now: number, placement: string): number {
+  // If ad is not active, return -1 (should not happen as we filter active ads earlier)
+  if (ad.status !== 'active') return -1;
+
+  // Fetch targeting fields from ad (with defaults)
+  const bidAmount = ad.bid_amount ?? 0;
+  const bidType = ad.bid_type ?? 'CPM';
+  const estimatedActionRate = ad.estimated_action_rate ?? 0.01; // default 1%
+  const relevanceScore = ad.relevance_score ?? 5.0; // default 5 (neutral)
+
+  // Compute base bid per impression in pesewas
+  let bidPerImpression = 0;
+  if (bidType === 'CPM') {
+    bidPerImpression = bidAmount / 1000.0; // pesewas per impression
+  } else if (bidType === 'CPC') {
+    bidPerImpression = bidAmount * estimatedActionRate; // pesewas per impression (expected clicks per impression * bid per click)
+  } else if (bidType === 'CPA') {
+    bidPerImpression = bidAmount * estimatedActionRate; // pesewas per impression (expected conversions per impression * bid per conversion)
+  } else {
+    // Fallback to CPM interpretation
+    bidPerImpression = bidAmount / 1000.0;
+  }
+
+  // Apply relevance score as a quality multiplier (1.0 = average)
+  const relevanceFactor = Math.max(0.1, Math.min(2.0, relevanceScore / 5.0)); // clamp to avoid extreme values
+  let score = bidPerImpression * relevanceFactor;
+
+  // Apply pacing multiplier based on delivery type and schedule
+  const pacingMultiplier = computePacingMultiplier(ad, now);
+  score *= pacingMultiplier;
+
+  // Apply schedule filter: if ad has a schedule, check if now is within allowed time
+  if (!isWithinSchedule(ad, now)) {
+    return -1; // outside schedule, treat as ineligible
+  }
+
+  // Ensure score is non-negative
+  return Math.max(0, score);
+}
+
+// Helper to compute pacing multiplier (0.5 to 2.0)
+function computePacingMultiplier(ad: CampusAd, now: number): number {
+  // If no start/end date, assume even pacing
+  if (!ad.start_date || !ad.end_date) return 1.0;
+  const start = new Date(ad.start_date).getTime();
+  const end = new Date(ad.end_date).getTime();
+  if (isNaN(start) || isNaN(end)) return 1.0;
+  const totalDuration = end - start;
+  if (totalDuration <= 0) return 1.0;
+  const elapsed = now - start;
+  // Clamp elapsed to [0, totalDuration]
+  const elapsedClamped = Math.max(0, Math.min(elapsed, totalDuration));
+  const expectedSpendRatio = elapsedClamped / totalDuration; // 0 to 1
+  const budgetPesewas = (ad.budget ?? 0) * 100; // convert GHS to pesewas
+  const spentPesewas = ad.spent_pesewas ?? (ad.spent ?? 0) * 100;
+  const expectedSpendByNow = expectedSpendRatio * budgetPesewas;
+  if (expectedSpendByNow === 0) return 1.0; // avoid division by zero
+  // Simple proportional controller: if spent < expected, increase pace (>1); if spent > expected, decrease pace (<1)
+  // We use a formula that yields 1.0 when spent == expected, and scales linearly.
+  // To avoid extreme values, we clamp between 0.5 and 2.0.
+  let pace = expectedSpendByNow / Math.max(spentPesewas, 0.1); // avoid division by zero
+  pace = Math.max(0.5, Math.min(2.0, pace));
+  return pace;
+}
+
+// Helper to check if current time falls within ad's schedule
+function isWithinSchedule(ad: CampusAd, now: number): boolean {
+  const schedule = ad.ad_schedule;
+  if (!schedule || typeof schedule !== 'object' || Object.keys(schedule).length === 0) {
+    return true; // no schedule restriction
+  }
+  const date = new Date(now);
+  const dayIndex = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const dayMap = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const dayKey = dayMap[dayIndex];
+  const daySlots = schedule[dayKey];
+  if (!Array.isArray(daySlots) || daySlots.length === 0) {
+    return false; // no slots for this day
+  }
+  const time = date.toTimeString().substr(0, 5); // "HH:MM"
+  for (const slot of daySlots) {
+    if (typeof slot === 'object' && slot.start && slot.end) {
+      if (time >= slot.start && time <= slot.end) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
       .order('created_at', { ascending: false })
       .limit(30),
     // Allow the campaign owner to see preview_live campaigns (preview mode)

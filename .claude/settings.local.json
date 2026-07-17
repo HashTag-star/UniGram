@@ -16,7 +16,17 @@
       "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram checkout -- .claude/settings.local.json)",
       "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram stash pop)",
       "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram log --oneline -4)",
-      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram status --short)"
+      "Bash(git -C C:/Users/iamhashtag/Desktop/UniGram status --short)",
+      "Bash(cat C:/Users/IAMHAS~1/AppData/Local/Temp/claude/C--Users-iamhashtag-Desktop-UniGram\\\\564dd5bc-e675-42cc-9ec9-d59d5f57a511\\\\tasks\\\\b1i7bfc3f.output)",
+      "Bash(git checkout *)",
+      "Bash(supabase --version)",
+      "Bash(supabase login *)",
+      "Bash(npm install *)",
+      "Bash(sed -i '/-- In a more advanced model, we might have separate fields for click-through and view-through windows, but we\\\\'ll keep it simple for now./d' supadata:migrations/056_ads_conversions.sql)",
+      "Bash(grep -n '^[[:space:]]*--$' supabase/migrations/057_ads_daily_stats.sql)",
+      "Bash(grep -n '^[[:space:]]*--$' 057_ads_daily_stats.sql)",
+      "Bash(V)",
+      "Bash(sed -n '4,13p' supabase/migrations/056_ads_conversions.sql > /tmp/create_table.sql)"
     ]
   }
 }
