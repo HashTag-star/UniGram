@@ -23,7 +23,9 @@ export class RateLimiter {
     if (elapsed < this.refillIntervalMs) return;
     const steps = Math.floor(elapsed / this.refillIntervalMs);
     this.tokens = Math.min(this.capacity, this.tokens + steps * this.refillAmount);
-    this.lastRefill = now;
+    // Keep the leftover fraction of an interval instead of discarding it,
+    // otherwise the effective refill rate is lower than configured.
+    this.lastRefill += steps * this.refillIntervalMs;
   }
 
   /**
@@ -51,4 +53,7 @@ export class RateLimiter {
 }
 
 // Export a sensible default global limiter
-export const GlobalRateLimiter = new RateLimiter(12, 1, 1000);
+// Burst of 40 (a screen load fires 10-25 requests at once), sustained 20 req/s.
+// The previous 12 / 1-per-second bucket starved Feed and Profile loads and made
+// them fail with bogus timeouts.
+export const GlobalRateLimiter = new RateLimiter(40, 10, 500);

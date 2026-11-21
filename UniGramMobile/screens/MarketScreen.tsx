@@ -137,7 +137,7 @@ const ConditionBadge: React.FC<{ condition: string; style?: object }> = ({ condi
     <View style={[{
       backgroundColor: color + '28',
       borderColor: color + '55',
-      borderWidth: 1,
+      borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 7,
       paddingHorizontal: 6,
       paddingVertical: 2,
@@ -185,7 +185,7 @@ const ItemCard = memo<CardProps>(({
           width: CARD_W,
           backgroundColor: colors.bg2,
           borderColor: activeTier ? activeTier.color + '50' : colors.border,
-          borderWidth: activeTier ? 1.5 : 1,
+          borderWidth: activeTier ? 1.5 : StyleSheet.hairlineWidth,
         },
       ]}
       onPress={() => onPress(item)}
@@ -242,10 +242,10 @@ const ItemCard = memo<CardProps>(({
 
       {/* Info */}
       <View style={card.info}>
-        <Text style={[card.title, { color: colors.text }]} numberOfLines={2}>
+        <Text style={[card.price, { color: colors.text }]}>{formatPrice(item.price)}</Text>
+        <Text style={[card.title, { color: colors.textSub }]} numberOfLines={2}>
           {item.title}
         </Text>
-        <Text style={[card.price, { color: colors.text }]}>{formatPrice(item.price)}</Text>
 
         <View style={card.sellerRow}>
           {seller?.avatar_url
@@ -1124,7 +1124,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
           borderRadius: 16, 
           overflow: 'hidden', 
           backgroundColor: colors.bg2, 
-          borderWidth: 1, 
+          borderWidth: StyleSheet.hairlineWidth, 
           borderColor: colors.border,
           marginBottom: 2 
         }}>
@@ -1427,13 +1427,13 @@ const scr = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
+  headerTitle: { fontSize: 26, fontWeight: '800', letterSpacing: -0.8 },
   headerSub: { fontSize: 12, marginTop: 1 },
 
   sellBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: '#4f46e5',
-    borderRadius: 22, paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: '#6366f1',
+    borderRadius: 22, paddingHorizontal: 16, paddingVertical: 9,
   },
   sellBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
@@ -1446,9 +1446,9 @@ const scr = StyleSheet.create({
   tabBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 20, borderWidth: 1,
+    borderRadius: 20, borderWidth: StyleSheet.hairlineWidth,
   },
-  tabLabel: { fontSize: 12 },
+  tabLabel: { fontSize: 12.5 },
 
   catScrollWrap: {
     height: 48,
@@ -1468,11 +1468,11 @@ const scr = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 20,
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 6,
-    height: 32,
+    height: 34,
   },
   catChipEmoji: { fontSize: 13 },
   catChipLabel: { fontSize: 13 },
@@ -1480,8 +1480,8 @@ const scr = StyleSheet.create({
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
     marginHorizontal: H_PAD, marginBottom: 10,
-    borderRadius: 13, borderWidth: 1,
-    paddingHorizontal: 12, paddingVertical: 9,
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 13, paddingVertical: 10,
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 14 },
@@ -1496,9 +1496,9 @@ const scr = StyleSheet.create({
 
 // Item card
 const card = StyleSheet.create({
-  wrap: { borderRadius: 16, overflow: 'hidden' },
+  wrap: { borderRadius: 20, overflow: 'hidden' },
   imgWrap: { position: 'relative' },
-  img: { width: '100%', aspectRatio: 1 },
+  img: { width: '100%', aspectRatio: 0.88 },
   imgPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   soldOverlay: {
     ...StyleSheet.absoluteFill,
@@ -1508,7 +1508,8 @@ const card = StyleSheet.create({
   soldText: { color: '#ef4444', fontWeight: '900', fontSize: 15, letterSpacing: 3 },
   bookmarkBtn: {
     position: 'absolute', top: 8, right: 8,
-    borderRadius: 14, padding: 5,
+    width: 30, height: 30, borderRadius: 15,
+    alignItems: 'center', justifyContent: 'center',
   },
   boostBadge: {
     position: 'absolute', top: 8, left: 8,
@@ -1516,18 +1517,18 @@ const card = StyleSheet.create({
     borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3,
   },
   boostText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  info: { padding: 10 },
-  title: { fontSize: 12, fontWeight: '600', marginBottom: 4, lineHeight: 16 },
-  price: { fontSize: 15, fontWeight: '800', marginBottom: 6 },
+  info: { padding: 11 },
+  title: { fontSize: 13, fontWeight: '500', marginBottom: 8, lineHeight: 17.5 },
+  price: { fontSize: 17, fontWeight: '800', letterSpacing: -0.4, marginBottom: 3 },
   sellerRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   avatar: { width: 17, height: 17, borderRadius: 9 },
-  sellerName: { fontSize: 10, fontWeight: '600', flex: 1 },
+  sellerName: { fontSize: 11, fontWeight: '600', flex: 1 },
   dot: { fontSize: 10 },
-  age: { fontSize: 9 },
+  age: { fontSize: 10 },
   ownerActions: { flexDirection: 'row', gap: 5, marginTop: 8, flexWrap: 'wrap' },
   ownerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
-    borderRadius: 7, borderWidth: 1,
+    borderRadius: 7, borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 7, paddingVertical: 4,
   },
   ownerBtnText: { fontSize: 10, fontWeight: '600' },
@@ -1564,7 +1565,7 @@ const dtl = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     gap: 8, marginBottom: 14, flexWrap: 'wrap',
   },
-  chip: { borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
+  chip: { borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4, borderWidth: StyleSheet.hairlineWidth },
   chipText: { fontSize: 12, textTransform: 'capitalize' },
   metaSmall: { fontSize: 12 },
   divider: { height: StyleSheet.hairlineWidth, marginBottom: 16 },
@@ -1576,7 +1577,7 @@ const dtl = StyleSheet.create({
   description: { fontSize: 14, lineHeight: 22 },
   sellerCard: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: 14, padding: 12, borderWidth: 1,
+    borderRadius: 14, padding: 12, borderWidth: StyleSheet.hairlineWidth,
   },
   sellerAvatar: { width: 46, height: 46, borderRadius: 23 },
   sellerAvatarFb: { alignItems: 'center', justifyContent: 'center' },
@@ -1607,7 +1608,7 @@ const sell = StyleSheet.create({
   imgPicker: {
     width: '100%', height: 180,
     borderRadius: 16, overflow: 'hidden',
-    borderWidth: 1, borderStyle: 'dashed',
+    borderWidth: StyleSheet.hairlineWidth, borderStyle: 'dashed',
     alignItems: 'center', justifyContent: 'center',
   },
   imgPreview: { width: '100%', height: '100%', position: 'absolute' },
@@ -1622,25 +1623,25 @@ const sell = StyleSheet.create({
 
   fieldLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 },
   input: {
-    borderRadius: 13, borderWidth: 1,
+    borderRadius: 13, borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14, paddingVertical: 13, fontSize: 15,
   },
   textArea: { minHeight: 90, textAlignVertical: 'top' },
 
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    borderWidth: 1, borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 20,
     paddingHorizontal: 12, paddingVertical: 6,
   },
   chipEmoji: { fontSize: 13 },
   chipLabel: { fontSize: 13 },
 
-  condChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 11, borderWidth: 1 },
+  condChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
   condChipText: { fontSize: 13, fontWeight: '600', textTransform: 'capitalize' },
 
   bannedCard: {
     borderRadius: 20, padding: 32,
-    alignItems: 'center', borderWidth: 1,
+    alignItems: 'center', borderWidth: StyleSheet.hairlineWidth,
     marginTop: 40,
   },
   bannedTitle: { fontSize: 20, fontWeight: '700', marginTop: 16 },

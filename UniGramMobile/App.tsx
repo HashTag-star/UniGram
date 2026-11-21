@@ -9,7 +9,7 @@ import {
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons, AntDesign, MaterialIcons, FontAwesome } from '@expo/vector-icons';
+import { Ionicons, AntDesign, MaterialIcons, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Font from 'expo-font';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -45,6 +45,12 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { PopupProvider } from './context/PopupContext';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { PaywallProvider } from './context/PaywallContext';
+import * as SplashScreen from 'expo-splash-screen';
+import { AnimatedSplash } from './components/AnimatedSplash';
+
+// Keep the native splash until <AnimatedSplash/> has rendered its first frame, so
+// there is never a white/blank flash between the two.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 import { createStory } from './services/stories';
 import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
@@ -102,104 +108,6 @@ const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> 
   { id: 'profile',  icon: 'person-outline',         activeIcon: 'person',          label: 'Profile'  },
 ];
 
-const LoadingScreen: React.FC = () => {
-  const logoScale = useRef(new Animated.Value(0)).current;
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const ring1Scale = useRef(new Animated.Value(0.4)).current;
-  const ring1Opacity = useRef(new Animated.Value(0)).current;
-  const ring2Scale = useRef(new Animated.Value(0.4)).current;
-  const ring2Opacity = useRef(new Animated.Value(0)).current;
-  const ring3Scale = useRef(new Animated.Value(0.4)).current;
-  const ring3Opacity = useRef(new Animated.Value(0)).current;
-  const textSlide = useRef(new Animated.Value(20)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const indicatorOpacity = useRef(new Animated.Value(0)).current;
-  const bgOrbAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const seq = Animated.sequence([
-      // Phase 1 — logo pops in (300ms)
-      Animated.parallel([
-        Animated.spring(logoScale, { toValue: 1, tension: 100, friction: 10, useNativeDriver: true }),
-        Animated.timing(logoOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.timing(bgOrbAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-      ]),
-      // Phase 2 — rings expand in quick succession (300ms)
-      Animated.stagger(50, [
-        Animated.parallel([
-          Animated.spring(ring1Scale, { toValue: 1, tension: 90, friction: 12, useNativeDriver: true }),
-          Animated.timing(ring1Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-        ]),
-        Animated.parallel([
-          Animated.spring(ring2Scale, { toValue: 1, tension: 85, friction: 12, useNativeDriver: true }),
-          Animated.timing(ring2Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-        ]),
-        Animated.parallel([
-          Animated.spring(ring3Scale, { toValue: 1, tension: 80, friction: 12, useNativeDriver: true }),
-          Animated.timing(ring3Opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-        ]),
-      ]),
-      // Phase 3 — text slides up (200ms)
-      Animated.parallel([
-        Animated.spring(textSlide, { toValue: 0, tension: 130, friction: 14, useNativeDriver: true }),
-        Animated.timing(textOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]),
-      Animated.timing(indicatorOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
-    ]);
-
-    seq.start();
-
-    const ring3LoopRef = Animated.loop(
-      Animated.sequence([
-        Animated.timing(ring3Scale, { toValue: 1.15, duration: 2000, useNativeDriver: true }),
-        Animated.timing(ring3Scale, { toValue: 1, duration: 2000, useNativeDriver: true }),
-      ])
-    );
-    const bgOrbLoopRef = Animated.loop(
-      Animated.sequence([
-        Animated.timing(bgOrbAnim, { toValue: 1.2, duration: 3000, useNativeDriver: true }),
-        Animated.timing(bgOrbAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
-      ])
-    );
-
-    const ring3Timer = setTimeout(() => ring3LoopRef.start(), 700);
-    bgOrbLoopRef.start();
-
-    return () => {
-      clearTimeout(ring3Timer);
-      try { ring3LoopRef.stop(); } catch (e) {}
-      try { bgOrbLoopRef.stop(); } catch (e) {}
-      try { seq.stop?.(); } catch (e) {}
-    };
-  }, []);
-
-  return (
-    <View style={loadStyles.container}>
-      <StatusBar barStyle="light-content" />
-      <Animated.View style={[loadStyles.orb1, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.15, 0.25] }) }]} />
-      <Animated.View style={[loadStyles.orb2, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.1, 0.2] }) }]} />
-      <LinearGradient colors={['rgba(139,92,246,0.15)', 'rgba(79,70,229,0.05)', 'transparent']} style={loadStyles.bgGrad} />
-      <LinearGradient colors={['transparent', 'rgba(109,40,217,0.1)', 'rgba(76,29,149,0.15)']} style={loadStyles.bgGradBottom} />
-      <Animated.View style={[loadStyles.ring, loadStyles.ring3, { transform: [{ scale: ring3Scale }], opacity: ring3Opacity }]} />
-      <Animated.View style={[loadStyles.ring, loadStyles.ring2, { transform: [{ scale: ring2Scale }], opacity: ring2Opacity }]} />
-      <Animated.View style={[loadStyles.ring, loadStyles.ring1, { transform: [{ scale: ring1Scale }], opacity: ring1Opacity }]} />
-      <Animated.View style={[loadStyles.logoWrap, { transform: [{ scale: logoScale }], opacity: logoOpacity }]}>
-        <View style={loadStyles.logoGlow} />
-        <LinearGradient colors={['#a855f7', '#8b5cf6', '#4338ca']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={loadStyles.logo}>
-          <Text style={loadStyles.logoText}>U</Text>
-        </LinearGradient>
-      </Animated.View>
-      <Animated.View style={[loadStyles.textWrap, { opacity: textOpacity, transform: [{ translateY: textSlide }] }]}>
-        <Text style={loadStyles.appName}>UniGram</Text>
-        <Text style={loadStyles.tagline}>Your campus, connected.</Text>
-      </Animated.View>
-      <Animated.View style={[loadStyles.indicatorWrap, { opacity: indicatorOpacity }]}>
-        <ActivityIndicator size="small" color="rgba(167,139,250,0.6)" />
-      </Animated.View>
-    </View>
-  );
-};
-
 const BottomTabBar = memo(({ 
   activeTabVisual, 
   onTabChange, 
@@ -227,17 +135,24 @@ const BottomTabBar = memo(({
               hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
             >
               {({ pressed }) => (
-                <>
-                  {isActive && (
-                    <Reanimated.View 
-                      entering={FadeIn.duration(100)}
-                      style={[styles.tabIndicator, { backgroundColor: colors.accent }]} 
+                <View style={[styles.tabIconWrap, pressed && { opacity: 0.6, transform: [{ scale: 0.92 }] }]}>
+                  {tab.id === 'feed' ? (
+                    // Ionicons' home glyph is blocky; the Material "home-variant" has the
+                    // softer roofline and chimney that reads as premium.
+                    <MaterialCommunityIcons
+                      name={isActive ? 'home-variant' : 'home-variant-outline'}
+                      size={29}
+                      color={isActive ? colors.text : colors.textMuted}
+                    />
+                  ) : (
+                    <Ionicons
+                      name={(isActive ? tab.activeIcon : tab.icon) as any}
+                      size={26}
+                      color={isActive ? colors.text : colors.textMuted}
                     />
                   )}
-                  <View style={[styles.tabIconWrap, isActive && { backgroundColor: colors.accent + '12' }, pressed && { opacity: 0.7 }]}>
-                    <Ionicons name={(isActive ? tab.activeIcon : tab.icon) as any} size={25} color={isActive ? colors.accent : colors.textMuted} />
-                  </View>
-                </>
+                  <View style={[styles.tabDot, { backgroundColor: isActive ? colors.text : 'transparent' }]} />
+                </View>
               )}
             </Pressable>
           );
@@ -375,7 +290,7 @@ const AppScreens = memo(({
   );
 });
 
-function AppShell() {
+function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { setNotifBadge, setMessageBadge, setProfileRefreshKey, setFeedRefreshKey } = useAppState();
@@ -522,7 +437,10 @@ function AppShell() {
     const timers: Array<any> = [];
     const idleHandle = setTimeout(() => {
       startTransition(() => {
-        const tabsToMount: Tab[] = ['explore', 'market', 'messages', 'profile', 'reels'];
+        // Most-visited first. Mounting starts only after the Home feed has had time to
+        // load — mounting five heavy screens at launch competed with it for the JS
+        // thread and the network.
+        const tabsToMount: Tab[] = ['profile', 'explore', 'reels', 'market', 'messages'];
         tabsToMount.forEach((t, i) => {
           const id = setTimeout(() => {
             setMountedTabs(prev => prev.has(t) ? prev : new Set([...prev, t]));
@@ -537,7 +455,7 @@ function AppShell() {
                 Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0)).catch((e) => console.warn('[App] prefetch reels:', e?.message));
               }
             } catch {}
-          }, i * 300);
+          }, 2500 + i * 500);
           timers.push(id);
         });
       });
@@ -762,7 +680,8 @@ function AppShell() {
   }, [minSplashDone, fontsReady, session]);
 
   const shouldShowLoading = !minSplashDone || !fontsReady || (!initialLoadRef.current && session === undefined) || (session && onboardingDone === null);
-  if (shouldShowLoading) return <LoadingScreen />;
+  useEffect(() => { onReady(!shouldShowLoading); }, [shouldShowLoading]);
+  if (shouldShowLoading) return <View style={{ flex: 1, backgroundColor: '#000' }} />;
   if (showResetPassword) return <ResetPasswordScreen onDone={() => { setShowResetPassword(false); setAuthScreen('login'); }} />;
   if (!session) {
     if (authScreen === 'signup') return (
@@ -845,6 +764,17 @@ function AppShell() {
   );
 }
 
+function AppShell() {
+  const [ready, setReady] = useState(false);
+  const [splashDone, setSplashDone] = useState(false);
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <AppShellInner onReady={setReady} />
+      {!splashDone && <AnimatedSplash ready={ready} onDone={() => setSplashDone(true)} />}
+    </View>
+  );
+}
+
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -872,30 +802,11 @@ const styles = StyleSheet.create({
   screensContainer: { flex: 1, position: 'relative' },
   screen: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   fab: { position: 'absolute', right: 18, bottom: 14, width: 52, height: 52, borderRadius: 26, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', zIndex: 100, shadowColor: '#4f46e5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 12, elevation: 12 },
-  bottomNav: { backgroundColor: '#000', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
-  bottomNavInner: { flexDirection: 'row', paddingVertical: 4 },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 2, position: 'relative' },
-  tabIndicator: { position: 'absolute', top: 0, left: '25%', right: '25%', height: 2, backgroundColor: '#818cf8', borderRadius: 1 },
-  tabIconWrap: { padding: 4, borderRadius: 10 },
+  bottomNav: { backgroundColor: '#000', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.12)' },
+  bottomNavInner: { flexDirection: 'row', paddingTop: 2, paddingBottom: 2 },
+  tabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, position: 'relative' },
+  tabDot: { width: 4, height: 4, borderRadius: 2, marginTop: 3 },
+  tabIconWrap: { alignItems: 'center', justifyContent: 'center', paddingTop: 4, paddingHorizontal: 12, minHeight: 44 },
   notifOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 200 },
 });
 
-const loadStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#09090b', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  bgGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: '60%' },
-  bgGradBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%' },
-  orb1: { position: 'absolute', width: 400, height: 400, borderRadius: 200, backgroundColor: '#8b5cf6', top: -100, right: -150, opacity: 0.15 },
-  orb2: { position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: '#c084fc', bottom: -50, left: -100, opacity: 0.1 },
-  ring: { position: 'absolute', borderRadius: 9999, borderWidth: 1.5 },
-  ring1: { width: 170, height: 170, borderColor: 'rgba(139,92,246,0.3)', backgroundColor: 'rgba(139,92,246,0.04)' },
-  ring2: { width: 250, height: 250, borderColor: 'rgba(139,92,246,0.15)', backgroundColor: 'transparent' },
-  ring3: { width: 350, height: 350, borderColor: 'rgba(139,92,246,0.06)', backgroundColor: 'transparent' },
-  logoWrap: { zIndex: 10, marginBottom: 40, position: 'relative' },
-  logoGlow: { position: 'absolute', width: 140, height: 140, borderRadius: 70, backgroundColor: '#8b5cf6', top: -15, left: -15, opacity: 0.25 },
-  logo: { width: 110, height: 110, borderRadius: 36, alignItems: 'center', justifyContent: 'center', shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.8, shadowRadius: 40, elevation: 30 },
-  logoText: { fontSize: 64, fontWeight: '900', color: '#fff', letterSpacing: -3 },
-  textWrap: { alignItems: 'center', gap: 8, marginTop: 10 },
-  appName: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: -1.5 },
-  tagline: { fontSize: 15, color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5, fontWeight: '500' },
-  indicatorWrap: { position: 'absolute', bottom: 64 },
-});

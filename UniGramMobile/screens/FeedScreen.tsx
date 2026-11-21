@@ -1223,7 +1223,10 @@ export const FeedScreen = React.memo(({
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerVisible = useRef(new Animated.Value(1)).current;
   const headerStateRef = useRef<0 | 1>(1);
-  const HEADER_HEIGHT = insets.top + 48;
+  // Measured, not guessed: the list's top spacer must match the real header height
+  // or a visible gap appears above the stories row.
+  const [measuredHeader, setMeasuredHeader] = useState(0);
+  const HEADER_HEIGHT = measuredHeader > 0 ? measuredHeader : insets.top + 46;
 
   const handleScroll = (e: any) => {
     const y = e.nativeEvent.contentOffset.y;
@@ -1352,20 +1355,21 @@ export const FeedScreen = React.memo(({
       isLoadingRef.current = false;
     }, 15000);
     try {
+      // Local session read (no network) — see lib/supabase.ts.
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { isLoadingRef.current = false; return; }
+      if (!user) { isLoadingRef.current = false; clearTimeout(safetyTimer); return; }
       setCurrentUserId(user.id);
 
-      // Attempt to read profile from fast memory cache so "Your Story" avatar appears instantly
+      // ── 1. Paint from cache immediately (before ANY network) ──────────────
       try {
         const profCached = Cache.getSync<any>(`profile:${user.id}`, TTL.profile);
         if (profCached) {
           setCurrentProfile(profCached);
           cachedCurrentProfile = profCached;
+          myUniversityRef.current = profCached?.university ?? null;
         }
       } catch (e) {}
 
-      // Attempt to load from cache immediately to bypass skeleton on cold start
       if (feedItemsRef.current.length === 0 && !isManualRefresh) {
         try {
           const cachedJson = await AsyncStorage.getItem(`ug_feed_cache:${user.id}`);
@@ -1374,71 +1378,63 @@ export const FeedScreen = React.memo(({
             if (cachedPosts?.length > 0) {
               setPosts(cachedPosts);
               setStoryGroups(cachedStories ?? []);
-              setLoading(false); // Disable skeleton!
+              setLoading(false); // skeleton gone — real content is on screen
             }
           }
         } catch (err) {}
       }
 
-      // Fetch user profile first (quick from local cache or DB) so we can fetch campus-targeted ads and events
-      const prof = await getProfile(user.id);
-      setCurrentProfile(prof);
-      cachedCurrentProfile = prof;
-      myUniversityRef.current = prof?.university ?? null;
-
       // Pull-to-refresh must never be answered from the 2-minute cache.
       if (isManualRefresh) Cache.invalidatePattern(`feed:${user.id}:`);
 
+      // ── 2. Kick off EVERYTHING at once, then reveal in priority order ─────
+      // The profile is needed only for campus-targeted ads/events, so it runs in
+      // parallel with the posts instead of blocking them.
+      const profileP = getProfile(user.id).catch(() => null);
+      const postsP = getPersonalizedFeed(user.id, FEED_PAGE, 0, { seed: feedSeedRef.current, fresh: isManualRefresh })
+        .then(rows => enrichWithOriginalPosts(rows).catch(() => rows).then(enriched => ({ rows, enriched })));
+      const likedP = getLikedPostIds(user.id).catch(() => [] as string[]);
+      const savedP = getSavedPostIds(user.id).catch(() => [] as string[]);
+      const repostedP = getRepostedPostIds(user.id).catch(() => [] as string[]);
+
+      // Secondary content: each piece appears the moment it arrives.
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      getActiveStories().then(g => { setStoryGroups(g); cachedStoryGroups = g; }).catch(() => {});
+      getViewedStoryIds(user.id).then(setViewedIds).catch(() => {});
+      supabase.from('live_sessions')
+        .select('*, profiles!creator_id(username, avatar_url)')
+        .eq('status', 'live').gt('started_at', twelveHoursAgo)
+        .then(r => setLiveSessions(r.data ?? []), () => {});
+      getPersonalizedReels(user.id, 6, 0).then(r => setPreviewReels(r ?? [])).catch(() => {});
+      getFollowSuggestions(user.id, 8).then(r => setSuggestedUsers(r ?? [])).catch(() => {});
+      supabase.from('follows').select('following_id').eq('follower_id', user.id).limit(2000)
+        .then(r => { followingIdsRef.current = new Set((r.data ?? []).map((f: any) => f.following_id as string)); }, () => {});
+      const followCountP = getUserFollowCount(user.id).catch(() => 999);
+      followCountP.then(fc => setFollowCount(fc ?? 999));
 
-      // Fetch all critical data, stories, suggestions, live sessions, and ads in parallel to prevent layout shifting
-      const [
-        postsData,
-        storiesData,
-        likedData,
-        savedData,
-        repostedData,
-        viewedData,
-        liveSessionsData,
-        reelsData,
-        usersData,
-        fcData,
-        feedAdsData,
-        storyAdsData,
-        followingData,
-      ] = await Promise.all([
-        getPersonalizedFeed(user.id, FEED_PAGE, 0, { seed: feedSeedRef.current, fresh: isManualRefresh }),
-        getActiveStories(),
-        getLikedPostIds(user.id),
-        getSavedPostIds(user.id),
-        getRepostedPostIds(user.id).catch(() => [] as string[]),
-        getViewedStoryIds(user.id).catch(() => [] as string[]),
-        supabase.from('live_sessions')
-          .select('*, profiles!creator_id(username, avatar_url)')
-          .eq('status', 'live')
-          .gt('started_at', twelveHoursAgo)
-          .then(r => r.data || [], () => []),
-        getPersonalizedReels(user.id, 6, 0).catch(() => []),
-        getFollowSuggestions(user.id, 8).catch(() => []),
-        getUserFollowCount(user.id).catch(() => 999),
-        getActiveFeedAds(prof?.university ?? null, user.id).catch(() => []),
-        getActiveAdsForPlacement('stories', prof?.university ?? null, user.id).catch(() => []),
-        supabase.from('follows').select('following_id').eq('follower_id', user.id).limit(2000)
-          .then(r => (r.data ?? []).map((f: any) => f.following_id as string), () => [] as string[]),
-      ]);
-      followingIdsRef.current = new Set(followingData);
+      profileP.then(prof => {
+        if (!prof) return;
+        setCurrentProfile(prof);
+        cachedCurrentProfile = prof;
+        myUniversityRef.current = prof.university ?? null;
+        getActiveFeedAds(prof.university ?? null, user.id).then(a => setFeedAds(a ?? [])).catch(() => {});
+        getActiveAdsForPlacement('stories', prof.university ?? null, user.id).then(a => setStoryAds(a ?? [])).catch(() => {});
+        followCountP.then(fc => {
+          if (fc < 5 && prof.university) getCampusEvents(prof.university, 4).then(e => setCampusEvents(e ?? [])).catch(() => {});
+        });
+      });
 
-      // Enrich feed posts with reposts/quotes in parallel with potential event fetching
-      const [enrichedPosts, campusEventsData] = await Promise.all([
-        enrichWithOriginalPosts(postsData).catch(() => postsData),
-        (fcData < 5 && prof?.university) ? getCampusEvents(prof.university, 4).catch(() => []) : Promise.resolve([]),
-      ]);
+      // ── 3. Core: posts + the per-post state they render with ──────────────
+      const [{ rows, enriched: enrichedPosts }, likedData, savedData, repostedData] =
+        await Promise.all([postsP, likedP, savedP, repostedP]);
 
-      // Update all feed status states in a single batch to avoid layout jumps
-      setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
-      setHasMore(postsData.length > 0);
+      setRepostedIds(new Set(repostedData));
+      cachedLikedIds = new Set(likedData);
+      cachedSavedIds = new Set(savedData);
+      cachedRepostedIds = new Set(repostedData);
+      setHasMore(rows.length > 0);
       pageRef.current = 0;
       lastLoadedRef.current = Date.now();
 
@@ -1466,6 +1462,10 @@ export const FeedScreen = React.memo(({
             });
           }
         }
+      } else if (enrichedPosts.length === 0 && postsRef.current.length > 0) {
+        // A transient empty/failed response must not wipe posts that are already
+        // on screen (this is what left the feed showing only ads).
+        if (isManualRefresh) showToast('No new posts right now.', 'info');
       } else {
         setPosts(enrichedPosts);
         if (isManualRefresh) {
@@ -1474,44 +1474,28 @@ export const FeedScreen = React.memo(({
         }
       }
 
-      setRepostedIds(new Set(repostedData));
-      setViewedIds(viewedData);
-      setLiveSessions(liveSessionsData ?? []);
-      setPreviewReels(reelsData ?? []);
-      setSuggestedUsers(usersData ?? []);
-      setFollowCount(fcData ?? 999);
-      setFeedAds(feedAdsData ?? []);
-      setStoryAds(storyAdsData ?? []);
-      setCampusEvents(campusEventsData ?? []);
-
-      cachedStoryGroups = storiesData;
-      cachedLikedIds = new Set(likedData);
-      cachedSavedIds = new Set(savedData);
-      cachedRepostedIds = new Set(repostedData);
-
-      // Reveal feed immediately with no additional layout shifts
+      // Posts are on screen — drop the skeleton / spinner NOW.
       clearTimeout(safetyTimer);
       setLoading(false);
       setRefreshing(false);
       isLoadingRef.current = false;
 
-      // Persist to local cache for instant load on next cold start
-      if (postsData.length > 0) {
+      // Persist for an instant cold start next time.
+      if (rows.length > 0) {
         AsyncStorage.setItem(`ug_feed_cache:${user.id}`, JSON.stringify({
-          cachedPosts: postsData.slice(0, 15),
-          cachedStories: storiesData,
+          cachedPosts: rows.slice(0, 15),
+          cachedStories: cachedStoryGroups,
         })).catch((e) => console.warn('[FeedScreen] cacheFeed:', e?.message));
       }
-
     } catch (e: any) {
       clearTimeout(safetyTimer);
       setLoading(false);
       setRefreshing(false);
       isLoadingRef.current = false;
-      
+
       // If we successfully loaded cache but failed the background refresh, soft alert
       if (feedItemsRef.current.length > 0) {
-        showToast('Network issue — viewing cached content.', 'error');
+        showToast('Couldn’t refresh — showing saved posts.', 'error');
       } else {
         setFeedError(true);
         showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
@@ -1924,7 +1908,7 @@ export const FeedScreen = React.memo(({
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle={colors.statusBar} />
 
-      <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg }]}>
+      <Animated.View onLayout={(e) => { const h = Math.round(e.nativeEvent.layout.height); if (h > 0 && h !== measuredHeader) setMeasuredHeader(h); }} style={[styles.topBar, { paddingTop: insets.top + 4, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <TouchableOpacity
             onPress={onCameraPress}
@@ -2040,10 +2024,10 @@ export const FeedScreen = React.memo(({
         // - removeClippedSubviews off because clipped subviews are the exact
         //   thing causing the "white flash" the user kept reporting
         // - initialNumToRender high enough to fill the first viewport in one pass
-        windowSize={11}
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        updateCellsBatchingPeriod={50}
+        windowSize={7}
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={40}
         removeClippedSubviews={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
@@ -2054,9 +2038,9 @@ export const FeedScreen = React.memo(({
         ListHeaderComponent={useMemo(() => (
           <>
             <View style={{ height: HEADER_HEIGHT }} />
-            <FadeIn visible={loading} duration={180}>
-              <StorySkeleton />
-            </FadeIn>
+            {/* Only mounted while loading — an invisible skeleton still takes layout
+                space and pushes the real stories row down, away from the navbar. */}
+            {loading ? <StorySkeleton /> : null}
             {!loading && (
               <FadeIn visible={!loading} duration={180}>
                 <StoryBar
@@ -2371,7 +2355,7 @@ const styles = StyleSheet.create({
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingBottom: 8,
+    paddingHorizontal: 16, paddingBottom: 6,
   },
   topBarLogo: { 
     fontWeight: '900', 
@@ -2393,7 +2377,7 @@ const styles = StyleSheet.create({
   },
   notifHeaderBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
 
-  storyScroll: { paddingTop: 8, paddingBottom: 12 },
+  storyScroll: { paddingTop: 2, paddingBottom: 10 },
   storyItem: { alignItems: 'center', width: 76 },
   storyRingWrap: { width: 70, height: 70, alignItems: 'center', justifyContent: 'center' },
   storyRingBase: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },

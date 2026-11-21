@@ -5,6 +5,7 @@ import {
   Linking, KeyboardAvoidingView, Platform, FlatList, DeviceEventEmitter,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -34,8 +35,8 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
   const { colors } = useTheme();
   return (
     <View style={[styles.section]}>
-      <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>{title}</Text>
-      <View style={[styles.sectionBody, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.sectionTitle, { color: colors.textSub }]}>{title}</Text>
+      <View style={[styles.sectionBody, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
         {children}
       </View>
     </View>
@@ -51,25 +52,30 @@ const Row: React.FC<{
   danger?: boolean;
   right?: React.ReactNode;
   noBorder?: boolean;
-}> = ({ icon, iconColor = '#818cf8', label, sublabel, onPress, danger, right, noBorder }) => {
+}> = ({ icon, iconColor = '#6366f1', label, sublabel, onPress, danger, right, noBorder }) => {
   const { colors } = useTheme();
+  const tint = danger ? '#ff3040' : iconColor;
   return (
-    <TouchableOpacity
-      style={[styles.row, { borderBottomColor: colors.rowBorder }, noBorder && { borderBottomWidth: 0 }]}
-      onPress={onPress}
-      activeOpacity={onPress ? 0.7 : 1}
-      accessibilityLabel={label}
-      accessibilityRole="button"
-    >
-      <View style={[styles.rowIcon, { backgroundColor: (danger ? '#ef4444' : iconColor) + '20' }]}>
-        <Ionicons name={icon as any} size={18} color={danger ? '#ef4444' : iconColor} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.rowLabel, { color: danger ? '#ef4444' : colors.text }]}>{label}</Text>
-        {sublabel ? <Text style={[styles.rowSub, { color: colors.textMuted }]}>{sublabel}</Text> : null}
-      </View>
-      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color={colors.textMuted} /> : null)}
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        style={styles.row}
+        onPress={onPress}
+        activeOpacity={onPress ? 0.6 : 1}
+        disabled={!onPress && !right}
+        accessibilityLabel={label}
+        accessibilityRole="button"
+      >
+        <View style={[styles.rowIcon, { backgroundColor: tint }]}>
+          <Ionicons name={icon as any} size={17} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.rowLabel, { color: danger ? '#ff3040' : colors.text }]} numberOfLines={1}>{label}</Text>
+          {sublabel ? <Text style={[styles.rowSub, { color: colors.textMuted }]} numberOfLines={2}>{sublabel}</Text> : null}
+        </View>
+        {right ?? (onPress ? <Ionicons name="chevron-forward" size={17} color={colors.textMuted} /> : null)}
+      </TouchableOpacity>
+      {!noBorder ? <View style={[styles.rowDivider, { backgroundColor: colors.rowBorder }]} /> : null}
+    </>
   );
 };
 
@@ -694,7 +700,7 @@ export const SettingsScreen: React.FC<Props> = ({
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
-          <View style={{ width: 32 }} />
+          <View style={{ width: 24 }} />
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -705,16 +711,24 @@ export const SettingsScreen: React.FC<Props> = ({
             accessibilityLabel="Edit profile"
             accessibilityRole="button"
           >
-            {profile?.avatar_url
-              ? <Image source={{ uri: profile.avatar_url }} style={styles.profileAvatar} />
-              : (
-                <View style={[styles.profileAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="person" size={28} color={colors.textMuted} />
-                </View>
-              )
-            }
+            <LinearGradient colors={['#6366f1', '#8b5cf6', '#d946ef']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.profileRing}>
+              <View style={[styles.profileRingInner, { backgroundColor: colors.bg2 }]}>
+                {profile?.avatar_url
+                  ? <Image source={{ uri: profile.avatar_url }} style={styles.profileAvatar} />
+                  : (
+                    <View style={[styles.profileAvatar, { alignItems: 'center', justifyContent: 'center' }]}>
+                      <Ionicons name="person" size={28} color={colors.textMuted} />
+                    </View>
+                  )}
+              </View>
+            </LinearGradient>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.profileName, { color: colors.text }]}>{profile?.full_name ?? 'Your Name'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <Text style={[styles.profileName, { color: colors.text }]} numberOfLines={1}>{profile?.full_name ?? 'Your Name'}</Text>
+                {isProActive(proProfile) ? (
+                  <View style={styles.proChip}><Ionicons name="flash" size={10} color="#fff" /><Text style={styles.proChipText}>PRO</Text></View>
+                ) : null}
+              </View>
               <Text style={[styles.profileUsername, { color: colors.textSub }]}>@{profile?.username ?? 'username'}</Text>
               <Text style={[styles.editHint, { color: colors.accentLight }]}>Edit profile</Text>
             </View>
@@ -955,32 +969,36 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerTitle: { fontSize: 16, fontWeight: '700' },
+  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
 
   profileCard: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
-    padding: 16, marginHorizontal: 16, marginTop: 16, marginBottom: 8,
-    borderRadius: 18, borderWidth: 1,
+    padding: 16, marginHorizontal: 16, marginTop: 16, marginBottom: 4,
+    borderRadius: 22, borderWidth: StyleSheet.hairlineWidth,
   },
-  profileAvatar: { width: 60, height: 60, borderRadius: 30 },
-  profileName: { fontSize: 16, fontWeight: '700' },
+  profileRing: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
+  profileRingInner: { width: 65, height: 65, borderRadius: 33, alignItems: 'center', justifyContent: 'center' },
+  profileAvatar: { width: 59, height: 59, borderRadius: 30 },
+  proChip: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#6366f1', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  proChipText: { color: '#fff', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.4 },
+  profileName: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3, flexShrink: 1 },
   profileUsername: { fontSize: 13, marginTop: 1 },
   editHint: { fontSize: 12, marginTop: 4 },
 
-  section: { marginTop: 20, marginHorizontal: 16 },
-  sectionTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, paddingHorizontal: 4 },
-  sectionBody: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  section: { marginTop: 22, marginHorizontal: 16 },
+  sectionTitle: { fontSize: 13, fontWeight: '700', marginBottom: 8, paddingHorizontal: 6, letterSpacing: 0.1 },
+  sectionBody: { borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
 
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    paddingHorizontal: 14, paddingVertical: 13,
-    borderBottomWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 13,
+    paddingHorizontal: 14, paddingVertical: 12, minHeight: 56,
   },
-  rowIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  rowLabel: { fontSize: 14, fontWeight: '500' },
-  rowSub: { fontSize: 11, marginTop: 1 },
+  rowDivider: { height: StyleSheet.hairlineWidth, marginLeft: 57 },
+  rowIcon: { width: 31, height: 31, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  rowLabel: { fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1 },
+  rowSub: { fontSize: 12.5, marginTop: 1, lineHeight: 16.5 },
 
   // Sub-modal shared
   subModalContainer: { flex: 1 },

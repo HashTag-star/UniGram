@@ -360,6 +360,7 @@ const ReelItem: React.FC<{
 }> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, reelAds = [] }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const { colors } = useTheme();
+  const [captionOpen, setCaptionOpen] = useState(false);
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
   const viewedRef = useRef(false);
@@ -873,10 +874,17 @@ const ReelItem: React.FC<{
         )}
       </View>
 
+      {/* Legibility scrim behind the info + actions */}
+      <LinearGradient
+        pointerEvents="none"
+        colors={['transparent', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.72)']}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '46%' }}
+      />
+
       {/* Right actions */}
       <View style={[styles.rightActions, { bottom: commentBarH + 80 }]}>
         <TouchableOpacity onPress={toggleLike} style={styles.actionItem} accessibilityLabel={liked ? 'Unlike' : 'Like'} accessibilityRole="button">
-          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ff3040' : '#fff'} />
           <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
         </TouchableOpacity>
 
@@ -918,7 +926,11 @@ const ReelItem: React.FC<{
             </TouchableOpacity>
           )}
         </View>
-        <Text style={styles.reelCaption} numberOfLines={2}>{reel.caption}</Text>
+        {reel.caption ? (
+          <Pressable onPress={() => setCaptionOpen(v => !v)} accessibilityRole="button" accessibilityLabel={captionOpen ? 'Collapse caption' : 'Expand caption'}>
+            <Text style={styles.reelCaption} numberOfLines={captionOpen ? 8 : 2}>{reel.caption}</Text>
+          </Pressable>
+        ) : null}
         {reel.song && (
           <View style={styles.songRow}>
             <Ionicons name="musical-notes" size={13} color="rgba(255,255,255,0.7)" />
@@ -941,8 +953,8 @@ const ReelItem: React.FC<{
       {netError && (
         <View style={styles.netErrorOverlay}>
           <Ionicons name="cloud-offline-outline" size={48} color="rgba(255,255,255,0.7)" />
-          <Text style={styles.netErrorTitle}>No internet connection</Text>
-          <Text style={styles.netErrorSub}>Check your connection and try again</Text>
+          <Text style={styles.netErrorTitle}>Couldn’t play this reel</Text>
+          <Text style={styles.netErrorSub}>The video failed to load. Check your connection and try again.</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={handleRetry} accessibilityLabel="Retry" accessibilityRole="button">
             <Ionicons name="refresh" size={16} color="#fff" />
             <Text style={styles.retryText}>Retry</Text>
@@ -1416,7 +1428,7 @@ export const ReelsScreen: React.FC<{
 
   if (loading) {
     return (
-      <FadeIn visible={loading} duration={180}>
+      <FadeIn visible={loading} duration={180} style={{ flex: 1 }}>
         <ReelSkeleton onBack={onBack} />
       </FadeIn>
     );
@@ -1588,15 +1600,15 @@ const styles = StyleSheet.create({
   },
   bottomInfo: { position: 'absolute', bottom: 30, left: 14, right: 70 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  reelAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#fff' },
+  reelAvatar: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.9)' },
   reelUsername: {
     color: '#fff', fontWeight: 'bold', fontSize: 14,
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
-  followBtn: { backgroundColor: '#fff', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
-  followingBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.45)' },
-  followBtnText: { color: '#000', fontSize: 12, fontWeight: '700' },
-  followingBtnText: { color: 'rgba(255,255,255,0.7)' },
+  followBtn: { backgroundColor: 'transparent', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.85)' },
+  followingBtn: { borderColor: 'rgba(255,255,255,0.35)' },
+  followBtnText: { color: '#fff', fontSize: 12.5, fontWeight: '700' },
+  followingBtnText: { color: 'rgba(255,255,255,0.65)' },
   reelCaption: {
     color: '#fff', fontSize: 13, lineHeight: 18, marginBottom: 8,
     textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
@@ -1614,7 +1626,7 @@ const styles = StyleSheet.create({
   retryBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12,
     backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 24,
-    paddingHorizontal: 22, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: 22, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.25)',
   },
   retryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   fastForwardBadge: {
@@ -1734,7 +1746,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#fff',
   },
   inStreamBrandName: {
@@ -1799,7 +1811,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 24,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.3)',
   },
   inStreamSkipText: {

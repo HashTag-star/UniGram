@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 16, color: 'rgba(255,255,255,0.4)', textAlign: 'left', marginTop: 12, lineHeight: 24, paddingRight: 40, fontWeight: '500' },
   features: { marginTop: 40, gap: 20, width: '100%' },
   featureRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  featureIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(139,92,246,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(139,92,246,0.15)' },
+  featureIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(139,92,246,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(139,92,246,0.15)' },
   featureText: { fontSize: 17, color: 'rgba(255,255,255,0.9)', fontWeight: '600' },
   bottom: { width: '100%', gap: 16 },
   btn: { borderRadius: 20, overflow: 'hidden', shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },

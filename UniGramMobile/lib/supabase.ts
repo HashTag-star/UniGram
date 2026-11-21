@@ -89,30 +89,59 @@ export class SupabaseTimeoutError extends Error {
   timeoutMs: number;
   userMessage: string;
   constructor(url: string, timeoutMs: number) {
-    // [Ama Mensah - Lead Dev] Satisfy the user requirement for friendlier error strings.
-    // The super() call sets .message, which is what typically shows in default alerts/logs.
-    super("You're offline.");
+    // A timeout means the SERVER was slow (or we were rate-limited) — it does not
+    // mean the phone is offline, so it must never raise the "no internet" toast.
+    super('The server took too long to respond.');
     this.name = 'Network timeout';
     this.url = url;
     this.timeoutMs = timeoutMs;
-    // Friendly message intended for display to end users (no URLs or internals)
-    this.userMessage = `You're offline.`;
-    
-    // Clear any pending online trigger, since we just had a failure
-    if (_onlineTimer) {
-      clearTimeout(_onlineTimer);
-      _onlineTimer = null;
-    }
+    this.userMessage = 'The server took too long to respond. Please try again.';
+  }
+}
 
-    // Grace period: Wait 5 seconds of continuous failures before declaring offline
-    if (!_wasOffline && !_offlineTimer) {
-      _offlineTimer = setTimeout(() => {
-        _wasOffline = true;
-        _offlineTimer = null;
-        DeviceEventEmitter.emit('app_offline', { message: this.userMessage });
-      }, 5000);
+// ─── Connectivity ──────────────────────────────────────────────────────────────
+// "Offline" is only declared after a real network-level failure (fetch rejected
+// with a TypeError) AND an independent reachability probe also fails. This avoids
+// the false "no internet" toasts caused by slow queries, aborted requests or
+// rate-limiter waits while the connection is actually fine.
+const PROBE_URLS = [
+  `${SUPABASE_URL}/auth/v1/health`,
+  'https://www.gstatic.com/generate_204',
+];
+let _probing = false;
+
+async function probeOnline(): Promise<boolean> {
+  for (const url of PROBE_URLS) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 6000);
+    try {
+      // Raw fetch on purpose: bypasses our wrapper (and its rate limiter).
+      await fetch(url, { method: 'GET', signal: ctl.signal, headers: { apikey: SUPABASE_ANON_KEY } });
+      clearTimeout(t);
+      return true; // any HTTP response — even 401 — proves we have a network path
+    } catch {
+      clearTimeout(t);
     }
   }
+  return false;
+}
+
+function reportNetworkFailure() {
+  if (_wasOffline || _probing || _offlineTimer) return;
+  // Debounce a beat so a single dropped request doesn't trigger a probe.
+  _offlineTimer = setTimeout(async () => {
+    _offlineTimer = null;
+    _probing = true;
+    try {
+      const online = await probeOnline();
+      if (!online && !_wasOffline) {
+        _wasOffline = true;
+        DeviceEventEmitter.emit('app_offline', { message: "You're offline. Check your connection." });
+      }
+    } finally {
+      _probing = false;
+    }
+  }, 2500);
 }
 
 const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response> => {
@@ -120,9 +149,9 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
   const controller = new AbortController();
   const targetUrl = typeof url === 'string' ? url : (url?.url ?? String(url));
   const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  
+
   // Acquire global rate limiter token before issuing network request
-  const allowedP = GlobalRateLimiter.acquire(2000);
+  const allowedP = GlobalRateLimiter.acquire(10000);
   return allowedP.then((allowed) => {
     if (!allowed) {
       // Rate limiter timed out — fail fast with a descriptive error
@@ -131,30 +160,23 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
     }
     return fetch(url, { ...options, signal: controller.signal })
     .then((res) => {
-      // If we got a successful response, clear any pending offline declaration
-      if (_offlineTimer) {
-        clearTimeout(_offlineTimer);
-        _offlineTimer = null;
-      }
-      
-      // If we were offline and now succeed, trigger online after a 3s stable connection
-      if (_wasOffline) {
-        if (!_onlineTimer) {
-          _onlineTimer = setTimeout(() => {
-            _wasOffline = false;
-            _onlineTimer = null;
-            DeviceEventEmitter.emit('app_online');
-          }, 3000);
-        }
+      // A response — of any status — proves the network works.
+      if (_offlineTimer) { clearTimeout(_offlineTimer); _offlineTimer = null; }
+      if (_wasOffline && !_onlineTimer) {
+        _onlineTimer = setTimeout(() => {
+          _wasOffline = false;
+          _onlineTimer = null;
+          DeviceEventEmitter.emit('app_online');
+        }, 1500);
       }
       return res;
     })
     .catch((err: any) => {
-      // Convert the generic abort into a labelled error so callers and LogBox
-      // can distinguish a timeout from a caller-initiated cancellation.
       if (err?.name === 'AbortError') {
         throw new SupabaseTimeoutError(targetUrl, FETCH_TIMEOUT_MS);
       }
+      // fetch() rejects with a TypeError when the request never reached a server.
+      if (err instanceof TypeError) reportNetworkFailure();
       throw err;
     })
     .finally(() => clearTimeout(id));
@@ -172,6 +194,26 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     fetch: fetchWithTimeout as unknown as typeof fetch,
   },
 });
+
+// ─── Fast local getUser() ──────────────────────────────────────────────────────
+// supabase.auth.getUser() validates the JWT with a network round-trip on EVERY
+// call, and the app calls it ~60 times (every screen load, every service call).
+// That put a full server RTT in front of nearly every request. For the no-argument
+// form we now read the locally stored (auto-refreshed) session instead; server-side
+// RLS still authorises every actual query. Passing an explicit JWT, or having no
+// local session, still takes the real network path.
+{
+  const auth = supabase.auth as any;
+  const networkGetUser = auth.getUser.bind(auth);
+  auth.getUser = async (jwt?: string) => {
+    if (jwt) return networkGetUser(jwt);
+    try {
+      const { data } = await auth.getSession();
+      if (data?.session?.user) return { data: { user: data.session.user }, error: null };
+    } catch {}
+    return networkGetUser();
+  };
+}
 
 /**
  * Resolves a media file path in a Supabase bucket to its Cloudflare CDN proxy URL

@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   View, StyleSheet, Animated, Dimensions, StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WelcomeStep } from './steps/WelcomeStep';
 import { ProfileSetupStep } from './steps/ProfileSetupStep';
 import { InterestsStep } from './steps/InterestsStep';
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function OnboardingNavigator({ userId, onComplete }: Props) {
+  const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
   const translateX = useRef(new Animated.Value(0)).current;
 
@@ -44,15 +46,15 @@ export function OnboardingNavigator({ userId, onComplete }: Props) {
     }).start(() => setStepIndex(prev));
   };
 
-  const progress = (stepIndex + 1) / STEPS.length;
-
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
-      {/* Progress bar */}
-      <View style={styles.progressBar}>
-        <Animated.View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+      {/* Segmented progress */}
+      <View style={[styles.progressRow, { marginTop: insets.top + 10 }]} accessibilityRole="progressbar" accessibilityValue={{ min: 1, max: STEPS.length, now: stepIndex + 1 }}>
+        {STEPS.map((_, i) => (
+          <View key={i} style={[styles.progressSeg, i <= stepIndex && styles.progressSegOn]} />
+        ))}
       </View>
 
       {/* Slides */}
@@ -79,8 +81,9 @@ export function OnboardingNavigator({ userId, onComplete }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
-  progressBar: { height: 3, backgroundColor: '#1a1a1a', marginTop: 52 },
-  progressFill: { height: '100%', backgroundColor: '#4f46e5', borderRadius: 2 },
+  progressRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 20 },
+  progressSeg: { flex: 1, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)' },
+  progressSegOn: { backgroundColor: '#8b5cf6' },
   slidesWrap: { flex: 1, flexDirection: 'row', width: width * STEPS.length },
   slide: { height: '100%' },
 });

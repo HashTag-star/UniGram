@@ -760,7 +760,7 @@ const PostDetailModal: React.FC<{
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 14, paddingBottom: 14, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 14, paddingBottom: 14, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
@@ -806,10 +806,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     borderRadius: 12,
     marginHorizontal: 14, marginVertical: 6, paddingHorizontal: 14, paddingVertical: 4,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   searchInput: { flex: 1, fontSize: 14 },
-  tabRow: { flexDirection: 'row', borderBottomWidth: 1, marginBottom: 4 },
+  tabRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, marginBottom: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#818cf8' },
   tabBtnText: { fontSize: 13, fontWeight: '600' },
@@ -824,7 +824,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     marginBottom: 20,
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     padding: 14,
     gap: 12,
   },
@@ -841,7 +841,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     position: 'relative',
   },
   cardClose: {
@@ -888,7 +888,7 @@ const styles = StyleSheet.create({
   userAvatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   userName: { fontSize: 13, fontWeight: 'bold' },
   userMeta: { fontSize: 11, marginTop: 1 },
-  followBtn: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
+  followBtn: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5 },
   followBtnActive: { borderColor: 'rgba(99,102,241,0.4)', backgroundColor: 'rgba(99,102,241,0.1)' },
   followBtnText: { fontSize: 12, fontWeight: '600' },
   trendRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },

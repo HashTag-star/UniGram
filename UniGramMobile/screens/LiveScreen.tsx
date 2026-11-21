@@ -961,7 +961,7 @@ const s = StyleSheet.create({
   livePillText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   elapsedText: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600' },
 
-  viewerPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  viewerPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)' },
   viewerCountText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   broadcasterRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -971,7 +971,7 @@ const s = StyleSheet.create({
   bcName: { color: '#fff', fontSize: 12, fontWeight: '700', maxWidth: 90 },
 
   ctrlBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  exitPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: 1 },
+  exitPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
   exitPillLeave: { backgroundColor: 'rgba(0,0,0,0.45)', borderColor: 'rgba(255,255,255,0.2)' },
   exitPillEnd: { backgroundColor: 'rgba(255,67,58,0.12)', borderColor: 'rgba(255,67,58,0.4)' },
   exitPillText: { color: '#fff', fontSize: 13, fontWeight: '700' },
@@ -997,7 +997,7 @@ const s = StyleSheet.create({
   commentText: { color: 'rgba(255,255,255,0.88)', fontSize: 12, flexShrink: 1 },
 
   inputRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 },
-  inputWrap: { flex: 1, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
+  inputWrap: { flex: 1, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
   input: { flex: 1, color: '#fff', fontSize: 14 },
   sendBtn: { marginLeft: 4 },
   sendBtnGrad: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 8,
     paddingVertical: 12,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: {
     width: 40,
@@ -511,17 +511,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerTitle: { fontSize: 18, fontWeight: '700' },
-  markAllText: { fontSize: 13, color: '#818cf8', fontWeight: '600' },
+  headerTitle: { fontSize: 19, fontWeight: '800', letterSpacing: -0.4 },
+  markAllText: { fontSize: 13.5, color: '#818cf8', fontWeight: '700' },
 
   sectionLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.2,
     paddingHorizontal: 16,
     paddingTop: 20,
     paddingBottom: 8,
-    textTransform: 'uppercase',
   },
 
   item: {

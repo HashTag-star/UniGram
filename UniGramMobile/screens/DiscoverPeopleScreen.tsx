@@ -144,7 +144,7 @@ const DiscoverSkeleton = () => (
       <Skeleton width={120} height={12} style={{ marginBottom: 4 }} />
       <View style={{ flexDirection: 'row', gap: 12 }}>
         {[1, 2, 3].map(i => (
-          <View key={i} style={{ width: 140, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', alignItems: 'center', gap: 10 }}>
+          <View key={i} style={{ width: 140, padding: 12, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.05)', alignItems: 'center', gap: 10 }}>
             <Skeleton width={60} height={60} borderRadius={30} />
             <Skeleton width={80} height={12} />
             <Skeleton width={'100%' as any} height={32} borderRadius={12} />
@@ -418,7 +418,7 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
               <View style={[styles.listCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
                 {peopleYouMayKnow.map((u, i) => <UserRow key={u.id || `pymk-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
                 {/* [Abena Owusu - Frontend] TODO(product): implement pagination or full suggestions screen */}
-                {/* <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: 1, borderTopColor: colors.border }]}>
+                {/* <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
                   <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>View More Suggestions</Text>
                 </TouchableOpacity> */}
               </View>
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
     width: 140,
     padding: 12,
     borderRadius: 20,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
   },
   interestAvatarWrap: { position: 'relative' },
@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 8,
   },
   contactIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
@@ -542,8 +542,8 @@ const styles = StyleSheet.create({
   contactBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
 
   // User List
-  listCard: { borderRadius: 20, borderWidth: 1, overflow: 'hidden' },
-  trendingCard: { borderRadius: 20, borderWidth: 1, overflow: 'hidden' },
+  listCard: { borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  trendingCard: { borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
   userRow: { flexDirection: 'row', alignItems: 'center', padding: 12 },
   avatarWrap: { marginRight: 12 },
   avatar: { width: 44, height: 44, borderRadius: 15 },

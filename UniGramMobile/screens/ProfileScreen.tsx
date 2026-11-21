@@ -29,6 +29,7 @@ import { AccountService } from '../services/accounts';
 import { isProActive, getPostAnalytics, getProfileAnalytics, recordProfileViewAnalytics, getAIInsights } from '../services/pro';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePaywall } from '../context/PaywallContext';
+import { createDirectConversation } from '../services/messages';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
@@ -123,34 +124,32 @@ export const ProfileScreen = React.memo<Props>(({
       const own = propIsOwn ?? targetId === user.id;
       setIsOwn(own);
 
-      const [prof, userPosts, userReels, followersList, followingList, likedSet, savedSet, taggedData] = await Promise.all([
-        getProfile(targetId),
-        getUserPosts(targetId),
-        getUserReels(targetId),
-        getFollowers(targetId),
-        getFollowing(targetId),
-        getLikedPostIds(user.id),
-        own ? getSavedPosts(user.id) : Promise.resolve([]),
-        supabase.from('posts')
-          .select(`
-            id, user_id, type, caption, media_url, media_urls, location, song, 
-            likes_count, comments_count, reposts_count, created_at, tagged_users, aspect_ratio,
-            profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type)
-          `)
-          .contains('tagged_users', [targetId])
-          .order('created_at', { ascending: false })
-          .then(r => r.data || []),
-      ]);
+      // Progressive: the header (profile row) appears as soon as it arrives; the
+      // grids, follower lists and saved/tagged tabs fill in as each resolves,
+      // instead of the whole screen waiting for the slowest of 8 queries.
+      const empty = <T,>() => [] as T[];
+      const settle = <T,>(p: Promise<T>) => p.catch(() => undefined as unknown as T);
+      const profileP = getProfile(targetId);
+      settle(getUserPosts(targetId)).then(v => setPosts(v ?? empty()));
+      settle(getUserReels(targetId)).then(v => setReels(v ?? empty()));
+      settle(getFollowers(targetId)).then(v => setFollowers(v ?? empty()));
+      settle(getFollowing(targetId)).then(v => setFollowing(v ?? empty()));
+      settle(getLikedPostIds(user.id)).then(v => setLikedIds(new Set(v ?? [])));
+      if (own) settle(getSavedPosts(user.id)).then(v => setSavedPosts(v ?? empty()));
+      supabase.from('posts')
+        .select(`
+          id, user_id, type, caption, media_url, media_urls, location, song,
+          likes_count, comments_count, reposts_count, created_at, tagged_users, aspect_ratio,
+          profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type)
+        `)
+        .contains('tagged_users', [targetId])
+        .order('created_at', { ascending: false })
+        .then(r => setTaggedPosts(r.data || []), () => {});
 
+      const prof = await profileP; // the only essential piece
       setProfile(prof);
-      setPosts(userPosts);
-      setReels(userReels);
-      setFollowers(followersList);
-      setFollowing(followingList);
-      setLikedIds(new Set(likedSet));
-      setSavedPosts(savedSet);
-      setTaggedPosts(taggedData);
       setIsSuspended(!!(prof as any)?.is_suspended);
+      setLoading(false);
 
       if (!own) {
         const following = await isFollowing(user.id, targetId);
@@ -277,6 +276,16 @@ export const ProfileScreen = React.memo<Props>(({
     }
   };
 
+  const openMessage = async () => {
+    if (!profile?.id || !currentUserId) return;
+    try {
+      const convId = await createDirectConversation(currentUserId, profile.id);
+      onMessagePress?.(convId, profile);
+    } catch {
+      showToast('Could not open the chat. Try again.', 'error');
+    }
+  };
+
   const openEdit = () => {
     medium();
     setShowEdit(true);
@@ -359,7 +368,7 @@ export const ProfileScreen = React.memo<Props>(({
   }, [activeTab, posts, reels, taggedPosts, savedPosts]);
 
   if (loading) return (
-    <FadeIn visible={loading} duration={180}>
+    <FadeIn visible={loading} duration={180} style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <ProfileHeaderSkeleton />
         <ProfilePostsSkeleton colSize={COL} />
@@ -424,8 +433,42 @@ export const ProfileScreen = React.memo<Props>(({
             )}
           </View>
 
-          <View style={styles.profileActions}>
-            <View style={styles.actionRow}>
+          <View style={styles.statsInline}>
+            <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textSub }]}>Posts</Text></View>
+            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7} accessibilityLabel="Followers" accessibilityRole="button">
+              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
+              <Text style={[styles.statLab, { color: colors.textSub }]}>Followers</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7} accessibilityLabel="Following" accessibilityRole="button">
+              <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
+              <Text style={[styles.statLab, { color: colors.textSub }]}>Following</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
+            {isPro && (
+              <View style={styles.proBadge}>
+                <Ionicons name="flash" size={11} color="#fff" />
+                <Text style={styles.proBadgeText}>PRO</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
+          {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
+          <View style={styles.metaRow}>
+            {profile?.major && (
+              <View style={styles.majorTag}>
+                <Text style={styles.majorTagText}>{profile.major}</Text>
+              </View>
+            )}
+            {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
+          </View>
+        </View>
+
+            <View style={styles.actionRowFull}>
               {isOwn ? (
                 <>
                   <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit} accessibilityLabel="Edit profile" accessibilityRole="button">
@@ -459,48 +502,12 @@ export const ProfileScreen = React.memo<Props>(({
                       {isFollowingUser ? 'Following' : 'Follow'}
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}} accessibilityLabel="Send message" accessibilityRole="button">
+                  <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openMessage} accessibilityLabel="Send message" accessibilityRole="button">
                     <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
                   </TouchableOpacity>
                 </>
               )}
             </View>
-          </View>
-        </View>
-
-        <View style={{ marginTop: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Text style={[styles.nameText, { color: colors.text }]}>{profile?.full_name}</Text>
-            {isPro && (
-              <View style={styles.proBadge}>
-                <Ionicons name="flash" size={11} color="#fff" />
-                <Text style={styles.proBadgeText}>PRO</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.usernameText, { color: colors.textMuted }]}>@{profile?.username}</Text>
-          {profile?.bio && <Text style={[styles.bioText, { color: colors.textSub }]}>{profile.bio}</Text>}
-          <View style={styles.metaRow}>
-            {profile?.major && (
-              <View style={styles.majorTag}>
-                <Text style={styles.majorTagText}>{profile.major}</Text>
-              </View>
-            )}
-            {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
-          </View>
-        </View>
-
-        <View style={[styles.statsRow, { borderColor: colors.border }]}>
-          <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
-          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7} accessibilityLabel={`Followers`} accessibilityRole="button">
-            <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
-            <Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7} accessibilityLabel={`Following`} accessibilityRole="button">
-            <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
-            <Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
       <View style={[styles.tabHeader, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
@@ -553,7 +560,7 @@ export const ProfileScreen = React.memo<Props>(({
   );
 
   return (
-    <FadeIn visible={!loading} duration={180}>
+    <FadeIn visible={!loading} duration={180} style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <FlatList
         key={activeTab === 'threads' || activeTab === 'analytics' ? 'list-view' : 'grid-list'}
@@ -782,7 +789,7 @@ const TrendChip = ({ curr, prev }: { curr: number; prev: number }) => {
 const HeroCard = ({ label, sub, value, prev, accentColor }: { label: string; sub: string; value: number; prev: number; accentColor: string }) => {
   const { colors } = useTheme();
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: accentColor + '28' }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg2, borderRadius: 16, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: accentColor + '28' }}>
       <Text style={{ color: colors.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>{label}</Text>
       <Text style={{ color: accentColor, fontSize: 30, fontWeight: '800', letterSpacing: -0.5 }}>{fmtNum(value)}</Text>
       <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2, marginBottom: 8 }}>{sub}</Text>
@@ -920,7 +927,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
               <Text style={{ color: colors.textMuted, fontSize: 13, lineHeight: 19 }}>{aiError}</Text>
               <TouchableOpacity
                 onPress={onLoadAI}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(168,85,247,0.12)', borderRadius: 12, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(168,85,247,0.25)' }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(168,85,247,0.12)', borderRadius: 12, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(168,85,247,0.25)' }}
               >
                 <Ionicons name="refresh" size={14} color="#a855f7" />
                 <Text style={{ color: '#a855f7', fontWeight: '700', fontSize: 13 }}>Retry</Text>
@@ -1076,7 +1083,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
   },
   container: { flex: 1 },
-  coverSection: { height: 160, position: 'relative' },
+  coverSection: { height: 140, position: 'relative' },
   cover: { width: '100%', height: '100%' },
   coverOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.3)' },
   headerTop: { position: 'absolute', top: 10, left: 16, right: 16, flexDirection: 'row', alignItems: 'center' },
@@ -1100,24 +1107,26 @@ const styles = StyleSheet.create({
   
   profileActions: { alignItems: 'center', marginBottom: 6 },
   actionRow: { flexDirection: 'row', gap: 8 },
-  editBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1 },
-  verifyBtn: { backgroundColor: 'rgba(129, 140, 248, 0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: 'rgba(129, 140, 248, 0.3)' },
+  actionRowFull: { flexDirection: 'row', gap: 8, marginTop: 16 },
+  statsInline: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', paddingBottom: 10, marginLeft: 12 },
+  editBtn: { flex: 1, alignItems: 'center', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth },
+  verifyBtn: { backgroundColor: 'rgba(129, 140, 248, 0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(129, 140, 248, 0.3)' },
   verifyText: { color: '#818cf8', fontWeight: '600', fontSize: 13 },
   proBtn: { backgroundColor: '#6366f1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
   proText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   proBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#6366f1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   proBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   btnText: { fontSize: 13, fontWeight: '600' },
-  followBtn: { backgroundColor: '#6366f1', borderRadius: 10, paddingHorizontal: 24, paddingVertical: 8 },
-  followingBtn: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  followBtn: { flex: 1, alignItems: 'center', backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 10 },
+  followingBtn: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)' },
   followBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  msgBtn: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  msgBtn: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth },
 
-  nameText: { fontSize: 20, fontWeight: '800' },
+  nameText: { fontSize: 19, fontWeight: '800', letterSpacing: -0.4 },
   usernameText: { fontSize: 14, marginTop: 2 },
   bioText: { marginTop: 10, lineHeight: 20, fontSize: 14 },
   metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  majorTag: { backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
+  majorTag: { backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(99,102,241,0.2)' },
   majorTagText: { color: '#818cf8', fontSize: 12, fontWeight: '700' },
   metaLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '500' },
 
@@ -1126,18 +1135,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around', 
     marginTop: 20, 
     paddingVertical: 14, 
-    borderTopWidth: 1, 
-    borderBottomWidth: 1, 
+    borderTopWidth: StyleSheet.hairlineWidth, 
+    borderBottomWidth: StyleSheet.hairlineWidth, 
     width: '100%',
   },
   statItem: { alignItems: 'center' },
-  statVal: { fontSize: 18, fontWeight: 'bold' },
-  statLab: { fontSize: 11, marginTop: 2 },
+  statVal: { fontSize: 19, fontWeight: '800', letterSpacing: -0.4 },
+  statLab: { fontSize: 12.5, marginTop: 1 },
 
   tabHeader: {
     flexDirection: 'row',
     width: '100%',
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   tabBtn: {
     flex: 1,
@@ -1177,7 +1186,7 @@ const styles = StyleSheet.create({
   suspendedCard: {
     alignItems: 'center', gap: 14,
     backgroundColor: 'rgba(245,158,11,0.08)',
-    borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(245,158,11,0.25)',
     borderRadius: 20, paddingHorizontal: 24, paddingVertical: 32,
     width: '100%',
   },
@@ -1190,7 +1199,7 @@ const styles = StyleSheet.create({
 
   focusContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' },
   focusContent: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
-  focusHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1 },
+  focusHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   focusTitle: { fontSize: 16, fontWeight: 'bold' },
   editPostContainer: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   editPostContent: { padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
@@ -1210,6 +1219,6 @@ const styles = StyleSheet.create({
   accName: { fontSize: 15, fontWeight: '700' },
   accUser: { fontSize: 13, marginTop: 2 },
   addAccountBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, marginTop: 8 },
-  addIconWrap: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  addIconWrap: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)' },
   addAccountText: { fontSize: 15, fontWeight: '600' },
 });

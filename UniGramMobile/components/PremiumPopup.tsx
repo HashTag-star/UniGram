@@ -91,7 +91,7 @@ export const PremiumPopup: React.FC<PremiumPopupProps> = ({
             />
           )}
           {icon && (
-            <View style={[styles.iconWrap, { backgroundColor: (iconColor || colors.accent) + '15' }]}>
+            <View style={[styles.iconWrap, { backgroundColor: (iconColor || colors.accent) + '1f' }]}>
               <Ionicons name={icon as any} size={32} color={iconColor || colors.accent} />
             </View>
           )}
@@ -101,35 +101,29 @@ export const PremiumPopup: React.FC<PremiumPopupProps> = ({
             {message && <Text style={[styles.message, { color: colors.textSub }]}>{message}</Text>}
           </View>
 
-          <View style={styles.buttonContainer}>
-            {buttons.map((btn, i) => {
+          <View style={[styles.buttonContainer, buttons.length === 2 && { flexDirection: 'row' }]}>
+            {(buttons.length === 2 ? [...buttons].sort((x, y) => (x.style === 'cancel' ? -1 : 0) - (y.style === 'cancel' ? -1 : 0)) : buttons).map((btn, i) => {
               const isDestructive = btn.style === 'destructive';
               const isCancel = btn.style === 'cancel';
-              const isLast = i === buttons.length - 1;
-
+              const bg = isDestructive
+                ? 'rgba(255,48,64,0.14)'
+                : isCancel
+                  ? colors.card
+                  : colors.accent;
+              const fg = isDestructive ? '#ff3040' : isCancel ? colors.textSub : '#fff';
               return (
-                <TouchableOpacity 
-                  key={i} 
-                  style={[
-                    styles.button, 
-                    !isLast && { borderBottomWidth: 1, borderBottomColor: colors.border },
-                    isDestructive && { backgroundColor: 'rgba(239, 68, 68, 0.08)' }
-                  ]}
+                <TouchableOpacity
+                  key={i}
+                  style={[styles.button, { backgroundColor: bg }, buttons.length === 2 && { flex: 1 }]}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={btn.text}
                   onPress={() => {
                     btn.onPress();
                     onClose();
                   }}
                 >
-                  <Text 
-                    style={[
-                      styles.buttonText, 
-                      { color: isCancel ? colors.textSub : colors.text },
-                      isDestructive && { color: '#ef4444', fontWeight: '800' },
-                      !isCancel && !isDestructive && { color: colors.accent, fontWeight: '700' }
-                    ]}
-                  >
-                    {btn.text}
-                  </Text>
+                  <Text style={[styles.buttonText, { color: fg }]}>{btn.text}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -153,12 +147,12 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 320,
-    borderRadius: 24,
-    borderWidth: 1,
+    maxWidth: 340,
+    borderRadius: 28,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     alignItems: 'center',
-    paddingTop: 24,
+    paddingTop: 26,
   },
   iconWrap: {
     width: 64,
@@ -170,7 +164,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingBottom: 24,
+    paddingBottom: 22,
     alignItems: 'center',
   },
   title: {
@@ -186,17 +180,19 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     width: '100%',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
   },
   button: {
-    width: '100%',
-    height: 54,
+    height: 48,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 12,
   },
   buttonText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });

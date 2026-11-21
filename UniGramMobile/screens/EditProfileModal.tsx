@@ -332,7 +332,7 @@ const modal = StyleSheet.create({
   closeBtn: { padding: 6 },
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#18181b', borderRadius: 14, borderWidth: 1, borderColor: '#27272a',
+    backgroundColor: '#18181b', borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a',
     paddingHorizontal: 16, height: 52, margin: 16, gap: 4,
   },
   searchInput: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '500' },
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingBottom: 14,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   title: { fontSize: 16, fontWeight: '700' },
   cancel: { fontSize: 15 },
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8,
   },
   input: {
-    borderWidth: 1, borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 15, minHeight: 46,
   },
@@ -374,7 +374,7 @@ const styles = StyleSheet.create({
   // Picker button — replaces inline text input for university/major
   pickerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderWidth: 1, borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 14, minHeight: 50,
   },
   pickerText: { flex: 1, fontSize: 15 },

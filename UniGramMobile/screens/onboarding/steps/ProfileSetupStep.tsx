@@ -384,7 +384,7 @@ const modal = StyleSheet.create({
   closeBtn: { padding: 6 },
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#18181b', borderRadius: 14, borderWidth: 1, borderColor: '#27272a',
+    backgroundColor: '#18181b', borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a',
     paddingHorizontal: 16, height: 52, margin: 16, gap: 4,
   },
   searchInput: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '500' },
@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
   // Picker button (tappable field that opens modal)
   pickerBtn: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#18181b', borderRadius: 16, borderWidth: 1, borderColor: '#27272a',
+    backgroundColor: '#18181b', borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a',
     paddingHorizontal: 16, height: 56,
   },
   inputIcon: { marginRight: 12 },
@@ -422,13 +422,13 @@ const styles = StyleSheet.create({
   pickerPlaceholder: { color: '#666', fontWeight: '400' },
 
   // Input (used for custom pronouns + bio)
-  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#18181b', borderRadius: 16, borderWidth: 1, borderColor: '#27272a', paddingHorizontal: 16, height: 56 },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#18181b', borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a', paddingHorizontal: 16, height: 56 },
   input: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '500' },
-  bioInput: { height: 100, textAlignVertical: 'top', paddingTop: 16, backgroundColor: '#18181b', borderRadius: 16, borderWidth: 1, borderColor: '#27272a', paddingHorizontal: 16, color: '#fff', fontSize: 16, fontWeight: '500' },
+  bioInput: { height: 100, textAlignVertical: 'top', paddingTop: 16, backgroundColor: '#18181b', borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a', paddingHorizontal: 16, color: '#fff', fontSize: 16, fontWeight: '500' },
   charCount: { fontSize: 11, color: 'rgba(255,255,255,0.3)', textAlign: 'right', marginTop: 8, fontWeight: '600' },
 
   // Chips (pronouns + year)
-  chip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, borderWidth: 1, borderColor: '#27272a', backgroundColor: '#18181b' },
+  chip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, borderWidth: StyleSheet.hairlineWidth, borderColor: '#27272a', backgroundColor: '#18181b' },
   chipActive: { backgroundColor: 'rgba(139,92,246,0.15)', borderColor: '#8b5cf6' },
   chipText: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' },
   chipTextActive: { color: '#a855f7' },

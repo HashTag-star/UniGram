@@ -109,8 +109,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
+          "imageWidth": 192,
           "resizeMode": "contain",
-          "backgroundColor": "#05050a"
+          "backgroundColor": "#000000"
         }
       ],
       "expo-image",
@@ -125,6 +126,7 @@
     "owner": "heis_hashtag",
     "updates": {
       "url": "https://u.expo.dev/b08e2c74-68d1-4e72-94ac-a92750902d6a"
-    }
+    },
+    "backgroundColor": "#000000"
   }
 }

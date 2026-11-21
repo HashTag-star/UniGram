@@ -1,259 +1,159 @@
 import React, { useRef, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  ScrollView, Animated, StatusBar,
+  View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { usePopup } from '../../context/PopupContext';
+import { useHaptics } from '../../hooks/useHaptics';
+import { AuthBackground, AuthField, PasswordToggle, AuthButton, type AuthInputRef } from '../../components/ui/AuthKit';
+import { authPalette as P, brand, status, shadow } from '../../constants/design';
 
 interface Props {
   onDone: () => void;
 }
 
-const Field: React.FC<{
-  icon: string;
-  placeholder: string;
-  value: string;
-  onChangeText: (t: string) => void;
-  secureTextEntry?: boolean;
-  rightNode?: React.ReactNode;
-  returnKeyType?: any;
-  onSubmitEditing?: () => void;
-}> = ({ icon, placeholder, value, onChangeText, secureTextEntry, rightNode, returnKeyType, onSubmitEditing }) => {
-  const [focused, setFocused] = useState(false);
-  const anim = useRef(new Animated.Value(0)).current;
-
-  const onFocus = () => {
-    setFocused(true);
-    Animated.timing(anim, { toValue: 1, duration: 180, useNativeDriver: false }).start();
-  };
-  const onBlur = () => {
-    setFocused(false);
-    Animated.timing(anim, { toValue: 0, duration: 180, useNativeDriver: false }).start();
-  };
-
-  const borderColor = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(255,255,255,0.08)', 'rgba(129,140,248,0.7)'],
-  });
-  const bgColor = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(255,255,255,0.05)', 'rgba(99,102,241,0.08)'],
-  });
-
-  return (
-    <Animated.View style={[styles.field, { borderColor, backgroundColor: bgColor }]}>
-      <Ionicons name={icon as any} size={18} color={focused ? '#818cf8' : '#4b5563'} style={styles.fieldIcon} />
-      <TextInput
-        style={styles.fieldInput}
-        placeholder={placeholder}
-        placeholderTextColor="#4b5563"
-        value={value}
-        onChangeText={onChangeText}
-        secureTextEntry={secureTextEntry}
-        autoCapitalize="none"
-        autoCorrect={false}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        returnKeyType={returnKeyType}
-        onSubmitEditing={onSubmitEditing}
-      />
-      {rightNode}
-    </Animated.View>
-  );
-};
-
 export default function ResetPasswordScreen({ onDone }: Props) {
   const insets = useSafeAreaInsets();
+  const { showPopup } = usePopup();
+  const { error: hapticError, success: hapticSuccess } = useHaptics();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { showPopup } = usePopup();
+  const [passError, setPassError] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const confirmRef = useRef<AuthInputRef>(null);
+
+  const rules = [
+    { ok: password.length >= 8, label: 'At least 8 characters' },
+    { ok: /[A-Za-z]/.test(password) && /[0-9]/.test(password), label: 'Letters and numbers' },
+    { ok: !!confirm && password === confirm, label: 'Passwords match' },
+  ];
 
   const handleReset = async () => {
-    if (!password || !confirm) {
-      showPopup({
-        title: 'Missing fields',
-        message: 'Please fill in both password fields.',
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
-      return;
-    }
-    if (password.length < 8) {
-      showPopup({
-        title: 'Too short',
-        message: 'Password must be at least 8 characters.',
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
-      return;
-    }
-    if (password !== confirm) {
-      showPopup({
-        title: 'Mismatch',
-        message: 'Passwords do not match.',
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
-      return;
-    }
+    setFormError(null);
+    let ok = true;
+    if (password.length < 8) { setPassError('Password must be at least 8 characters'); ok = false; } else setPassError(null);
+    if (!confirm) { setConfirmError('Confirm your new password'); ok = false; }
+    else if (password !== confirm) { setConfirmError('Passwords don’t match'); ok = false; }
+    else setConfirmError(null);
+    if (!ok) { hapticError(); return; }
 
     setLoading(true);
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
+      hapticSuccess();
       showPopup({
         title: 'Password updated',
         message: 'Your password has been changed successfully.',
         icon: 'checkmark-circle-outline',
-        buttons: [{ text: 'Sign in', onPress: onDone }]
+        buttons: [{ text: 'Sign in', onPress: onDone }],
       });
     } catch (err: any) {
-      showPopup({
-        title: 'Error',
-        message: err.message ?? 'Could not update password.',
-        icon: 'alert-circle-outline',
-        buttons: [{ text: 'OK', onPress: () => {} }]
-      });
+      hapticError();
+      setFormError(err?.message ?? 'Could not update password.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-
-      <LinearGradient
-        colors={['rgba(99,102,241,0.18)', 'rgba(67,56,202,0.08)', 'transparent']}
-        style={[styles.blobTop, { pointerEvents: 'none' }]}
-      />
-      <LinearGradient
-        colors={['transparent', 'rgba(79,70,229,0.1)', 'rgba(109,40,217,0.06)']}
-        style={[styles.blobBottom, { pointerEvents: 'none' }]}
-      />
-
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-      >
+    <AuthBackground>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
-          contentContainerStyle={styles.scroll}
+          contentContainerStyle={[s.scroll, { paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Icon */}
-          <View style={[styles.iconWrap, { marginTop: insets.top + 24 }]}>
+          <View style={[s.iconWrap, shadow.glow(brand.violet)]}>
             <LinearGradient
-              colors={['#818cf8', '#6366f1', '#4338ca']}
+              colors={brand.gradient as any}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              style={styles.iconCircle}
+              style={s.iconCircle}
             >
-              <Ionicons name="lock-closed" size={34} color="#fff" />
+              <Ionicons name="lock-closed" size={32} color="#fff" />
             </LinearGradient>
           </View>
 
-          <Text style={styles.title}>Set new password</Text>
-          <Text style={styles.subtitle}>Choose a strong password for your UniGram account.</Text>
+          <Text style={s.title}>Set a new password</Text>
+          <Text style={s.subtitle}>Choose a strong password you don’t use anywhere else.</Text>
 
-          <Field
+          {formError ? (
+            <View style={s.errorBanner} accessibilityLiveRegion="polite">
+              <Ionicons name="alert-circle" size={16} color={status.danger} />
+              <Text style={s.errorBannerText}>{formError}</Text>
+            </View>
+          ) : null}
+
+          <AuthField
             icon="lock-closed-outline"
             placeholder="New password"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(t) => { setPassword(t); if (passError) setPassError(null); }}
             secureTextEntry={!showPass}
+            autoComplete="new-password"
+            textContentType="newPassword"
             returnKeyType="next"
-            rightNode={
-              <TouchableOpacity onPress={() => setShowPass(v => !v)} style={styles.eyeBtn}>
-                <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={18} color="#4b5563" />
-              </TouchableOpacity>
-            }
+            onSubmitEditing={() => confirmRef.current?.focus()}
+            error={passError}
+            rightNode={<PasswordToggle shown={showPass} onToggle={() => setShowPass(v => !v)} />}
           />
-
-          <Field
+          <AuthField
+            ref={confirmRef}
             icon="shield-checkmark-outline"
             placeholder="Confirm new password"
             value={confirm}
-            onChangeText={setConfirm}
+            onChangeText={(t) => { setConfirm(t); if (confirmError) setConfirmError(null); }}
             secureTextEntry={!showConfirm}
-            returnKeyType="done"
+            autoComplete="new-password"
+            textContentType="newPassword"
+            returnKeyType="go"
             onSubmitEditing={handleReset}
-            rightNode={
-              <TouchableOpacity onPress={() => setShowConfirm(v => !v)} style={styles.eyeBtn}>
-                <Ionicons name={showConfirm ? 'eye-off-outline' : 'eye-outline'} size={18} color="#4b5563" />
-              </TouchableOpacity>
-            }
+            error={confirmError}
+            rightNode={<PasswordToggle shown={showConfirm} onToggle={() => setShowConfirm(v => !v)} />}
           />
 
-          {/* Strength hint */}
-          <View style={styles.hint}>
-            <Ionicons name="information-circle-outline" size={13} color="#6366f1" />
-            <Text style={styles.hintText}>At least 8 characters recommended.</Text>
+          <View style={s.rules}>
+            {rules.map(r => (
+              <View key={r.label} style={s.ruleRow}>
+                <Ionicons
+                  name={r.ok ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={16}
+                  color={r.ok ? status.success : P.textMuted}
+                />
+                <Text style={[s.ruleText, r.ok && { color: P.textSub }]}>{r.label}</Text>
+              </View>
+            ))}
           </View>
 
-          <TouchableOpacity onPress={handleReset} disabled={loading} activeOpacity={0.85} style={styles.primaryWrap}>
-            <LinearGradient
-              colors={loading ? ['#374151', '#374151'] : ['#818cf8', '#6366f1', '#4338ca']}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={styles.primaryBtn}
-            >
-              {loading
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.primaryBtnText}>Update password</Text>
-              }
-            </LinearGradient>
-          </TouchableOpacity>
+          <AuthButton label="Update password" onPress={handleReset} loading={loading} />
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </AuthBackground>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#05050a' },
-  blobTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 420, zIndex: 0 },
-  blobBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 300, zIndex: 0 },
+const s = StyleSheet.create({
+  scroll: { flexGrow: 1, paddingHorizontal: 24 },
+  iconWrap: { alignSelf: 'center', width: 76, height: 76, borderRadius: 26, marginBottom: 28 },
+  iconCircle: { flex: 1, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  title: { color: '#fff', fontSize: 28, fontWeight: '800', letterSpacing: -0.7, textAlign: 'center' },
+  subtitle: { color: P.textSub, fontSize: 14.5, lineHeight: 20, textAlign: 'center', marginTop: 6, marginBottom: 28, paddingHorizontal: 12 },
 
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 48 },
-
-  iconWrap: { alignItems: 'center', marginBottom: 28 },
-  iconCircle: {
-    width: 88, height: 88, borderRadius: 28,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.7, shadowRadius: 28, elevation: 28,
+  errorBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 14,
+    backgroundColor: 'rgba(255,48,64,0.10)', borderColor: 'rgba(255,48,64,0.3)',
+    borderWidth: 1, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11,
   },
+  errorBannerText: { color: '#ff7a85', fontSize: 13.5, fontWeight: '500', flex: 1, lineHeight: 18 },
 
-  title: { fontSize: 26, fontWeight: '700', color: '#fff', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: 'rgba(255,255,255,0.38)', marginBottom: 32, lineHeight: 20 },
-
-  field: {
-    flexDirection: 'row', alignItems: 'center',
-    borderRadius: 14, borderWidth: 1.5,
-    paddingHorizontal: 14, marginBottom: 14, height: 54,
-  },
-  fieldIcon: { marginRight: 10 },
-  fieldInput: { flex: 1, color: '#fff', fontSize: 15 },
-  eyeBtn: { padding: 4 },
-
-  hint: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(99,102,241,0.08)',
-    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
-    borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)',
-    marginBottom: 28,
-  },
-  hintText: { flex: 1, color: 'rgba(255,255,255,0.4)', fontSize: 12, lineHeight: 17 },
-
-  primaryWrap: { borderRadius: 14, overflow: 'hidden' },
-  primaryBtn: { height: 56, alignItems: 'center', justifyContent: 'center' },
-  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
+  rules: { gap: 9, marginTop: 4, marginBottom: 24, paddingHorizontal: 4 },
+  ruleRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  ruleText: { color: P.textMuted, fontSize: 13 },
 });

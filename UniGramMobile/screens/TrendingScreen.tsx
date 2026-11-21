@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingBottom: 12,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: { padding: 4 },
   headerCenter: { flex: 1, alignItems: 'center' },
@@ -427,13 +427,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   pill: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   pillText: { fontSize: 13, fontWeight: '600' },
 
@@ -456,7 +456,7 @@ const styles = StyleSheet.create({
   // Card
   card: {
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 14,
     overflow: 'hidden',
   },
@@ -537,7 +537,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingBottom: 12,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   modalClose: { padding: 4 },
   modalTitle: { fontSize: 15, fontWeight: '700' },

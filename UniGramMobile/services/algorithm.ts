@@ -135,10 +135,15 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       }
     }
 
-    if (error) {
+    // The ranked RPC can legitimately return nothing (e.g. the pre-v2 SQL hides every
+    // post already seen in the last 48h). An empty feed is never the right answer
+    // while posts exist, so fall through to the chronological query for page one.
+    const rpcEmpty = !error && results.length === 0 && excludeIds.length === 0 && offset === 0;
+
+    if (error || rpcEmpty) {
       // Keep the feed usable during a staged backend rollout, but do not let
       // this fallback replace the personalized path while the RPC is healthy.
-      console.warn('Feed RPC fallback:', error.message);
+      if (error) console.warn('Feed RPC fallback:', error.message);
       let q = supabase
         .from('posts')
         .select(`
