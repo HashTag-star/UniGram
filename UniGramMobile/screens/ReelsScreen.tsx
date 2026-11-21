@@ -16,6 +16,8 @@ import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementR
 import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
+import { filterEligibleAds, noteAdShown, scaleIntervalForCampaign } from '../services/adDelivery';
+import { useAdPolicy } from '../hooks/useAdPolicy';
 import { ReelAdCard } from '../components/ReelAdCard';
 import { followUser, unfollowUser, getFollowing } from '../services/profiles';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
@@ -270,80 +272,6 @@ const liveCardStyles = StyleSheet.create({
   swipeHintText: { color: 'rgba(255,255,255,0.25)', fontSize: 12 },
 });
 
-// ─── In-Stream Ad Overlay (Facebook/YouTube style) ──────────────────────────
-
-const InStreamAdOverlay: React.FC<{
-  ad: any;
-  onComplete: () => void;
-}> = ({ ad, onComplete }) => {
-  const [countdown, setCountdown] = useState(5);
-  const [canSkip, setCanSkip] = useState(false);
-  const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setCanSkip(true);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1250); // Increased from 1000ms to 1250ms for a more natural "not too fast" feel
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <View style={styles.inStreamContainer}>
-      <View style={styles.inStreamBackdrop} />
-      
-      {/* Skip Button - Only shows after 5s */}
-      {canSkip && (
-        <TouchableOpacity 
-          style={[styles.inStreamSkipBtn, { top: insets.top + 20 }]} 
-          onPress={onComplete}
-          activeOpacity={0.8}
-          accessibilityLabel="Skip Ad"
-          accessibilityRole="button"
-        >
-          <Text style={styles.inStreamSkipText}>Skip Ad</Text>
-          <Ionicons name="chevron-forward" size={16} color="#fff" />
-        </TouchableOpacity>
-      )}
-
-      <View style={styles.inStreamContent}>
-        <View style={styles.inStreamBadge}>
-          <Text style={styles.inStreamBadgeText}>AD</Text>
-        </View>
-
-        {/* Real Ad Branding */}
-        <View style={styles.inStreamBrandRow}>
-          {ad?.profiles?.avatar_url && (
-            <Image source={{ uri: ad.profiles.avatar_url }} style={styles.inStreamBrandAvatar} />
-          )}
-          <Text style={styles.inStreamBrandName}>{ad?.profiles?.username || ad?.name || 'Sponsored'}</Text>
-        </View>
-
-        <Text style={styles.inStreamTitle}>{ad?.headline || 'Advertisement'}</Text>
-        <Text style={styles.inStreamSub}>{ad?.body || ''}</Text>
-        
-        {!canSkip && (
-          <View style={styles.inStreamCountdownRow}>
-            <Text style={styles.inStreamCountdownText}>Skip Ad in {countdown}s</Text>
-          </View>
-        )}
-
-        {canSkip && ad?.cta && (
-          <TouchableOpacity style={styles.inStreamCTABtn} onPress={() => ad?.media_url && Linking.openURL(ad.media_url).catch(() => {})}>
-            <Text style={styles.inStreamCTAText}>{ad.cta}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
-};
-
 // ─── Reel item ────────────────────────────────────────────────────────────────
 
 const ReelItem: React.FC<{
@@ -356,8 +284,7 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
-  reelAds?: any[]; // Pass ads pool to select from
-}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, reelAds = [] }) => {
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const { colors } = useTheme();
   const [captionOpen, setCaptionOpen] = useState(false);
@@ -390,37 +317,12 @@ const ReelItem: React.FC<{
   const commentBarH = COMMENT_BAR_HEIGHT + insets.bottom;
   const profile = reel.profiles;
 
-  // Mid-roll ad demo state
-  const [showMidRoll, setShowMidRoll] = useState(false);
-  const [midRollPlayed, setMidRollPlayed] = useState(false);
-  const [activeAd, setActiveAd] = useState<any>(null);
-
   // Buffering / network error state
   const [isBuffering, setIsBuffering] = useState(false);
   const [netError, setNetError] = useState(false);
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   const stuckCountRef = useRef(0);
   const lastTimeRef = useRef(-1);
-
-  // Trigger mid-roll ad at 30% progress
-  useEffect(() => {
-    if (isActive && progress > 0.3 && !midRollPlayed && !showMidRoll) {
-      // Pick a real ad from the pool, or fallback to the demo one
-      const realAd = reelAds.length > 0 ? reelAds[Math.floor(Math.random() * reelAds.length)] : {
-        name: 'UniGram Premium',
-        headline: 'Elevate your campus experience.',
-        body: 'Get exclusive badges, AI insights, and ad-free browsing.',
-        cta: 'Upgrade Now',
-        profiles: { username: 'unigram_official' }
-      };
-      
-      setActiveAd(realAd);
-      setShowMidRoll(true);
-      setMidRollPlayed(true);
-      setIsPaused(true);
-      hapticMedium();
-    }
-  }, [progress, isActive, midRollPlayed, showMidRoll, reelAds]);
 
   // Pulsing shimmer loop for seek bar during buffer
   useEffect(() => {
@@ -1025,15 +927,6 @@ const ReelItem: React.FC<{
         }}
       />
 
-      {showMidRoll && activeAd && (
-        <InStreamAdOverlay 
-          ad={activeAd}
-          onComplete={() => {
-            setShowMidRoll(false);
-            setIsPaused(false);
-          }} 
-        />
-      )}
     </View>
   );
 });
@@ -1162,66 +1055,48 @@ export const ReelsScreen: React.FC<{
   const adImpressionsRef = useRef(new Set<string>());
   const reelsListRef = useRef<any>(null);
 
-  // Stable seed so reel-ad slot offsets vary between cold starts but stay
-  // fixed during a session — without this the memo would shuffle ads as
-  // the user scrolled.
-  const reelAdSlotSeedRef = useRef(Math.floor(Math.random() * 1000));
+  // ── Ads: inserted just-in-time, driven by the viewer's plan ─────────────────
+  // Instead of baking ad slots into the list up-front, an ad is attached AFTER an
+  // upcoming organic reel only when its moment arrives: the viewer has watched
+  // enough reels, enough time has passed since the last ad, and their plan's
+  // session cap isn't reached. Pro viewers get a lighter schedule (see adDelivery).
+  const adPolicy = useAdPolicy();
+  const adPolicyRef = useRef(adPolicy);
+  adPolicyRef.current = adPolicy;
+  const reelPolicy = adPolicy.reels;
+  const [adAnchors, setAdAnchors] = useState<Record<string, any>>({}); // reel id -> ad shown after it
+  const adSeedRef = useRef(Math.floor(Math.random() * 1000));
+  const adsShownRef = useRef(0);
+  const lastAdAtRef = useRef(0);
+  const lastAdOrganicRef = useRef(0);
+  const organicViewedRef = useRef(0);
+  const pendingAdRef = useRef(false);
+  const adCursorRef = useRef(0);
 
-  // Build mixed feed: inject live cards + sponsored reel ads
+  // Build the mixed list: organic reels, live cards and any anchored ad.
   const LIVE_INTERVAL = 5;
   const reels = React.useMemo(() => {
     const result: any[] = [];
     let liveIdx = 0;
-    let adIdx = 0;
-
-    // ── Smart ad placement (engagement-aware, IG/TikTok style) ─────────
-    //
-    // Instead of fixed intervals, ads adapt to user scroll depth:
-    //  • First ad never appears before the 4th organic reel (warm-up)
-    //  • Base interval derived from the campaign's budget & reach
-    //  • As users scroll deeper, ad spacing gradually increases (fatigue-
-    //    aware): every 20 organic reels adds +1 to the gap
-    //  • A session-seeded jitter (±2 reels) randomizes positions so two
-    //    viewers never see ads in exactly the same spots
-    const baseInterval = reelAds.length > 0
-      ? adFrequencyInterval(reelAds[0].budget ?? 60, reelAds[0].reach_multiplier ?? 1)
-      : 11;
-    const baseAdGap = Math.max(7, Math.round(baseInterval * 1.4));
-
-    const FIRST_AD_MIN_INDEX = 4;
-    const seed = reelAdSlotSeedRef.current;
-
-    // Track how many organic reels have been pushed to calculate fatigue
-    let organicCount = 0;
-    // Track the next organic index at which an ad should be injected
-    let nextAdAt = FIRST_AD_MIN_INDEX + (seed % 3); // jittered warm-up
-
     rawReels.forEach((reel, i) => {
       result.push(reel);
-      organicCount++;
-
-      // Live session injection
       if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
       }
-
-      // Smart ad injection
-      if (reelAds.length > 0 && organicCount >= nextAdAt) {
-        const ad = reelAds[adIdx % reelAds.length];
-        adIdx++;
-        result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
-
-        // Calculate the next ad position with fatigue-aware spacing:
-        // Base gap + 1 extra reel for every 20 organic reels viewed +
-        // session-seeded jitter of ±2
-        const fatigueBonus = Math.floor(organicCount / 20);
-        const jitter = ((seed + adIdx * 7) % 5) - 2; // -2 to +2
-        const nextGap = baseAdGap + fatigueBonus + jitter;
-        nextAdAt = organicCount + Math.max(5, nextGap);
-      }
+      const ad = adAnchors[reel.id];
+      if (ad) result.push({ id: `__reel_ad_${ad.id}_${reel.id}__`, _type: 'reel_ad', ad });
     });
     return result;
-  }, [rawReels, liveSessions, reelAds]);
+  }, [rawReels, liveSessions, adAnchors]);
+
+  const handleAdHide = useCallback((adId: string) => {
+    setReelAds(prev => prev.filter(a => a.id !== adId));
+    setAdAnchors(prev => {
+      const next: Record<string, any> = {};
+      Object.entries(prev).forEach(([k, v]) => { if (v.id !== adId) next[k] = v; });
+      return next;
+    });
+  }, []);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
   const { colors } = useTheme();
@@ -1229,36 +1104,79 @@ export const ReelsScreen: React.FC<{
   // active state to trigger immediate playback. This provides the "snappy"
   // experience found on top-tier social platforms.
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 51 }).current;
-  // Time the last reel ad was actually shown. If the user lands on a new ad
-  // slot less than COOLDOWN_MS after the previous one, we auto-swipe past it
-  // so the same person never sees two ads back-to-back even if the random
-  // slot offset put them close together.
-  const lastReelAdShownAtRef = useRef(0);
-  const REEL_AD_COOLDOWN_MS = 60_000;
-  const onViewableItemsChanged = useCallback(({ viewableItems, changed }: any) => {
+  const reelsRef = useRef<any[]>([]);
+  reelsRef.current = reels;
+  const rawReelsRef = useRef<any[]>([]);
+  rawReelsRef.current = rawReels;
+  const reelAdsRef = useRef<any[]>([]);
+  reelAdsRef.current = reelAds;
+  const adAnchorsRef = useRef<Record<string, any>>({});
+  adAnchorsRef.current = adAnchors;
+
+  /** Decide — right now — whether an ad should be attached a couple of reels ahead. */
+  const maybeScheduleAd = useCallback((activeItemIndex: number) => {
+    if (pendingAdRef.current) return;
+    const pool = reelAdsRef.current;
+    if (pool.length === 0) return;
+    const pol = reelPolicy;
+    if (adsShownRef.current >= pol.sessionCap) return;
+
+    const organicSince = organicViewedRef.current - lastAdOrganicRef.current;
+    const needed = adsShownRef.current === 0
+      ? pol.firstAfter
+      : scaleIntervalForCampaign(pol.interval, adFrequencyInterval(pool[0].budget ?? 60, pool[0].reach_multiplier ?? 1))
+        + (((adSeedRef.current + adsShownRef.current * 7) % 3) - 1); // ±1 jitter per session
+    if (organicSince < needed) return;
+    if (lastAdAtRef.current !== 0 && Date.now() - lastAdAtRef.current < pol.minGapMs) return;
+
+    // Anchor on the organic reel two ahead so the swap never happens under the viewer.
+    const list = reelsRef.current;
+    let ahead = 0;
+    let anchor: any = null;
+    for (let i = activeItemIndex + 1; i < list.length; i++) {
+      const it = list[i];
+      if (it._type === 'live' || it._type === 'reel_ad') continue;
+      ahead++;
+      if (ahead === 2) { anchor = it; break; }
+    }
+    if (!anchor || adAnchorsRef.current[anchor.id]) return;
+
+    const ad = pool[adCursorRef.current % pool.length];
+    adCursorRef.current++;
+    pendingAdRef.current = true;
+    setAdAnchors(prev => ({ ...prev, [anchor.id]: ad }));
+  }, [reelPolicy]);
+
+  // FlatList forbids changing onViewableItemsChanged after mount, so keep this
+  // callback identity-stable and reach the latest scheduler through a ref.
+  const maybeScheduleRef = useRef(maybeScheduleAd);
+  maybeScheduleRef.current = maybeScheduleAd;
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (viewableItems.length === 0) return;
     const top = viewableItems[0];
     const newIndex = top.index ?? 0;
+    const item = top.item;
 
-    // Cooldown skip — only when the newly-active item IS an ad
-    if (top.item?._type === 'reel_ad') {
-      const sinceLast = Date.now() - lastReelAdShownAtRef.current;
-      if (lastReelAdShownAtRef.current !== 0 && sinceLast < REEL_AD_COOLDOWN_MS) {
-        // Land on the next non-ad item without flickering the ad UI
-        try {
-          reelsListRef.current?.scrollToIndex({ index: newIndex + 1, animated: true });
-        } catch {}
-        return;
+    if (item?._type === 'reel_ad') {
+      // The ad has arrived on screen: this is the moment the pacing clock restarts.
+      if (pendingAdRef.current) {
+        pendingAdRef.current = false;
+        adsShownRef.current += 1;
+        lastAdAtRef.current = Date.now();
+        lastAdOrganicRef.current = organicViewedRef.current;
       }
-      lastReelAdShownAtRef.current = Date.now();
+    } else if (item && item._type !== 'live') {
+      // Count organic reels by position among organic items only.
+      let n = 0;
+      const list = reelsRef.current;
+      for (let i = 0; i <= newIndex && i < list.length; i++) {
+        if (list[i]._type !== 'live' && list[i]._type !== 'reel_ad') n++;
+      }
+      organicViewedRef.current = Math.max(organicViewedRef.current, n);
+      maybeScheduleRef.current(newIndex);
     }
 
-    setActiveIndex(prev => {
-      if (prev !== newIndex) {
-        return newIndex;
-      }
-      return prev;
-    });
+    setActiveIndex(prev => (prev !== newIndex ? newIndex : prev));
   }, []);
 
   const load = useCallback(async () => {
@@ -1291,7 +1209,10 @@ export const ReelsScreen: React.FC<{
       setLikedPostIds(new Set(likedPostData));
       setFollowingIds(new Set((followingData ?? []).map((p: any) => p?.id).filter(Boolean)));
       setLiveSessions(liveData.data ?? []);
-      getActiveAdsForPlacement('reels', profData?.university ?? null, user.id).then(setReelAds).catch((e) => console.warn('[ReelsScreen] loadAds:', e?.message));
+      getActiveAdsForPlacement('reels', profData?.university ?? null, user.id)
+        .then(ads => filterEligibleAds(ads, adPolicyRef.current))
+        .then(setReelAds)
+        .catch((e) => console.warn('[ReelsScreen] loadAds:', e?.message));
       const newReels: any[] = reelsData ?? [];
       setRawReels(prev => {
         const combined = prev.length ? [...prev, ...newReels.filter((r: any) => !prev.some(p => p.id === r.id))] : newReels;
@@ -1372,10 +1293,11 @@ export const ReelsScreen: React.FC<{
   const handleToggleMute = useCallback(() => setIsMuted(m => !m), []);
   const handleLivePress = useCallback((sessionId: string) => setActiveLiveSessionId(sessionId), []);
   const handleAdImpression = useCallback((adId: string) => {
-    if (!adImpressionsRef.current.has(adId)) {
-      adImpressionsRef.current.add(adId);
-      recordCampusAdImpression(adId).catch((e) => console.warn('[ReelsScreen] adImpression:', e?.message));
-    }
+    // Called by ReelAdCard only after the ad stayed on screen for the dwell time.
+    if (adImpressionsRef.current.has(adId)) return;
+    adImpressionsRef.current.add(adId);
+    noteAdShown(adId).catch(() => {});
+    recordCampusAdImpression(adId, 'reels').catch((e) => console.warn('[ReelsScreen] adImpression:', e?.message));
   }, []);
   const keyExtractor = useCallback(
     (r: any) => `${r._type === 'live' ? 'live-' : r._type === 'reel_ad' ? 'ad-' : ''}${r.id}`,
@@ -1398,11 +1320,12 @@ export const ReelsScreen: React.FC<{
           ad={item.ad}
           isActive={index === activeIndex && isAppActive}
           itemHeight={containerHeight}
-          onSkip={() => {
-            try { reelsListRef.current?.scrollToIndex({ index: index + 1, animated: true }); } catch {}
-          }}
           onImpression={handleAdImpression}
+          onHide={handleAdHide}
           currentUserId={currentUserId}
+          muted={isMuted}
+          onMuteToggle={handleToggleMute}
+          dwellMs={reelPolicy.dwellMs}
         />
       );
     }
@@ -1417,13 +1340,12 @@ export const ReelsScreen: React.FC<{
         onMuteToggle={handleToggleMute}
         itemHeight={containerHeight}
         onBack={onBack}
-        reelAds={reelAds}
       />
     );
   }, [
     containerHeight, activeIndex, isAppActive, currentUserId,
     likedPostIds, likedIds, followingIds, isMuted,
-    handleLivePress, handleAdImpression, handleToggleMute, onBack, reelAds
+    handleLivePress, handleAdImpression, handleAdHide, handleToggleMute, onBack, reelPolicy.dwellMs
   ]);
 
   if (loading) {

@@ -15,6 +15,7 @@ import { deleteUserAccount } from '../services/profiles';
 import { isProActive, isProPeriodActive, setProDisabled, setProAutoRenew } from '../services/pro';
 import { withSimulatedPro } from '../services/simulatedPro';
 import { usePaywall } from '../context/PaywallContext';
+import { getAdPolicy } from '../services/adDelivery';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -846,6 +847,34 @@ export const SettingsScreen: React.FC<Props> = ({
               />
             </Section>
           )}
+
+          <Section title="Ads">
+            {(() => {
+              const pro = isProActive(proProfile);
+              const pol = getAdPolicy(pro);
+              return (
+                <>
+                  <Row
+                    icon="megaphone"
+                    iconColor={pro ? '#22c55e' : '#f59e0b'}
+                    label={pol.label}
+                    sublabel={pol.summary}
+                    noBorder={pro}
+                  />
+                  {!pro && (
+                    <Row
+                      icon="sparkles"
+                      iconColor="#ec4899"
+                      label="See fewer ads with Pro"
+                      sublabel="About half the ads, spaced further apart"
+                      onPress={() => { onClose(); setTimeout(() => openPaywall('ad_light'), 350); }}
+                      noBorder
+                    />
+                  )}
+                </>
+              );
+            })()}
+          </Section>
 
           <Section title="Preferences">
             <Row

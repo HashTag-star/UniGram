@@ -118,14 +118,14 @@ export const AuthField = React.forwardRef<AuthInputRef, AuthFieldProps>(({
     <View style={[{ marginBottom: error || hint ? 6 : 14 }, style]}>
       <Animated.View style={[styles.field, { borderColor: borderColor as any, backgroundColor }]}>
         <Ionicons name={icon as any} size={19} color={iconColor} style={{ marginRight: 12 }} />
-        <View style={{ flex: 1, height: '100%', justifyContent: 'center' }}>
+        <View style={{ flex: 1, height: '100%', justifyContent: 'center', paddingTop: floating ? 15 : 0 }}>
           <Animated.Text
             pointerEvents="none"
             numberOfLines={1}
             style={[styles.floatLabel, {
               color: hasError ? status.danger : focused ? P.link : P.placeholder,
               transform: [
-                { translateY: lift.interpolate({ inputRange: [0, 1], outputRange: [0, -13] }) },
+                { translateY: lift.interpolate({ inputRange: [0, 1], outputRange: [0, -11] }) },
                 { scale: lift.interpolate({ inputRange: [0, 1], outputRange: [1, 0.78] }) },
               ],
             }]}
@@ -134,7 +134,7 @@ export const AuthField = React.forwardRef<AuthInputRef, AuthFieldProps>(({
           </Animated.Text>
           <TextInput
             ref={ref}
-            style={[styles.input, floating && { paddingTop: 14 }]}
+            style={styles.input}
             value={value}
             onChangeText={onChangeText}
             secureTextEntry={secureTextEntry}
@@ -273,8 +273,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', height: 58,
     borderRadius: radius.lg, borderWidth: 1.5, paddingHorizontal: 16,
   },
-  floatLabel: { position: 'absolute', left: 0, fontSize: 15, transformOrigin: 'left center' as any },
-  input: { color: P.text, fontSize: 15.5, padding: 0, margin: 0, height: 24, fontWeight: '500' },
+  floatLabel: { position: 'absolute', left: 0, top: 18, fontSize: 15, lineHeight: 20, transformOrigin: 'left center' as any },
+  input: { color: P.text, fontSize: 15.5, paddingVertical: 0, paddingHorizontal: 0, margin: 0, height: 28, lineHeight: 20, fontWeight: '500', textAlignVertical: 'center', includeFontPadding: false },
   msgRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, marginBottom: 8, paddingLeft: 4 },
   msg: { fontSize: 12.5, fontWeight: '500', paddingLeft: 4 },
 

@@ -1,20 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  Linking, Alert, Image, Share,
+  View, Text, TouchableOpacity, StyleSheet, Linking, Share, Animated, Easing, Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from './CachedImage';
-import { 
-  recordCampusAdClick, isReelAdUnskippable, FORCED_REEL_AD_SECONDS, 
-  buildWhatsAppCtaUrl, likeAd, unlikeAd, getLikedAdIds 
+import {
+  recordCampusAdClick, buildWhatsAppCtaUrl, likeAd, unlikeAd, getLikedAdIds,
 } from '../services/campusAds';
+import { hideAd, AD_WHY_TEXT } from '../services/adDelivery';
+import { usePopup } from '../context/PopupContext';
 import { CommentSheet } from './CommentSheet';
-
-const SKIP_DELAY = 5;
 
 function fmtCount(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -22,41 +20,48 @@ function fmtCount(n: number) {
   return String(n);
 }
 
-// ── Video background ──────────────────────────────────────────────────────────
-// `loop` is now controlled by the parent — forced-view ads should play through
-// once and then auto-advance rather than loop forever.
+// ── Video creative ────────────────────────────────────────────────────────────
+// Plays like a normal reel: loops, user can swipe away any time. Progress is
+// reported to the parent so the bottom bar reflects real playback.
 const ReelAdVideo: React.FC<{
   url: string;
   isActive: boolean;
-  loop: boolean;
-  onEnded?: () => void;
+  muted: boolean;
+  onProgress: (ratio: number) => void;
   onSourceError?: () => void;
-}> = React.memo(({ url, isActive, loop, onEnded, onSourceError }) => {
+}> = React.memo(({ url, isActive, muted, onProgress, onSourceError }) => {
   const player = useVideoPlayer(url, p => {
-    p.loop = loop;
-    p.muted = false;
+    p.loop = true;
+    p.muted = muted;
     p.audioMixingMode = 'duckOthers';
   });
-  useEffect(() => { player.loop = loop; }, [loop, player]);
+
+  useEffect(() => { player.muted = muted; }, [muted, player]);
+
   useEffect(() => {
     if (isActive) {
       try { player.play(); } catch { onSourceError?.(); }
     } else {
-      try { player.pause(); } catch {}
+      try { player.pause(); player.currentTime = 0; } catch {}
     }
   }, [isActive, player]);
+
   useEffect(() => {
-    if (!onEnded) return;
-    const sub = player.addListener('playToEnd', () => onEnded());
-    return () => sub.remove();
-  }, [player, onEnded]);
-  // Detect source errors (NotSupportedError) emitted by the native player
+    if (!isActive) return;
+    const t = setInterval(() => {
+      const d = player.duration;
+      if (d > 0) onProgress(Math.min(1, (player.currentTime ?? 0) / d));
+    }, 150);
+    return () => clearInterval(t);
+  }, [isActive, player, onProgress]);
+
   useEffect(() => {
     const sub = player.addListener('statusChange', (evt: any) => {
       if (evt?.status === 'error' || evt?.error) onSourceError?.();
     });
     return () => sub.remove();
   }, [player, onSourceError]);
+
   return <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />;
 });
 
@@ -65,258 +70,189 @@ export const ReelAdCard: React.FC<{
   ad: any;
   isActive: boolean;
   itemHeight: number;
-  onSkip: () => void;
+  /** Called once the ad has been on screen long enough to count as an impression. */
   onImpression: (adId: string) => void;
+  /** Viewer hid/reported this ad — parent removes it from the list. */
+  onHide: (adId: string) => void;
   currentUserId: string;
-}> = React.memo(({ ad, isActive, itemHeight, onSkip, onImpression, currentUserId }) => {
+  muted?: boolean;
+  onMuteToggle?: () => void;
+  /** Dwell required before an impression counts (ms). */
+  dwellMs?: number;
+}> = React.memo(({ ad, isActive, itemHeight, onImpression, onHide, currentUserId, muted = false, onMuteToggle, dwellMs = 2000 }) => {
   const insets = useSafeAreaInsets();
+  const { showPopup } = usePopup();
 
-  // ~1/3 of ads are forced-view (no skip) per Instagram-style monetization.
-  // Decision is stable per ad id so the same ad behaves the same every view.
-  const forced = isReelAdUnskippable(ad);
-
-  // Duration the user must endure on a forced ad. For static creatives we use
-  // FORCED_REEL_AD_SECONDS; for videos we let the clip's `playToEnd` event
-  // trigger auto-advance and use this as a safety cap (clamped 6-15s).
-  const forcedDuration = Math.min(15, Math.max(6, FORCED_REEL_AD_SECONDS));
-
-  const [canSkip, setCanSkip] = useState(false);
-  const [countdown, setCountdown] = useState(forced ? forcedDuration : SKIP_DELAY);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Re-entrancy guard so we don't trigger onSkip multiple times when both the
-  // timer reaches zero AND the video playToEnd event fires.
-  const advancedRef = useRef(false);
-
-  // Organic Interactions State
   const [liked, setLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(ad.likes_count ?? 0);
   const [commentCount, setCommentCount] = useState(ad.comments_count ?? 0);
   const [showComments, setShowComments] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const progress = useRef(new Animated.Value(0)).current;
+  const imagePulse = useRef(new Animated.Value(0)).current;
 
   const isVideo = ad.format === 'video' && !!ad.media_url && !videoError;
-  const isImage = (ad.format === 'image' || (ad.format === 'video' && videoError)) && !!ad.media_url;
+  const isImage = (ad.format === 'image' || (ad.format === 'video' && videoError) || ad.format === 'carousel') && !!(ad.media_url || ad.cards?.[0]?.image_url);
+  const imageUri = ad.media_url || ad.cards?.[0]?.image_url;
   const advertiserName = ad.profiles?.full_name || (ad.profiles?.username ? `@${ad.profiles.username}` : ad.name);
   const avatarUri = ad.profiles?.avatar_url ?? null;
 
-  const autoAdvance = () => {
-    if (advancedRef.current) return;
-    advancedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
-    onSkip();
-  };
+  // ── Impression: only after the ad has really been watched for `dwellMs` ───
+  const countedRef = useRef(false);
+  useEffect(() => {
+    if (!isActive) return;
+    if (countedRef.current) return;
+    const t = setTimeout(() => {
+      countedRef.current = true;
+      onImpression(ad.id);
+    }, dwellMs);
+    return () => clearTimeout(t);
+  }, [isActive, ad.id, dwellMs]);
+
+  // Static creatives get a slow ambient "progress" so the bar still communicates time.
+  useEffect(() => {
+    if (!isActive || isVideo) { progress.setValue(0); return; }
+    progress.setValue(0);
+    const a = Animated.timing(progress, { toValue: 1, duration: 9000, easing: Easing.linear, useNativeDriver: false });
+    a.start();
+    return () => a.stop();
+  }, [isActive, isVideo]);
 
   useEffect(() => {
     if (currentUserId && ad.id) {
-      getLikedAdIds(currentUserId)
-        .then((likedIds) => {
-          setLiked(likedIds.includes(ad.id));
-        })
-        .catch(() => {});
+      getLikedAdIds(currentUserId).then(ids => setLiked(ids.includes(ad.id))).catch(() => {});
     }
   }, [ad.id, currentUserId]);
 
   const toggleLike = async () => {
     if (!currentUserId || !ad.id) return;
-    const newLiked = !liked;
-    setLiked(newLiked);
-    setLikesCount(prev => Math.max(0, newLiked ? prev + 1 : prev - 1));
+    const next = !liked;
+    setLiked(next);
+    setLikesCount((p: number) => Math.max(0, next ? p + 1 : p - 1));
     try {
-      if (newLiked) {
-        await likeAd(ad.id, currentUserId);
-      } else {
-        await unlikeAd(ad.id, currentUserId);
-      }
-    } catch (e) {
-      // Revert on error
-      setLiked(!newLiked);
-      setLikesCount(prev => Math.max(0, !newLiked ? prev + 1 : prev - 1));
+      if (next) await likeAd(ad.id, currentUserId); else await unlikeAd(ad.id, currentUserId);
+    } catch {
+      setLiked(!next);
+      setLikesCount((p: number) => Math.max(0, !next ? p + 1 : p - 1));
     }
   };
 
   const handleShare = async () => {
     try {
       const shareUrl = ad.link || `https://unigram.social/ad/${ad.id}`;
-      await Share.share({
-        message: `Check out this on UniGram: ${ad.headline || ''} ${shareUrl}`,
-        url: shareUrl
-      });
-    } catch (e) {
-      console.warn(e);
-    }
+      await Share.share({ message: `Check this out on UniGram: ${ad.headline || ad.name || ''} ${shareUrl}`, url: shareUrl });
+    } catch {}
   };
-
-  const toggleSave = () => {
-    const newSaved = !saved;
-    setSaved(newSaved);
-    Alert.alert(
-      newSaved ? 'Ad Bookmarked' : 'Bookmark Removed',
-      newSaved ? 'You can view this ad in your saved promotions.' : 'Ad removed from your saved promotions.'
-    );
-  };
-
-  useEffect(() => {
-    if (isActive) {
-      onImpression(ad.id);
-      advancedRef.current = false;
-      setCanSkip(false);
-      const startCount = forced ? forcedDuration : SKIP_DELAY;
-      setCountdown(startCount);
-      timerRef.current = setInterval(() => {
-        setCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current!);
-            if (forced) {
-              // Forced ad finished — auto-advance to next reel.
-              autoAdvance();
-            } else {
-              setCanSkip(true);
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-      advancedRef.current = false;
-      setCanSkip(false);
-      setCountdown(forced ? forcedDuration : SKIP_DELAY);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, ad.id, forced]);
 
   const handleCTA = async () => {
     recordCampusAdClick(ad.id, 'reels').catch(() => {});
-    // Prefer the WhatsApp deep-link when the campaign opted into
-    // click-to-WhatsApp; fall back to the generic link otherwise.
     const targetUrl = buildWhatsAppCtaUrl(ad) || ad.link;
     if (!targetUrl) return;
     try {
-      const ok = await Linking.canOpenURL(targetUrl);
-      if (ok) await Linking.openURL(targetUrl);
-      else Alert.alert('Cannot open link', targetUrl);
+      if (await Linking.canOpenURL(targetUrl)) await Linking.openURL(targetUrl);
     } catch {}
+  };
+
+  const openMenu = () => {
+    showPopup({
+      title: 'Sponsored',
+      message: advertiserName ? `Ad from ${advertiserName}` : undefined,
+      icon: 'megaphone-outline',
+      buttons: [
+        { text: 'Hide this ad', onPress: () => { hideAd(ad.id, 'hide'); onHide(ad.id); } },
+        { text: 'Report ad', style: 'destructive', onPress: () => { hideAd(ad.id, 'report'); onHide(ad.id); } },
+        {
+          text: 'Why am I seeing this?',
+          onPress: () => setTimeout(() => showPopup({
+            title: 'Why you’re seeing this ad',
+            message: AD_WHY_TEXT,
+            icon: 'information-circle-outline',
+            buttons: [{ text: 'Got it', onPress: () => {} }],
+          }), 250),
+        },
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+      ],
+    });
   };
 
   return (
     <View style={[styles.container, { height: itemHeight }]}>
-
-      {/* ── Background creative ────────────────────────────────────────── */}
+      {/* Creative */}
       {isVideo ? (
         <ReelAdVideo
           url={ad.media_url}
           isActive={isActive}
-          loop={!forced}
-          onEnded={forced ? autoAdvance : undefined}
+          muted={muted}
+          onProgress={(r) => progress.setValue(r)}
           onSourceError={() => setVideoError(true)}
         />
       ) : isImage ? (
-        <CachedImage uri={ad.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <CachedImage uri={imageUri} style={StyleSheet.absoluteFill} resizeMode="cover" />
       ) : (
-        // Text / no-media fallback — indigo branded card
-        <View style={[StyleSheet.absoluteFill, styles.solidBg]}>
-          <Ionicons name="megaphone" size={52} color="rgba(255,255,255,0.15)" style={{ marginBottom: 20 }} />
-          {ad.headline ? <Text style={styles.textAdHeadline}>{ad.headline}</Text> : null}
-          {ad.body    ? <Text style={styles.textAdBody}>{ad.body}</Text> : null}
-        </View>
+        <LinearGradient colors={['#1e1b4b', '#4c1d95', '#701a75']} style={[StyleSheet.absoluteFill, styles.textBg]}>
+          {ad.headline ? <Text style={styles.textHeadline}>{ad.headline}</Text> : null}
+          {ad.body ? <Text style={styles.textBody}>{ad.body}</Text> : null}
+        </LinearGradient>
       )}
 
-      {/* ── Gradient overlays ──────────────────────────────────────────── */}
-      <LinearGradient
-        colors={['rgba(0,0,0,0.3)', 'transparent']}
-        style={styles.topGrad}
-        pointerEvents="none"
-      />
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.82)']}
-        style={styles.bottomGrad}
-        pointerEvents="none"
-      />
+      <LinearGradient colors={['rgba(0,0,0,0.38)', 'transparent']} style={styles.topGrad} pointerEvents="none" />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.78)']} style={styles.bottomGrad} pointerEvents="none" />
 
-      {/* ── Top-right: skip / countdown ──────────────────────────────────
-          - Skippable ad: shows a numeric countdown for 5s, then "Skip Ad".
-          - Forced-view ad: shows "Ad · 12s" (no skip), counts to 0, then
-             auto-advances. The pill stays visible the whole time so the user
-             knows the ad will end. */}
-      <View style={[styles.skipWrap, { top: insets.top + 12 }]}>
-        {forced ? (
-          <View style={[styles.countdownPill, styles.forcedPill]}>
-            <Text style={styles.forcedPillLabel}>Ad</Text>
-            <View style={styles.forcedDot} />
-            <Text style={styles.countdownText}>{countdown}s</Text>
-          </View>
-        ) : canSkip ? (
-          <TouchableOpacity style={styles.skipBtn} onPress={onSkip} activeOpacity={0.85}>
-            <Text style={styles.skipBtnText}>Skip Ad</Text>
-            <Ionicons name="play-skip-forward" size={12} color="#fff" />
+      {/* Top-right: sound + menu */}
+      <View style={[styles.topRight, { top: insets.top + 10 }]}>
+        {isVideo && onMuteToggle ? (
+          <TouchableOpacity onPress={onMuteToggle} style={styles.roundBtn} accessibilityRole="button" accessibilityLabel={muted ? 'Unmute' : 'Mute'}>
+            <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
           </TouchableOpacity>
-        ) : (
-          <View style={styles.countdownPill}>
-            <Text style={styles.countdownText}>{countdown}</Text>
-          </View>
-        )}
+        ) : null}
+        <TouchableOpacity onPress={openMenu} style={styles.roundBtn} accessibilityRole="button" accessibilityLabel="Ad options">
+          <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+        </TouchableOpacity>
       </View>
 
-      {/* ── Bottom overlay ─────────────────────────────────────────────── */}
-      <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 20 }]}>
-
-        {/* Left column: advertiser info + CTA */}
+      {/* Bottom info + CTA */}
+      <View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }]}>
         <View style={styles.leftCol}>
-          {/* Advertiser row */}
           <View style={styles.advertiserRow}>
             {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={styles.avatar} />
+              <CachedImage uri={avatarUri} style={styles.avatar} />
             ) : (
-              <View style={styles.avatarFallback}>
-                <Ionicons name="megaphone" size={17} color="#fff" />
-              </View>
+              <View style={[styles.avatar, styles.avatarFallback]}><Ionicons name="megaphone" size={17} color="#fff" /></View>
             )}
-            <View style={styles.nameBlock}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.advertiserName} numberOfLines={1}>{advertiserName}</Text>
-                <View style={styles.adPill}>
-                  <Text style={styles.adPillText}>Ad</Text>
-                </View>
-              </View>
-              {ad.headline ? (
-                <Text style={styles.caption} numberOfLines={2}>{ad.headline}</Text>
-              ) : null}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.advertiserName} numberOfLines={1}>{advertiserName}</Text>
+              <Text style={styles.sponsored}>Sponsored</Text>
             </View>
           </View>
 
-          {/* CTA button */}
-          <TouchableOpacity style={styles.ctaBtn} onPress={handleCTA} activeOpacity={0.85}>
-            <Text style={styles.ctaBtnText}>{ad.cta || 'Learn More'}</Text>
-            <Ionicons name="arrow-forward" size={14} color="#111" />
-          </TouchableOpacity>
+          {ad.headline && ad.format !== 'text' ? <Text style={styles.headline} numberOfLines={2}>{ad.headline}</Text> : null}
+          {ad.body && ad.format !== 'text' ? <Text style={styles.body} numberOfLines={2}>{ad.body}</Text> : null}
+
+          <Pressable onPress={handleCTA} style={({ pressed }) => [styles.cta, pressed && { opacity: 0.85 }]} accessibilityRole="button" accessibilityLabel={ad.cta || 'Learn more'}>
+            <Text style={styles.ctaText}>{ad.cta || 'Learn more'}</Text>
+            <Ionicons name="chevron-forward" size={16} color="#111" />
+          </Pressable>
         </View>
 
-        {/* Right column: action icons (interactive — matches regular reel layout) */}
         <View style={styles.rightCol}>
-          <TouchableOpacity onPress={toggleLike} style={styles.actionItem} activeOpacity={0.8}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
+          <TouchableOpacity onPress={toggleLike} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={liked ? 'Unlike' : 'Like'}>
+            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={32} color={liked ? '#ff3040' : '#fff'} />
             <Text style={styles.actionLabel}>{likesCount > 0 ? fmtCount(likesCount) : 'Like'}</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setShowComments(true)} style={styles.actionItem} activeOpacity={0.8}>
-            <Ionicons name="chatbubble-outline" size={32} color="#fff" />
+          <TouchableOpacity onPress={() => setShowComments(true)} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Comments">
+            <Ionicons name="chatbubble-outline" size={29} color="#fff" />
             <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity onPress={handleShare} style={styles.actionItem} activeOpacity={0.8}>
-            <Ionicons name="paper-plane-outline" size={30} color="#fff" />
+          <TouchableOpacity onPress={handleShare} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Share">
+            <Ionicons name="paper-plane-outline" size={28} color="#fff" />
             <Text style={styles.actionLabel}>Share</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity onPress={toggleSave} style={styles.actionItem} activeOpacity={0.8}>
-            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={28} color="#fff" />
-            <Text style={styles.actionLabel}>{saved ? 'Saved' : 'Save'}</Text>
-          </TouchableOpacity>
         </View>
+      </View>
 
+      {/* Progress hairline */}
+      <View style={styles.progressTrack} pointerEvents="none">
+        <Animated.View style={[styles.progressFill, { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
       </View>
 
       <CommentSheet
@@ -326,127 +262,44 @@ export const ReelAdCard: React.FC<{
         currentUserId={currentUserId}
         authorId={ad.user_id || ''}
         onClose={() => setShowComments(false)}
-        onCountChange={(newCount) => setCommentCount(newCount)}
+        onCountChange={(n) => setCommentCount(n)}
       />
     </View>
   );
 });
 
 const styles = StyleSheet.create({
-  container: {
-    width: '100%',
-    backgroundColor: '#000',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  solidBg: {
-    backgroundColor: '#1e1b4b',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    gap: 4,
-  },
-  textAdHeadline: {
-    color: '#fff',
-    fontSize: 26,
-    fontWeight: '800',
-    textAlign: 'center',
-    lineHeight: 32,
-  },
-  textAdBody: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 15,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginTop: 8,
-  },
+  container: { width: '100%', backgroundColor: '#000', overflow: 'hidden', position: 'relative' },
+  textBg: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  textHeadline: { color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'center', lineHeight: 34, letterSpacing: -0.5 },
+  textBody: { color: 'rgba(255,255,255,0.78)', fontSize: 16, textAlign: 'center', lineHeight: 23, marginTop: 10 },
 
-  topGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 100 },
-  bottomGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 260 },
+  topGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 110 },
+  bottomGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 320 },
 
-  // Skip / countdown
-  skipWrap: { position: 'absolute', right: 14 },
-  skipBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
-  },
-  skipBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  countdownPill: {
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
-    minWidth: 32, alignItems: 'center',
-  },
-  countdownText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  forcedPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    minWidth: 0,
-  },
-  forcedPillLabel: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  forcedDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-  },
+  topRight: { position: 'absolute', right: 12, flexDirection: 'row', gap: 10, zIndex: 5 },
+  roundBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.38)', alignItems: 'center', justifyContent: 'center' },
 
-  // Bottom overlay
-  bottomOverlay: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 14, paddingTop: 20, gap: 10,
-  },
-  leftCol: { flex: 1, gap: 12 },
-  rightCol: {
-    alignItems: 'center', gap: 18,
-    paddingBottom: 4,
-  },
-  actionItem: { alignItems: 'center', gap: 4 },
-  actionLabel: {
-    color: '#fff', fontSize: 12, fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
-  },
+  bottom: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 14, gap: 10 },
+  leftCol: { flex: 1, gap: 9 },
+  rightCol: { alignItems: 'center', gap: 20, paddingBottom: 64 },
+  actionItem: { alignItems: 'center', gap: 3 },
+  actionLabel: { color: '#fff', fontSize: 12, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
 
-  // Advertiser info
-  advertiserRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  avatar: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)' },
-  avatarFallback: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#6366f1',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)',
-  },
-  nameBlock: { flex: 1, gap: 3 },
-  advertiserName: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },
-  adPill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2,
-  },
-  adPillText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
-  caption: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 13,
-    lineHeight: 18,
-  },
+  advertiserRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  avatar: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)' },
+  avatarFallback: { backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' },
+  advertiserName: { color: '#fff', fontSize: 14.5, fontWeight: '700' },
+  sponsored: { color: 'rgba(255,255,255,0.72)', fontSize: 12, marginTop: 1 },
+  headline: { color: '#fff', fontSize: 14.5, fontWeight: '600', lineHeight: 19 },
+  body: { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18 },
 
-  // CTA button
-  ctaBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
-    backgroundColor: '#fff',
-    borderRadius: 10, paddingVertical: 11,
-    alignSelf: 'stretch',
+  cta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#fff', borderRadius: 12, paddingVertical: 13, marginTop: 4, alignSelf: 'stretch',
   },
-  ctaBtnText: { color: '#111', fontSize: 14, fontWeight: '700' },
+  ctaText: { color: '#111', fontSize: 15, fontWeight: '700' },
+
+  progressTrack: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: 'rgba(255,255,255,0.22)' },
+  progressFill: { height: '100%', backgroundColor: '#fff' },
 });

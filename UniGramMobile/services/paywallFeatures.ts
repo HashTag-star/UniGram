@@ -10,6 +10,7 @@ export type PaywallFeature =
   | 'profile_views'
   | 'story_links'
   | 'explore_priority'
+  | 'ad_light'
   | 'profile'
   | 'settings'
   | 'feed';
@@ -28,6 +29,7 @@ export const PRO_FEATURE_LIST: ProFeature[] = [
   { key: 'analytics', icon: 'bar-chart-outline', color: '#6366f1', title: 'Post Analytics', desc: 'Views, reach and engagement on every post.' },
   { key: 'profile_views', icon: 'eye-outline', color: '#0ea5e9', title: 'Profile Views', desc: 'See who is visiting your profile each week.' },
   { key: 'story_links', icon: 'link-outline', color: '#22c55e', title: 'Story Links', desc: 'Add a tappable link to your stories.' },
+  { key: 'ad_light', icon: 'sparkles-outline', color: '#ec4899', title: 'Lighter ads', desc: 'See roughly half as many ads in your feed and reels.' },
   { key: 'explore_priority', icon: 'rocket-outline', color: '#f59e0b', title: 'Explore Priority', desc: 'Your posts rank higher in campus Explore feeds.' },
 ];
 
@@ -43,5 +45,6 @@ export const PAYWALL_COPY: Record<PaywallFeature, PaywallCopy> = {
   ai_insights: { icon: 'bulb', title: 'Get AI-powered insights', subtitle: 'Understand what works and what to post next.' },
   profile_views: { icon: 'eye', title: 'See who views your profile', subtitle: 'Track profile visits week over week.' },
   story_links: { icon: 'link', title: 'Add links to your stories', subtitle: 'Send viewers straight to your project, event or shop.' },
+  ad_light: { icon: 'sparkles', title: 'See fewer ads', subtitle: 'Pro gives you a lighter, calmer feed with roughly half the ads.' },
   explore_priority: { icon: 'rocket', title: 'Rank higher on Explore', subtitle: 'Get your posts in front of more students.' },
 };

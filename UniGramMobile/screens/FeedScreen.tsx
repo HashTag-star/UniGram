@@ -60,6 +60,7 @@ import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { isProActive } from '../services/pro';
 import { getActiveFeedAds, getActiveAdsForPlacement, recordCampusAdImpression, recordCampusAdClick, adFrequencyInterval } from '../services/campusAds';
+import { getAdPolicy, filterEligibleAds, noteAdShown, scaleIntervalForCampaign } from '../services/adDelivery';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
 import { useHaptics } from '../hooks/useHaptics';
@@ -1057,6 +1058,7 @@ export const FeedScreen = React.memo(({
   const { openPaywall, entitlementVersion } = usePaywall();
   const [proPromoDismissed, setProPromoDismissed] = useState(false);
   const storyLinkUpsellShownRef = useRef(false);
+  const adPolicyRef = useRef(getAdPolicy(false));
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
@@ -1127,6 +1129,9 @@ export const FeedScreen = React.memo(({
   }).current;
 
   const recordedImpressions = useRef(new Set<string>());
+  // Ads only count as seen after staying on screen for the plan's dwell time.
+  const adDwellTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const adDwellMsRef = useRef(1000);
   const dwellStartTimes = useRef(new Map<string, number>());
   const lastEmittedActiveRef = useRef<string | null>(null);
 
@@ -1144,9 +1149,15 @@ export const FeedScreen = React.memo(({
         const id = info.key;
         if (info.item?._type === 'sponsored_ad') {
           const adId = info.item?.ad?.id;
-          if (adId && !adImpressionsRef.current.has(adId)) {
-            adImpressionsRef.current.add(adId);
-                    recordCampusAdImpression(adId, 'feed').catch((e) => console.warn('[FeedScreen] adImpression feed:', e?.message));
+          if (adId && !adImpressionsRef.current.has(adId) && !adDwellTimers.current.has(adId)) {
+            const t = setTimeout(() => {
+              adDwellTimers.current.delete(adId);
+              if (adImpressionsRef.current.has(adId)) return;
+              adImpressionsRef.current.add(adId);
+              noteAdShown(adId).catch(() => {});
+              recordCampusAdImpression(adId, 'feed').catch((e) => console.warn('[FeedScreen] adImpression feed:', e?.message));
+            }, adDwellMsRef.current);
+            adDwellTimers.current.set(adId, t);
           }
         } else if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
           recordedImpressions.current.add(id);
@@ -1167,6 +1178,12 @@ export const FeedScreen = React.memo(({
       changed.forEach((info: any) => {
         const id: string = info.item?.id ?? info.key;
         if (!id || id.startsWith('__')) return;
+        if (info.item?._type === 'sponsored_ad' && !info.isViewable) {
+          const adId = info.item?.ad?.id;
+          const t = adId ? adDwellTimers.current.get(adId) : undefined;
+          if (t) { clearTimeout(t); adDwellTimers.current.delete(adId); }
+          return;
+        }
         if (info.item?._type) return; // ads / strips / suggestions aren't posts
         if (info.isViewable) {
           dwellStartTimes.current.set(id, Date.now());
@@ -1417,7 +1434,10 @@ export const FeedScreen = React.memo(({
         setCurrentProfile(prof);
         cachedCurrentProfile = prof;
         myUniversityRef.current = prof.university ?? null;
-        getActiveFeedAds(prof.university ?? null, user.id).then(a => setFeedAds(a ?? [])).catch(() => {});
+        getActiveFeedAds(prof.university ?? null, user.id)
+          .then(a => filterEligibleAds(a ?? [], adPolicyRef.current))
+          .then(setFeedAds)
+          .catch(() => {});
         getActiveAdsForPlacement('stories', prof.university ?? null, user.id).then(a => setStoryAds(a ?? [])).catch(() => {});
         followCountP.then(fc => {
           if (fc < 5 && prof.university) getCampusEvents(prof.university, 4).then(e => setCampusEvents(e ?? [])).catch(() => {});
@@ -1771,20 +1791,34 @@ export const FeedScreen = React.memo(({
 
   const onRefresh = handleRefresh;
 
+  // Viewer's ad plan (Pro => light ads). Re-evaluates on subscribe/cancel.
+  const adPolicy = React.useMemo(() => getAdPolicy(isProActive(currentProfile)), [currentProfile, entitlementVersion]);
+  adPolicyRef.current = adPolicy;
+  adDwellMsRef.current = adPolicy.feed.dwellMs;
+
+  const handleAdHide = useCallback((adId: string) => {
+    setFeedAds(prev => prev.filter((a: any) => a.id !== adId));
+  }, []);
+
   const feedItems = React.useMemo(() => {
-    // When there are no posts but we DO have ads, fall through so the
-    // ad-only fallback below can run. (Previously this early-returned and
-    // the fallback was unreachable.)
-    if (!posts.length && feedAds.length === 0) return posts;
+    // Ads are only ever interleaved with real posts — never shown on their own.
+    if (!posts.length) return posts;
     const items: any[] = [];
     const eventSlots = followCount < 5 ? [1, 4, 8] : [];
     let eventIdx = 0;
     let adIdx = 0;
     const showProPromo = !proPromoDismissed && !isProActive(currentProfile);
-    const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60, feedAds[0]?.reach_multiplier ?? 1) : 11;
-    // First ad never lands in the top 3 posts — Instagram-style breathing room.
-    const FIRST_AD_MIN_INDEX = 3;
+
+    // ── Ad pacing from the viewer's plan (Free = standard, Pro = light) ──────
+    const feedPolicy = adPolicy.feed;
+    const campaignInterval = feedAds.length > 0
+      ? adFrequencyInterval(feedAds[0]?.budget ?? 60, feedAds[0]?.reach_multiplier ?? 1)
+      : 11;
+    const interval = scaleIntervalForCampaign(feedPolicy.interval, campaignInterval);
     const seed = adSlotSeedRef.current;
+    let adsPlaced = 0;
+    // First ad only after `firstAfter` organic posts; jittered per session.
+    let nextAdAt = feedPolicy.firstAfter - 1 + (seed % 2);
     posts.forEach((p, i) => {
       items.push(p);
       if (i === 2 && previewReels.length > 0) {
@@ -1800,29 +1834,17 @@ export const FeedScreen = React.memo(({
         const ev = campusEvents[eventIdx++];
         items.push({ id: `__event_${ev.id}__`, _type: 'campus_event', event: ev });
       }
-      if (feedAds.length > 0 && i >= FIRST_AD_MIN_INDEX) {
-        const chunkIndex = Math.floor((i - FIRST_AD_MIN_INDEX) / feedAdInterval);
-        // Session-seeded offset → slot within each chunk varies between launches.
-        const offsetInChunk = (seed + chunkIndex * 13) % feedAdInterval;
-        const shouldInjectAd = ((i - FIRST_AD_MIN_INDEX) % feedAdInterval === offsetInChunk);
-        if (shouldInjectAd) {
-          const ad = feedAds[adIdx % feedAds.length];
-          adIdx++;
-          items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
-        }
+      if (feedAds.length > 0 && adsPlaced < feedPolicy.sessionCap && i >= nextAdAt) {
+        const ad = feedAds[adIdx % feedAds.length];
+        adIdx++;
+        adsPlaced++;
+        items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
+        nextAdAt = i + interval + (((seed + adsPlaced * 13) % 3) - 1);
       }
     });
 
-    // If the feed is completely empty (no posts), surface ads so the user
-    // still sees something (and ad creators can preview their work).
-    if (posts.length === 0 && feedAds.length > 0) {
-      feedAds.forEach((ad, i) => {
-        items.push({ id: `__ad_${ad.id}_pos${i}__`, _type: 'sponsored_ad', ad });
-      });
-    }
-
     return items;
-  }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds, proPromoDismissed, currentProfile, entitlementVersion]);
+  }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds, proPromoDismissed, currentProfile, entitlementVersion, adPolicy]);
 
   useEffect(() => { feedItemsRef.current = feedItems; }, [feedItems]);
 
@@ -2148,6 +2170,7 @@ export const FeedScreen = React.memo(({
               <SponsoredAdCard
                 ad={item.ad}
                 currentUserId={currentUserId}
+                onHide={handleAdHide}
                 isActive={lastEmittedActiveRef.current === item.id}
                 onImpression={(adId) => {
                   if (!adImpressionsRef.current.has(adId)) {
@@ -2175,7 +2198,7 @@ export const FeedScreen = React.memo(({
               onPostPress={setPulsePost}
             />
           );
-        }, [openPaywall, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, handleVideoPress, setPulsePost])}
+        }, [openPaywall, handleAdHide, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, handleVideoPress, setPulsePost])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}

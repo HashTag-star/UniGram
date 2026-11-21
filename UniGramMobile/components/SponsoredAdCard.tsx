@@ -9,6 +9,8 @@ import { CachedImage } from './CachedImage';
 import { useTheme } from '../context/ThemeContext';
 import { recordCampusAdClick, buildWhatsAppCtaUrl, likeAd, unlikeAd } from '../services/campusAds';
 import { CommentSheet } from './CommentSheet';
+import { usePopup } from '../context/PopupContext';
+import { hideAd, AD_WHY_TEXT } from '../services/adDelivery';
 import { VerifiedBadge } from './VerifiedBadge';
 
 const { width } = Dimensions.get('window');
@@ -19,6 +21,8 @@ interface SponsoredAdCardProps {
   onImpression?: (adId: string) => void;
   isLiked?: boolean;
   currentUserId: string;
+  /** Viewer hid/reported the ad — parent drops it from the feed. */
+  onHide?: (adId: string) => void;
 }
 
 // ── Video Sub-component ──────────────────────────────────────────────────────
@@ -60,8 +64,9 @@ function useStableCallback<T extends (...args: any[]) => any>(fn: T | undefined)
   return useRef((...args: any[]) => ref.current?.(...args)).current as T;
 }
 
-export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad, isActive = false, onImpression }) => {
+export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad, isActive = false, onImpression, onHide }) => {
   const { colors } = useTheme();
+  const { showPopup } = usePopup();
   const stableOnImpression = useStableCallback(onImpression);
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
@@ -79,6 +84,28 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
   }, [ad.id]);
 
   const finalActive = isActive || isActiveInternal;
+
+  const openMenu = () => {
+    showPopup({
+      title: 'Sponsored',
+      message: ad.profiles?.username ? `Ad from @${ad.profiles.username}` : undefined,
+      icon: 'megaphone-outline',
+      buttons: [
+        { text: 'Hide this ad', onPress: () => { hideAd(ad.id, 'hide'); onHide?.(ad.id); } },
+        { text: 'Report ad', style: 'destructive', onPress: () => { hideAd(ad.id, 'report'); onHide?.(ad.id); } },
+        {
+          text: 'Why am I seeing this?',
+          onPress: () => setTimeout(() => showPopup({
+            title: 'Why you’re seeing this ad',
+            message: AD_WHY_TEXT,
+            icon: 'information-circle-outline',
+            buttons: [{ text: 'Got it', onPress: () => {} }],
+          }), 250),
+        },
+        { text: 'Cancel', style: 'cancel', onPress: () => {} },
+      ],
+    });
+  };
 
   const handleCTA = async () => {
     try {
@@ -140,9 +167,9 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
             )}
           </View>
         </View>
-        <View style={[styles.adBadge, { borderColor: colors.border }]}>
-          <Text style={[styles.adBadgeText, { color: colors.textMuted }]}>Ad</Text>
-        </View>
+        <TouchableOpacity onPress={openMenu} hitSlop={10} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel="Ad options">
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {/* ── Creative ────────────────────────────────────────────────────── */}
