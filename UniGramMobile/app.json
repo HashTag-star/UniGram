@@ -90,11 +90,12 @@
         "expo-build-properties",
         {
           "android": {
-            "minifyEnabled": true,
-            "shrinkResources": true,
+            "minifyEnabled": false,
+            "shrinkResources": false,
             "extraGradleProps": {
               "enablePngCrunch": "true"
-            }
+            },
+            "extraProguardRules": "-dontwarn org.webrtc.**\n-keep class org.webrtc.** { *; }"
           }
         }
       ],
