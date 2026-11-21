@@ -12,24 +12,24 @@ const TIERS: Array<{ key: Tier; setting: string; title: string; blurb: string; i
   {
     key: 'fast', setting: 'ai_model_fast', title: 'Fast', icon: 'flash', color: '#22c55e',
     blurb: 'Quick, cheap jobs: comment summaries, analytics insights.',
-    models: ['meta/llama-3.1-8b-instruct', 'meta/llama-3.2-3b-instruct', 'mistralai/mistral-7b-instruct-v0.3', 'microsoft/phi-3.5-mini-instruct'],
+    models: ['nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3.5-lightning-30b-a3b', 'google/gemma-4-31b-it', 'nvidia/nemotron-3.5-super-vl-120b-a12b'],
   },
   {
     key: 'smart', setting: 'ai_model_smart', title: 'Smart', icon: 'bulb', color: '#8b5cf6',
     blurb: 'Reasoning jobs: the admin agent, moderation scans, tool use.',
-    models: ['meta/llama-3.3-70b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.1-70b-instruct', 'meta/llama-3.1-405b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1'],
+    models: ['nvidia/nemotron-3.5-super-vl-120b-a12b', 'mistralai/mistral-large-4-1t-a52b', 'nvidia/nemotron-3-ultra-550b-a55b', 'nvidia/nemotron-3.5-lightning-30b-a3b'],
   },
   {
     key: 'vision', setting: 'ai_model_vision', title: 'Vision', icon: 'eye', color: '#0ea5e9',
     blurb: 'Reads images: post context on fliers, caption assistant.',
-    models: ['meta/llama-3.2-11b-vision-instruct', 'meta/llama-3.2-90b-vision-instruct', 'microsoft/phi-3.5-vision-instruct'],
+    models: ['nvidia/nemotron-3.5-super-vl-120b-a12b', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'],
   },
 ];
 
 const DEFAULTS: Record<Tier, string> = {
-  fast: 'meta/llama-3.1-8b-instruct',
-  smart: 'meta/llama-3.3-70b-instruct',
-  vision: 'meta/llama-3.2-11b-vision-instruct',
+  fast: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  smart: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  vision: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
 };
 
 type TestState = { status: 'idle' | 'running' | 'ok' | 'fail'; msg?: string };

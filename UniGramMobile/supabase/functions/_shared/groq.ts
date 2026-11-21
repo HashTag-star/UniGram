@@ -24,10 +24,33 @@ export const GROQ_MODEL_SMART = 'llama-3.3-70b-versatile'
 export type AiTier = 'fast' | 'smart' | 'vision'
 
 export const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1/chat/completions'
+// Defaults must be models NVIDIA currently serves (their catalog rotates: e.g.
+// meta/llama-3.1-8b-instruct reached end-of-life and now returns HTTP 410).
 export const NVIDIA_DEFAULTS: Record<AiTier, string> = {
-  fast: 'meta/llama-3.1-8b-instruct',
-  smart: 'meta/llama-3.3-70b-instruct',
-  vision: 'meta/llama-3.2-11b-vision-instruct',
+  fast: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  smart: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  vision: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+}
+
+/** Removes <think>…</think> blocks some reasoning models inline in `content`. */
+function stripThinking(text: string | null | undefined): string | null {
+  if (text == null) return null
+  const t = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  return t.length ? t : null
+}
+
+interface NvidiaResult { ok: boolean; status: number; message?: any; finish?: string; err?: string }
+
+async function nvidiaRequest(key: string, body: any): Promise<NvidiaResult> {
+  const resp = await fetch(NVIDIA_BASE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, Accept: 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) return { ok: false, status: resp.status, err: (await resp.text()).slice(0, 300) }
+  const data = await resp.json()
+  const choice = data.choices?.[0]
+  return { ok: true, status: 200, message: choice?.message, finish: choice?.finish_reason }
 }
 
 /** Existing call sites pass Groq model names; map them onto a tier. */
@@ -194,25 +217,28 @@ export async function callAiMessageWithFallback(opts: {
       const model = forceNvidiaModel || settings.models[tier]
       try {
         console.log(`[AI-Chain] Attempting NVIDIA (${model}, tier=${tier})`)
-        const body: any = { model, messages, temperature, max_tokens: maxTokens }
-        if (tools && tools.length > 0) body.tools = tools
-        const resp = await fetch(NVIDIA_BASE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${nvidiaKey}`, Accept: 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (resp.ok) {
-          const data = await resp.json()
-          const message = data.choices?.[0]?.message
-          if (message) {
-            console.log(`[AI-Chain] NVIDIA success in ${Date.now() - startTime}ms`)
-            return message
-          }
-        } else {
-          const errText = await resp.text()
-          console.warn(`[AI-Chain] NVIDIA HTTP error ${resp.status}: ${errText.slice(0, 200)}`)
-          if (forceNvidiaModel) throw new Error(`NVIDIA ${resp.status}: ${errText.slice(0, 160)}`)
+        const base: any = { model, messages, temperature, max_tokens: maxTokens }
+        if (tools && tools.length > 0) base.tools = tools
+
+        // Reasoning models ("thinking") can burn the whole token budget before writing
+        // the answer, leaving content=null. Ask for no thinking; if a model rejects
+        // the option, retry plain.
+        let r = await nvidiaRequest(nvidiaKey, { ...base, chat_template_kwargs: { enable_thinking: false } })
+        if (!r.ok && (r.status === 400 || r.status === 422)) r = await nvidiaRequest(nvidiaKey, base)
+
+        // Still empty because thinking ate the budget → one retry with a bigger budget.
+        const hasContent = (m: any) => !!(stripThinking(m?.content) || (m?.tool_calls && m.tool_calls.length))
+        if (r.ok && !hasContent(r.message) && r.finish === 'length') {
+          r = await nvidiaRequest(nvidiaKey, { ...base, max_tokens: Math.min(8192, maxTokens * 4), chat_template_kwargs: { enable_thinking: false } })
         }
+
+        if (r.ok && hasContent(r.message)) {
+          console.log(`[AI-Chain] NVIDIA success in ${Date.now() - startTime}ms`)
+          return { ...r.message, content: stripThinking(r.message.content) }
+        }
+        const why = r.ok ? 'empty response (no content)' : `HTTP ${r.status}: ${r.err}`
+        console.warn(`[AI-Chain] NVIDIA failed: ${why}`)
+        if (forceNvidiaModel) throw new Error(`NVIDIA ${why}`)
       } catch (e: any) {
         console.warn(`[AI-Chain] NVIDIA exception: ${e.message}`)
         if (forceNvidiaModel) throw e
