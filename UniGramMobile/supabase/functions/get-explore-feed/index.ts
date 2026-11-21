@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
       })
 
     if (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
+      return new Response(JSON.stringify({ error: 'Failed to load explore feed' }), {
         status: 500,
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       status: 200,
     })
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: 'Failed to load explore feed' }), {
       status: 500,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })

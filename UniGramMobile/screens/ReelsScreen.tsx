@@ -24,22 +24,13 @@ import { supabase } from '../lib/supabase';
 import { createReport } from '../services/reports';
 import { useHaptics } from '../hooks/useHaptics';
 import { usePopup } from '../context/PopupContext';
+import { useTheme } from '../context/ThemeContext';
+import { FadeIn } from '../components/FadeIn';
 
 const { width, height } = Dimensions.get('window');
 const COMMENT_BAR_HEIGHT = 50;
 
-function fmtCount(n: number) {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n);
-}
-
-function timeAgo(ts: string) {
-  const d = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (d < 3600) return `${Math.floor(d / 60)}m`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h`;
-  return `${Math.floor(d / 86400)}d`;
-}
+import { fmtCount, timeAgo } from '../lib/formatUtils';
 
 // ─── Video sub-component ──────────────────────────────────────────────────────
 
@@ -75,9 +66,9 @@ const ReelVideo: React.FC<{
   // Keep playback state in sync with props
   useEffect(() => {
     if (isActive && !isPaused) {
-      player.play();
+      try { player.play(); } catch {}
     } else {
-      player.pause();
+      try { player.pause(); } catch {}
     }
   }, [isActive, isPaused, player]);
 
@@ -223,7 +214,7 @@ const LivePreviewCard: React.FC<{
 
         {/* Join button */}
         <Animated.View style={{ transform: [{ scale: joinScale }], marginTop: 28 }}>
-          <TouchableOpacity onPress={handleJoinPress} activeOpacity={0.9}>
+          <TouchableOpacity onPress={handleJoinPress} activeOpacity={0.9} accessibilityLabel="Join Live" accessibilityRole="button">
             <LinearGradient
               colors={['#ff3b30', '#c0392b']}
               style={liveCardStyles.joinBtn}
@@ -313,6 +304,8 @@ const InStreamAdOverlay: React.FC<{
           style={[styles.inStreamSkipBtn, { top: insets.top + 20 }]} 
           onPress={onComplete}
           activeOpacity={0.8}
+          accessibilityLabel="Skip Ad"
+          accessibilityRole="button"
         >
           <Text style={styles.inStreamSkipText}>Skip Ad</Text>
           <Ionicons name="chevron-forward" size={16} color="#fff" />
@@ -366,6 +359,7 @@ const ReelItem: React.FC<{
   reelAds?: any[]; // Pass ads pool to select from
 }> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, reelAds = [] }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
+  const { colors } = useTheme();
   const [commentCount, setCommentCount] = useState(reel.comments_count ?? 0);
   const [viewsCount, setViewsCount] = useState(reel.views_count ?? 0);
   const viewedRef = useRef(false);
@@ -508,7 +502,7 @@ const ReelItem: React.FC<{
     const timer = setTimeout(() => {
       viewedRef.current = true;
       setViewsCount((c: number) => c + 1);
-      incrementReelView(reel.id).catch(() => {});
+      incrementReelView(reel.id).catch((e) => console.warn('[ReelsScreen] incrementView:', e?.message));
     }, 2000);
     return () => clearTimeout(timer);
   }, [isActive, reel.id]);
@@ -770,7 +764,7 @@ const ReelItem: React.FC<{
         title: 'Got it',
         message: "We'll show you fewer reels like this.",
         icon: 'thumbs-down-outline',
-        iconColor: '#6366f1',
+        iconColor: colors.accent,
         buttons: [{ text: 'OK', onPress: () => {} }],
       });
     } catch {}
@@ -832,14 +826,16 @@ const ReelItem: React.FC<{
           style={[styles.topBarBtn, !onBack && { opacity: 0 }]}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           disabled={!onBack}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
         >
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.topBarRight}>
-          <TouchableOpacity style={styles.topBarBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity style={styles.topBarBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search" accessibilityRole="button">
             <Ionicons name="search-outline" size={22} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.topBarBtn} onPress={showOptions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity style={styles.topBarBtn} onPress={showOptions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Options" accessibilityRole="button">
             <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -879,22 +875,22 @@ const ReelItem: React.FC<{
 
       {/* Right actions */}
       <View style={[styles.rightActions, { bottom: commentBarH + 80 }]}>
-        <TouchableOpacity onPress={toggleLike} style={styles.actionItem}>
+        <TouchableOpacity onPress={toggleLike} style={styles.actionItem} accessibilityLabel={liked ? 'Unlike' : 'Like'} accessibilityRole="button">
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
           <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)}>
+        <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)} accessibilityLabel="Comment" accessibilityRole="button">
           <Ionicons name="chatbubble-outline" size={32} color="#fff" />
           <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionItem} onPress={() => setShowShare(true)}>
+        <TouchableOpacity style={styles.actionItem} onPress={() => setShowShare(true)} accessibilityLabel="Share" accessibilityRole="button">
           <Ionicons name="paper-plane-outline" size={30} color="#fff" />
           <Text style={styles.actionLabel}>Share</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionItem} onPress={onMuteToggle}>
+        <TouchableOpacity style={styles.actionItem} onPress={onMuteToggle} accessibilityLabel={muted ? 'Unmute' : 'Mute'} accessibilityRole="button">
           <Ionicons name={muted ? 'volume-mute-outline' : 'volume-high-outline'} size={28} color="#fff" />
           <Text style={styles.actionLabel}>{muted ? 'Unmute' : 'Sound'}</Text>
         </TouchableOpacity>
@@ -913,6 +909,8 @@ const ReelItem: React.FC<{
             <TouchableOpacity
               onPress={toggleFollow}
               style={[styles.followBtn, following && styles.followingBtn]}
+              accessibilityLabel={following ? 'Unfollow' : 'Follow'}
+              accessibilityRole="button"
             >
               <Text style={[styles.followBtnText, following && styles.followingBtnText]}>
                 {following ? 'Following' : 'Follow'}
@@ -945,7 +943,7 @@ const ReelItem: React.FC<{
           <Ionicons name="cloud-offline-outline" size={48} color="rgba(255,255,255,0.7)" />
           <Text style={styles.netErrorTitle}>No internet connection</Text>
           <Text style={styles.netErrorSub}>Check your connection and try again</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleRetry} accessibilityLabel="Retry" accessibilityRole="button">
             <Ionicons name="refresh" size={16} color="#fff" />
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
@@ -978,6 +976,8 @@ const ReelItem: React.FC<{
         style={[styles.commentBar, { paddingBottom: insets.bottom }]}
         onPress={() => setShowComments(true)}
         activeOpacity={0.85}
+        accessibilityLabel="Add a comment"
+        accessibilityRole="button"
       >
         <View style={styles.commentBarPill}>
           <Text style={styles.commentBarPlaceholder}>Add a comment…</Text>
@@ -1045,7 +1045,7 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden={false} translucent backgroundColor="transparent" />
+      <StatusBar hidden={false} />
 
       {/* Simulated dark video area */}
       <View style={skeletonStyles.videoPlaceholder} />
@@ -1141,6 +1141,7 @@ export const ReelsScreen: React.FC<{
   const [currentUserId, setCurrentUserId] = useState('');
   const [containerHeight, setContainerHeight] = useState(height);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -1160,69 +1161,58 @@ export const ReelsScreen: React.FC<{
     const result: any[] = [];
     let liveIdx = 0;
     let adIdx = 0;
-    // Derive inject interval from the top ad's plan (budget × reach multiplier).
-    // Multiply by 1.4 for reels — they're more immersive than feed posts, so a
-    // slightly wider gap between ads matches IG/TikTok feel.
+
+    // ── Smart ad placement (engagement-aware, IG/TikTok style) ─────────
+    //
+    // Instead of fixed intervals, ads adapt to user scroll depth:
+    //  • First ad never appears before the 4th organic reel (warm-up)
+    //  • Base interval derived from the campaign's budget & reach
+    //  • As users scroll deeper, ad spacing gradually increases (fatigue-
+    //    aware): every 20 organic reels adds +1 to the gap
+    //  • A session-seeded jitter (±2 reels) randomizes positions so two
+    //    viewers never see ads in exactly the same spots
     const baseInterval = reelAds.length > 0
       ? adFrequencyInterval(reelAds[0].budget ?? 60, reelAds[0].reach_multiplier ?? 1)
       : 11;
-    const adInterval = Math.max(8, Math.round(baseInterval * 1.4));
+    const baseAdGap = Math.max(7, Math.round(baseInterval * 1.4));
 
-    // No ad until the user has watched at least the first 4 organic reels —
-    // matches the "warm up before monetising" pattern of IG / TikTok.
     const FIRST_AD_MIN_INDEX = 4;
     const seed = reelAdSlotSeedRef.current;
 
+    // Track how many organic reels have been pushed to calculate fatigue
+    let organicCount = 0;
+    // Track the next organic index at which an ad should be injected
+    let nextAdAt = FIRST_AD_MIN_INDEX + (seed % 3); // jittered warm-up
+
     rawReels.forEach((reel, i) => {
       result.push(reel);
+      organicCount++;
 
-      // DEMO: Inject a high-quality mock ad as the second item
-      if (i === 0) {
-        result.push({
-          id: '__demo_reel_ad__',
-          _type: 'reel_ad',
-          ad: {
-            id: 'demo-ad-1',
-            name: 'UniGram Premium',
-            headline: 'Elevate your campus experience with UniGram Pro.',
-            body: 'Get exclusive badges, AI insights, and ad-free browsing.',
-            cta: 'Upgrade Now',
-            format: 'video',
-            media_url: 'https://assets.mixkit.co/videos/preview/mixkit-abstract-fast-motion-light-trails-41225-large.mp4',
-            profiles: {
-              username: 'unigram_official',
-              full_name: 'UniGram Team',
-              avatar_url: 'https://unigram.app/icon.png',
-            },
-            skippable: true,
-          }
-        });
-      }
-
+      // Live session injection
       if (liveSessions.length > 0 && (i + 1) % LIVE_INTERVAL === 0 && liveIdx < liveSessions.length) {
         result.push({ ...liveSessions[liveIdx++], _type: 'live' });
       }
 
-      // Session-seeded offset within each chunk so two viewers see ads at
-      // different positions, but the same viewer sees stable positions.
-      // NOTE: this slot calc is independent of activeIndex on purpose — the
-      // previous version rebuilt the entire reels list every time you swiped,
-      // which thrashed FlatList and was a real perf cost.
-      if (reelAds.length > 0 && i >= FIRST_AD_MIN_INDEX) {
-        const chunkIndex = Math.floor((i - FIRST_AD_MIN_INDEX) / adInterval);
-        const offsetInChunk = (seed + chunkIndex * 13) % adInterval;
-        const shouldInjectAd = ((i - FIRST_AD_MIN_INDEX) % adInterval === offsetInChunk);
-        if (shouldInjectAd) {
-          const ad = reelAds[adIdx % reelAds.length];
-          adIdx++;
-          result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
-        }
+      // Smart ad injection
+      if (reelAds.length > 0 && organicCount >= nextAdAt) {
+        const ad = reelAds[adIdx % reelAds.length];
+        adIdx++;
+        result.push({ id: `__reel_ad_${ad.id}_pos${i}__`, _type: 'reel_ad', ad });
+
+        // Calculate the next ad position with fatigue-aware spacing:
+        // Base gap + 1 extra reel for every 20 organic reels viewed +
+        // session-seeded jitter of ±2
+        const fatigueBonus = Math.floor(organicCount / 20);
+        const jitter = ((seed + adIdx * 7) % 5) - 2; // -2 to +2
+        const nextGap = baseAdGap + fatigueBonus + jitter;
+        nextAdAt = organicCount + Math.max(5, nextGap);
       }
     });
     return result;
   }, [rawReels, liveSessions, reelAds]);
 
   const { success: hapticSuccess, medium: hapticMedium, light: impactLight } = useHaptics();
+  const { colors } = useTheme();
   // 51 %: the moment a new reel is more than halfway on screen, we switch
   // active state to trigger immediate playback. This provides the "snappy"
   // experience found on top-tier social platforms.
@@ -1260,6 +1250,7 @@ export const ReelsScreen: React.FC<{
   }, []);
 
   const load = useCallback(async () => {
+    setLoadError(false);
     const safetyTimer = setTimeout(() => setLoading(false), 15000);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -1278,9 +1269,9 @@ export const ReelsScreen: React.FC<{
         getFollowing(user.id).catch(() => [] as any[]),
         supabase
           .from('live_sessions')
-          .select('*, profiles(id, username, avatar_url, university)')
+          .select('*, profiles!creator_id(id, username, avatar_url, university)')
           .eq('status', 'live')
-          .gt('created_at', twelveHoursAgo)
+          .gt('started_at', twelveHoursAgo)
           .neq('creator_id', user.id),
         supabase.from('profiles').select('university').eq('id', user.id).single().then(r => r.data, () => null),
       ]);
@@ -1288,7 +1279,7 @@ export const ReelsScreen: React.FC<{
       setLikedPostIds(new Set(likedPostData));
       setFollowingIds(new Set((followingData ?? []).map((p: any) => p?.id).filter(Boolean)));
       setLiveSessions(liveData.data ?? []);
-      getActiveAdsForPlacement('reels', profData?.university ?? null, user.id).then(setReelAds).catch(() => {});
+      getActiveAdsForPlacement('reels', profData?.university ?? null, user.id).then(setReelAds).catch((e) => console.warn('[ReelsScreen] loadAds:', e?.message));
       const newReels: any[] = reelsData ?? [];
       setRawReels(prev => {
         const combined = prev.length ? [...prev, ...newReels.filter((r: any) => !prev.some(p => p.id === r.id))] : newReels;
@@ -1298,6 +1289,7 @@ export const ReelsScreen: React.FC<{
       setHasMore(newReels.length === 10);
     } catch (err) {
       console.error('Reels load error:', err);
+      setLoadError(true);
     } finally {
       clearTimeout(safetyTimer);
       setLoading(false);
@@ -1348,7 +1340,7 @@ export const ReelsScreen: React.FC<{
       if (!id || !currentUserId) return;
       const { data } = await supabase
         .from('live_sessions')
-        .select('*, profiles(id, username, avatar_url, university)')
+        .select('*, profiles!creator_id(id, username, avatar_url, university)')
         .eq('id', id)
         .neq('creator_id', currentUserId)
         .single();
@@ -1370,7 +1362,7 @@ export const ReelsScreen: React.FC<{
   const handleAdImpression = useCallback((adId: string) => {
     if (!adImpressionsRef.current.has(adId)) {
       adImpressionsRef.current.add(adId);
-      recordCampusAdImpression(adId).catch(() => {});
+      recordCampusAdImpression(adId).catch((e) => console.warn('[ReelsScreen] adImpression:', e?.message));
     }
   }, []);
   const keyExtractor = useCallback(
@@ -1398,6 +1390,7 @@ export const ReelsScreen: React.FC<{
             try { reelsListRef.current?.scrollToIndex({ index: index + 1, animated: true }); } catch {}
           }}
           onImpression={handleAdImpression}
+          currentUserId={currentUserId}
         />
       );
     }
@@ -1422,13 +1415,17 @@ export const ReelsScreen: React.FC<{
   ]);
 
   if (loading) {
-    return <ReelSkeleton onBack={onBack} />;
+    return (
+      <FadeIn visible={loading} duration={180}>
+        <ReelSkeleton onBack={onBack} />
+      </FadeIn>
+    );
   }
 
   if (reels.length === 0) {
     return (
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <StatusBar hidden={false} translucent backgroundColor="transparent" />
+        <StatusBar hidden={false} />
         {onBack && (
           <TouchableOpacity
             style={{ position: 'absolute', top: 52, left: 16, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 }}
@@ -1437,16 +1434,27 @@ export const ReelsScreen: React.FC<{
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
         )}
-        <Ionicons name="film-outline" size={64} color="#333" />
-        <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 16, fontSize: 16, fontWeight: '600' }}>No reels yet</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.4)', marginTop: 6, fontSize: 13 }}>Post a reel using the + button!</Text>
+        <Ionicons name={loadError ? 'cloud-offline-outline' : 'film-outline'} size={64} color={colors.textMuted} />
+        <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700' }}>{loadError ? 'Couldn\'t load reels' : 'No reels yet'}</Text>
+        <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', paddingHorizontal: 40 }}>
+          {loadError ? 'Check your connection and try again.' : 'Post a reel using the + button!'}
+        </Text>
+        {loadError && (
+          <TouchableOpacity
+            onPress={() => { setLoadError(false); setLoading(true); load(); }}
+            style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
+            activeOpacity={0.85}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden={false} translucent backgroundColor="transparent" />
+      <StatusBar hidden={false} />
       <View
         style={{ flex: 1 }}
         onLayout={e => setContainerHeight(e.nativeEvent.layout.height)}
@@ -1467,7 +1475,7 @@ export const ReelsScreen: React.FC<{
           onViewableItemsChanged={onViewableItemsChanged}
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
-          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color="#fff" style={{ marginVertical: 20 }} /> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color="#fff" style={{ marginVertical: 20 }} /> : undefined}
         />
       </View>
 
@@ -1490,7 +1498,7 @@ export const ReelsScreen: React.FC<{
 
 const skeletonStyles = StyleSheet.create({
   videoPlaceholder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#0d0d0d',
   },
   rightActions: { position: 'absolute', right: 12, alignItems: 'center', gap: 18 },
@@ -1678,13 +1686,13 @@ const styles = StyleSheet.create({
 
   // ── In-Stream Ad Demo ─────────────────────────────────────────────────────
   inStreamContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1000,
     alignItems: 'center',
     justifyContent: 'center',
   },
   inStreamBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.85)',
   },
   inStreamContent: {

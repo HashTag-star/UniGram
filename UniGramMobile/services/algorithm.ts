@@ -69,13 +69,42 @@ async function getCachedReportCounts(postIds: string[]): Promise<Record<string, 
 
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
-export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0) {
-  const cacheKey = `feed:${userId}:${limit}:${offset}`;
+export interface FeedOptions {
+  /** Ids already on screen — the server skips them (replaces fragile OFFSET paging). */
+  excludeIds?: string[];
+  /** Per-session jitter seed so a manual refresh isn't identical to the last one. */
+  seed?: number;
+  /** Skip the cache (pull-to-refresh, load-more). */
+  fresh?: boolean;
+}
 
-  const fetched = await Cache.getOrFetch<any[]>(cacheKey, TTL.feed, async () => {
-    // Run blocked-IDs fetch in parallel with the main RPC so neither waits on the other.
+export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0, opts: FeedOptions = {}) {
+  const excludeIds = opts.excludeIds ?? [];
+  const seed = opts.seed ?? 0;
+  const cacheKey = `feed:${userId}:${limit}:${offset}`;
+  const useCache = !opts.fresh && excludeIds.length === 0;
+
+  const fetcher = async () => {
+    let results: any[] = [];
+    let blockedIds: string[] = [];
+
+    // Run blocked-IDs fetch in parallel with the ranked feed RPC so neither
+    // delays first render. The RPC is the primary feed; chronological global
+    // posts are only a compatibility fallback when it is unavailable.
+    const callRpc = async () => {
+      const first = await supabase.rpc('get_hybrid_campus_feed', {
+        p_user_id: userId, p_limit: limit, p_offset: offset,
+        p_exclude_ids: excludeIds, p_seed: seed,
+      });
+      // Migration 059 not applied yet → PostgREST can't find the 5-arg signature.
+      if (first.error && (first.error.code === 'PGRST202' || /Could not find the function/i.test(first.error.message ?? ''))) {
+        return supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset });
+      }
+      return first;
+    };
+
     const [feedResult, blockedResult] = await Promise.allSettled([
-      supabase.rpc('get_hybrid_campus_feed', { p_user_id: userId, p_limit: limit, p_offset: offset }),
+      callRpc(),
       getCachedBlockedIds(userId),
     ]);
 
@@ -87,9 +116,8 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     const { data, error } = feedResult.status === 'fulfilled'
       ? feedResult.value
       : { data: null, error: { message: 'Feed RPC failed' } as any };
-    const blockedIds: string[] = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
-
-    let results = data ?? [];
+    blockedIds = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
+    results = data ?? [];
 
     // Backfill missing refs if needed
     if (!error && results.length > 0 && results[0].quote_of === undefined) {
@@ -108,18 +136,24 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
     }
 
     if (error) {
-      // Fallback: followed users' posts, most recent first
+      // Keep the feed usable during a staged backend rollout, but do not let
+      // this fallback replace the personalized path while the RPC is healthy.
       console.warn('Feed RPC fallback:', error.message);
-      const { data: fallback } = await supabase
+      let q = supabase
         .from('posts')
         .select(`
-          id, user_id, caption, type, media_url, media_urls,
+          id, user_id, caption, type, media_url, media_urls, saves_count,
           likes_count, comments_count, location, song, tagged_users,
           repost_of, quote_of, created_at,
           profiles!posts_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)
         `)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
+        .order('created_at', { ascending: false });
+      if (excludeIds.length > 0) {
+        q = q.not('id', 'in', `(${excludeIds.join(',')})`).limit(limit);
+      } else {
+        q = q.range(offset, offset + limit - 1);
+      }
+      const { data: fallback } = await q;
       results = fallback ?? [];
     }
 
@@ -149,8 +183,10 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       }));
 
     return assembleFeed(filtered);
-  });
+  };
 
+  if (!useCache) return (await fetcher()) ?? [];
+  const fetched = await Cache.getOrFetch<any[]>(cacheKey, TTL.feed, fetcher);
   return fetched ?? [];
 }
 
@@ -703,41 +739,37 @@ function derivePostTopic(post: any): string {
  * - Injects the top momentum posts at feed positions 2 and 7
  */
 function assembleFeed(rankedPosts: any[]): any[] {
+  // Greedy re-ordering that keeps the server's ranking but breaks up runs:
+  //  - never the same author back-to-back
+  //  - at most 2 of the same topic within any window of 4
+  // Posts that can't be placed yet are DEFERRED, never dropped, and the rules
+  // relax when nothing else fits (e.g. a feed made of one author).
+  const pool = [...rankedPosts];
   const feed: any[] = [];
-  const seenAuthors = new Set<string>();
-  const topicCount: Record<string, number> = {};
+  const recentTopics: string[] = [];
 
-  for (const post of rankedPosts) {
-    // TEMPORARILY DISABLED for testing: allow consecutive posts from same author
-    // if (seenAuthors.has(post.user_id)) continue;
+  while (pool.length > 0) {
+    const lastAuthor = feed.length ? feed[feed.length - 1].user_id : null;
+    let pick = pool.findIndex(p => {
+      if (p.user_id === lastAuthor) return false;
+      const topic = derivePostTopic(p);
+      return recentTopics.filter(t => t === topic).length < 2;
+    });
+    if (pick === -1) pick = pool.findIndex(p => p.user_id !== lastAuthor);
+    if (pick === -1) pick = 0;
 
-    const topic = derivePostTopic(post);
-    // TEMPORARILY DISABLED for testing: allow more than 2 posts per topic
-    // if ((topicCount[topic] ?? 0) >= 2) continue;
-
+    const [post] = pool.splice(pick, 1);
     feed.push(post);
-    seenAuthors.add(post.user_id);
-    topicCount[topic] = (topicCount[topic] ?? 0) + 1;
-
-    // Reset topic counters every 5 posts to allow variety to cycle back
-    if (feed.length % 5 === 0) {
-      Object.keys(topicCount).forEach(k => (topicCount[k] = 0));
-    }
+    recentTopics.push(derivePostTopic(post));
+    if (recentTopics.length > 4) recentTopics.shift();
   }
 
-  // Find top momentum posts not already placed naturally
-  const feedIds = new Set(feed.map(p => p.id));
-  const momentumQueue = rankedPosts.filter(
-    p => !feedIds.has(p.id) && getMomentumBoost(p) > 0.5,
-  );
-
-  // Inject at positions 2 and 7 (0-indexed)
-  const injectSlots = [2, 7];
-  for (let i = 0; i < injectSlots.length && momentumQueue.length > 0; i++) {
-    const slot = injectSlots[i];
-    if (slot <= feed.length) {
-      feed.splice(slot, 0, momentumQueue.shift()!);
-    }
+  // Lift one strong "momentum" post (real progress / high save-rate) into the
+  // top 3 if the ranker left it deeper in the page.
+  const momentumIdx = feed.findIndex((p, i) => i > 2 && getMomentumBoost(p) >= 1);
+  if (momentumIdx > -1 && feed.length > 3) {
+    const [m] = feed.splice(momentumIdx, 1);
+    feed.splice(2, 0, m);
   }
 
   return feed;

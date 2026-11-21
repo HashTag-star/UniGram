@@ -127,39 +127,41 @@ export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onCl
     >
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={styles.overlay}>
-        <TouchableOpacity style={styles.dismiss} onPress={onClose} activeOpacity={1} />
+        <TouchableOpacity style={styles.dismiss} onPress={onClose} activeOpacity={1} accessibilityLabel="Close share sheet" accessibilityRole="button" />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 20, backgroundColor: colors.bg }]}>
           <View style={styles.handle} />
           
           <View style={styles.header}>
-            <Text style={styles.title}>Send to</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Ionicons name="close" size={24} color="#fff" />
+            <Text style={[styles.title, { color: colors.text }]}>Send to</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Close share" accessibilityRole="button">
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={18} color="rgba(255,255,255,0.4)" />
+          <View style={[styles.searchBar, { backgroundColor: colors.inputBg }]}>
+            <Ionicons name="search" size={18} color={colors.textMuted} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search people..."
-              placeholderTextColor="rgba(255,255,255,0.3)"
+              placeholderTextColor={colors.textMuted}
               value={query}
               onChangeText={setQuery}
               autoCapitalize="none"
+              accessibilityLabel="Search people"
             />
           </View>
 
           {loading ? (
-            <ActivityIndicator style={{ marginVertical: 40 }} color="#6366f1" />
+            <ActivityIndicator style={{ marginVertical: 40 }} color={colors.accent} />
           ) : loadError ? (
-            // [Abena Owusu - Frontend] Surface load failures instead of an empty silent sheet
             <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
-              <Ionicons name="cloud-offline-outline" size={40} color="rgba(255,255,255,0.5)" />
-              <Text style={{ color: '#fff', fontSize: 14 }}>Couldn't load your chats.</Text>
+              <Ionicons name="cloud-offline-outline" size={40} color={colors.textMuted} />
+              <Text style={{ color: colors.text, fontSize: 14 }}>Couldn't load your chats.</Text>
               <TouchableOpacity
                 onPress={loadConversations}
-                style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#4f46e5', borderRadius: 8 }}
+                style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.accent, borderRadius: 8 }}
+                accessibilityLabel="Try again"
+                accessibilityRole="button"
               >
                 <Text style={{ color: '#fff', fontWeight: '600' }}>Try again</Text>
               </TouchableOpacity>
@@ -172,12 +174,12 @@ export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onCl
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20, flexGrow: 1 }}
               ListEmptyComponent={
                 <View style={{ paddingVertical: 40, alignItems: 'center', gap: 8 }}>
-                  <Ionicons name="chatbubbles-outline" size={40} color="rgba(255,255,255,0.4)" />
-                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                  <Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
                     {query.trim() ? 'No matches' : 'No conversations yet'}
                   </Text>
                   {!query.trim() && (
-                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', maxWidth: 240 }}>
+                    <Text style={{ color: colors.textSub, fontSize: 12, textAlign: 'center', maxWidth: 240 }}>
                       Start a chat from someone's profile, then come back to share.
                     </Text>
                   )}
@@ -198,19 +200,21 @@ export const ShareSheet: React.FC<ShareSheetProps> = React.memo(({ visible, onCl
                       {avatarUrl ? (
                         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
                       ) : (
-                        <View style={styles.placeholderAvatar}>
-                          <Ionicons name={isGroup ? 'people' : 'person'} size={20} color="#555" />
+                        <View style={[styles.placeholderAvatar, { backgroundColor: colors.bg2 }]}>
+                          <Ionicons name={isGroup ? 'people' : 'person'} size={20} color={colors.textMuted} />
                         </View>
                       )}
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.name}>{displayName}</Text>
-                      {username ? <Text style={styles.username}>@{username}</Text> : null}
+                      <Text style={[styles.name, { color: colors.text }]}>{displayName}</Text>
+                      {username ? <Text style={[styles.username, { color: colors.textMuted }]}>@{username}</Text> : null}
                     </View>
                     <TouchableOpacity
-                      style={[styles.sendBtn, sending === convId && { opacity: 0.5 }]}
+                      style={[styles.sendBtn, { backgroundColor: colors.accent }, sending === convId && { opacity: 0.5 }]}
                       onPress={() => convId && handleSend(convId)}
                       disabled={sending !== null}
+                      accessibilityLabel={`Send to ${displayName}`}
+                      accessibilityRole="button"
                     >
                       {sending === convId ? (
                         <ActivityIndicator size="small" color="#fff" />

@@ -125,8 +125,8 @@ export async function invalidateReelsCache() {
 }
 
 export async function likeReel(reelId: string, userId: string) {
-  const { error } = await supabase.from('reel_likes').insert({ reel_id: reelId, user_id: userId });
-  if (error && error.code !== '23505') throw error;
+  const { error } = await supabase.from('reel_likes').upsert({ reel_id: reelId, user_id: userId }, { onConflict: 'reel_id,user_id' });
+  if (error) throw error;
   SocialSync.emit('REEL_LIKE_CHANGE', { targetId: reelId, isActive: true });
 }
 
@@ -217,11 +217,14 @@ export async function getReelComments(
 export async function addReelComment(reelId: string, userId: string, text: string, parentId?: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
-  
+
+  const { cleanUserText } = require('../lib/contentSafety');
+  const sanitized = cleanUserText(text, 'comment');
+
   let res: any;
   const { data, error } = await supabase
     .from('reel_comments')
-    .insert({ reel_id: reelId, user_id: userId, text, parent_id: parentId })
+    .insert({ reel_id: reelId, user_id: userId, text: sanitized, parent_id: parentId })
     .select(`*, profiles!reel_comments_user_id_fkey(*)`)
     .single();
   

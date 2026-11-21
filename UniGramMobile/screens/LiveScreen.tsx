@@ -489,7 +489,7 @@ export const LiveScreen: React.FC<{
 
         const { data: ls } = await supabase
           .from('live_sessions')
-          .select('*, profiles(id, username, avatar_url, is_verified)')
+          .select('*, profiles!creator_id(id, username, avatar_url, is_verified)')
           .eq('id', viewerSessionId)
           .single();
 
@@ -1004,7 +1004,7 @@ const s = StyleSheet.create({
   heartReactBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,59,48,0.14)', alignItems: 'center', justifyContent: 'center' },
 
   // Ended overlay
-  endedOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 2000, alignItems: 'center', justifyContent: 'center' },
+  endedOverlay: { ...StyleSheet.absoluteFill, zIndex: 2000, alignItems: 'center', justifyContent: 'center' },
   endedInner: { alignItems: 'center', paddingHorizontal: 32 },
   endedIconWrap: { width: 84, height: 84, borderRadius: 42, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
   endedTitle: { color: '#fff', fontSize: 24, fontWeight: '900', marginBottom: 8 },

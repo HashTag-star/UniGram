@@ -41,13 +41,7 @@ import { VerificationType } from '../data/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function timeAgo(ts: string) {
-  const d = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (d < 60) return 'just now';
-  if (d < 3600) return `${Math.floor(d / 60)}m`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h`;
-  return `${Math.floor(d / 86400)}d`;
-}
+import { timeAgo } from '../lib/formatUtils';
 
 function renderMentions(text: string, colors: any): React.ReactNode {
   if (!text?.includes('@')) return text;
@@ -167,6 +161,8 @@ const CommentRow = React.memo(function CommentRow({
                 onPress={() => onLike(item)}
                 style={styles.actionItem}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                accessibilityLabel={item.isLiked ? 'Unlike comment' : 'Like comment'}
+                accessibilityRole="button"
               >
                 <Ionicons
                   name={item.isLiked ? 'heart' : 'heart-outline'}
@@ -184,6 +180,8 @@ const CommentRow = React.memo(function CommentRow({
                 onPress={() => onReply(item)}
                 style={styles.actionItem}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                accessibilityLabel="Reply"
+                accessibilityRole="button"
               >
                 <Text style={[styles.actionTextBold, { color: colors.textMuted }]}>Reply</Text>
               </TouchableOpacity>
@@ -192,6 +190,8 @@ const CommentRow = React.memo(function CommentRow({
                 onPress={() => onLongPress(item)}
                 style={styles.actionItem}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                accessibilityLabel="More options"
+                accessibilityRole="button"
               >
                 <Ionicons name="ellipsis-horizontal" size={14} color={colors.textMuted} />
               </TouchableOpacity>
@@ -444,7 +444,7 @@ const FooterInput = React.memo(function FooterInput({
           <Text style={[styles.replyBannerText, { color: colors.accent }]} numberOfLines={1}>
             Replying to <Text style={{ fontWeight: '800' }}>@{replyingTo.profiles?.username}</Text>
           </Text>
-          <TouchableOpacity onPress={onCancelReply} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity onPress={onCancelReply} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Cancel reply" accessibilityRole="button">
             <Ionicons name="close-circle" size={16} color={colors.accent} />
           </TouchableOpacity>
         </View>
@@ -473,6 +473,8 @@ const FooterInput = React.memo(function FooterInput({
           onPress={handleSend}
           disabled={!canSend}
           hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          accessibilityLabel="Send comment"
+          accessibilityRole="button"
         >
           {sending
             ? <ActivityIndicator size="small" color="#fff" />
@@ -912,7 +914,7 @@ export const CommentSheet: React.FC<Props> = ({
               <Text style={[styles.countLabel, { color: colors.textMuted }]}>{totalCount}</Text>
             )}
           </View>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Close comments" accessibilityRole="button">
             <Ionicons name="close" size={20} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
@@ -933,7 +935,7 @@ export const CommentSheet: React.FC<Props> = ({
           keyboardDismissMode="none"
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
-          ListFooterComponent={loadingMore ? <CommentsLoadMoreSkeleton /> : null}
+          ListFooterComponent={loadingMore ? <CommentsLoadMoreSkeleton /> : undefined}
           ListHeaderComponent={
             // Only show the panel if loading OR we have actual highlights
             (aiHighlightsLoading || aiHighlights.length > 0) ? (
@@ -958,7 +960,7 @@ export const CommentSheet: React.FC<Props> = ({
                   ))
                 )}
               </View>
-            ) : null
+            ) : undefined
           }
           ListEmptyComponent={
             loading ? <CommentsSkeleton /> : (

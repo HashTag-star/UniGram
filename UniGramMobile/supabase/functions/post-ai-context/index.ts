@@ -68,6 +68,23 @@ Deno.serve(async (req) => {
   const empty = { type: 'none' as ContextType, context: '', detail: '', confidence: 0 }
 
   try {
+    // Authenticate the caller via JWT
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
+    const token = authHeader.slice(7)
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
+
     const { postId, caption, postType, mediaUrl, isImage } = await req.json()
 
     if (!postId) {

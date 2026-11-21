@@ -12,6 +12,8 @@ import { EditProfileModal } from './EditProfileModal';
 import { AdManagerScreen } from './AdManagerScreen';
 import { deleteUserAccount } from '../services/profiles';
 import { isProActive, isProPeriodActive, setProDisabled, setProAutoRenew } from '../services/pro';
+import { withSimulatedPro } from '../services/simulatedPro';
+import { usePaywall } from '../context/PaywallContext';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -56,6 +58,8 @@ const Row: React.FC<{
       style={[styles.row, { borderBottomColor: colors.rowBorder }, noBorder && { borderBottomWidth: 0 }]}
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
+      accessibilityLabel={label}
+      accessibilityRole="button"
     >
       <View style={[styles.rowIcon, { backgroundColor: (danger ? '#ef4444' : iconColor) + '20' }]}>
         <Ionicons name={icon as any} size={18} color={danger ? '#ef4444' : iconColor} />
@@ -492,6 +496,12 @@ export const SettingsScreen: React.FC<Props> = ({
     AsyncStorage.setItem(NOTIF_STORAGE_KEY, String(val)).catch(() => {});
   };
 
+  // Subscribing to the paywall context re-renders this screen when a (simulated)
+  // purchase or cancellation changes the entitlement.
+  const { openPaywall } = usePaywall();
+  // Profile with the on-device simulated subscription overlaid (no-op when a real one is active).
+  const proProfile = withSimulatedPro(profile);
+
   // Pro opt-out: turns the Pro experience off without ending the paid period.
   // The toggle reflects the *active* state (i.e. inverse of pro_disabled), so
   // turning it OFF = opt-out, turning it ON = restore Pro until pro_expires_at.
@@ -680,7 +690,7 @@ export const SettingsScreen: React.FC<Props> = ({
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel="Close settings" accessibilityRole="button">
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
@@ -692,6 +702,8 @@ export const SettingsScreen: React.FC<Props> = ({
           <TouchableOpacity
             style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]}
             onPress={() => setShowEditProfile(true)}
+            accessibilityLabel="Edit profile"
+            accessibilityRole="button"
           >
             {profile?.avatar_url
               ? <Image source={{ uri: profile.avatar_url }} style={styles.profileAvatar} />
@@ -742,7 +754,7 @@ export const SettingsScreen: React.FC<Props> = ({
                 iconColor="#facc15"
                 label={isProActive(profile) ? 'Pro is active' : 'Pro is disabled'}
                 sublabel={(() => {
-                  const expiresAt = profile?.pro_expires_at;
+                  const expiresAt = proProfile?.pro_expires_at;
                   if (!expiresAt) return isProActive(profile) ? 'Active subscription' : 'Re-enable until your period ends';
                   const ms = new Date(expiresAt).getTime() - Date.now();
                   const days = Math.max(0, Math.ceil(ms / 86400000));
@@ -782,16 +794,16 @@ export const SettingsScreen: React.FC<Props> = ({
                 sublabel="Automatically renew subscription"
                 right={
                   <Switch
-                    value={profile?.pro_auto_renew !== false}
+                    value={proProfile?.pro_auto_renew !== false}
                     onValueChange={handleProAutoRenewToggle}
                     disabled={proAutoRenewPending}
                     trackColor={{ false: '#333', true: '#34d399' }}
                     thumbColor="#fff"
                   />
                 }
-                noBorder={profile?.pro_auto_renew === false}
+                noBorder={proProfile?.pro_auto_renew === false}
               />
-              {profile?.pro_auto_renew !== false && (
+              {proProfile?.pro_auto_renew !== false && (
                 <Row
                   icon="close-circle-outline"
                   iconColor="#ef4444"
@@ -801,6 +813,23 @@ export const SettingsScreen: React.FC<Props> = ({
                   noBorder
                 />
               )}
+            </Section>
+          )}
+
+          {!isProPeriodActive(profile) && (
+            <Section title="UniGram Pro">
+              <Row
+                icon="flash"
+                iconColor="#8b5cf6"
+                label="Upgrade to UniGram Pro"
+                sublabel="Analytics, AI insights, story links & Explore priority"
+                onPress={() => {
+                  // Settings is itself a modal — close it first so the paywall can present.
+                  onClose();
+                  setTimeout(() => openPaywall('settings'), 350);
+                }}
+                noBorder
+              />
             </Section>
           )}
 

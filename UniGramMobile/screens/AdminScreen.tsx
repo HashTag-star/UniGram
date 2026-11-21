@@ -303,7 +303,7 @@ const AgentTab: React.FC = () => {
           ))}
           {loading && (
             <View key="loading-indicator" style={agentStyles.loadingWrap}>
-              <ActivityIndicator size="small" color="#6366f1" />
+              <ActivityIndicator size="small" color={colors.accent} />
               <Text style={agentStyles.loadingText}>Agent is thinking...</Text>
             </View>
           )}
@@ -441,8 +441,8 @@ const OverviewTab: React.FC<{
         <Text style={styles.sectionTitle}>Dashboard Stats</Text>
         <TouchableOpacity onPress={onRefresh} style={styles.refreshBtn} disabled={loading}>
           {loading
-            ? <ActivityIndicator size="small" color="#6366f1" />
-            : <Ionicons name="refresh" size={20} color="#6366f1" />
+            ? <ActivityIndicator size="small" color={colors.accent} />
+            : <Ionicons name="refresh" size={20} color={colors.accent} />
           }
         </TouchableOpacity>
       </View>
@@ -729,7 +729,7 @@ const UsersTab: React.FC = () => {
       </View>
       <View style={styles.userActions}>
         {actioning === u.id ? (
-          <ActivityIndicator size="small" color="#6366f1" />
+          <ActivityIndicator size="small" color={colors.accent} />
         ) : (
           <>
             {!u.is_verified && (
@@ -779,7 +779,7 @@ const UsersTab: React.FC = () => {
       </View>
       <Text style={styles.countLabel}>{filtered.length} users</Text>
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={filtered}
@@ -789,7 +789,7 @@ const UsersTab: React.FC = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => { setRefreshing(true); load(); }}
-              tintColor="#6366f1"
+              tintColor={colors.accent}
             />
           }
           contentContainerStyle={{ paddingBottom: 100 }}
@@ -934,7 +934,7 @@ const PostsTab: React.FC = () => {
         <Text style={styles.countLabel}>{filtered.length} posts</Text>
       </View>
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={filtered}
@@ -944,7 +944,7 @@ const PostsTab: React.FC = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => { setRefreshing(true); load(); }}
-              tintColor="#6366f1"
+              tintColor={colors.accent}
             />
           }
           contentContainerStyle={{ paddingBottom: 100 }}
@@ -1077,7 +1077,7 @@ const MarketTab: React.FC = () => {
           </View>
         </View>
         {isActioning ? (
-          <ActivityIndicator size="small" color="#6366f1" style={{ marginRight: 12 }} />
+          <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 12 }} />
         ) : (
           <View style={styles.marketActions}>
             {!m.is_sold && (
@@ -1104,7 +1104,7 @@ const MarketTab: React.FC = () => {
     <View style={styles.tabContent}>
       <Text style={styles.countLabel}>{items.length} listings</Text>
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={items}
@@ -1114,7 +1114,7 @@ const MarketTab: React.FC = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => { setRefreshing(true); load(); }}
-              tintColor="#6366f1"
+              tintColor={colors.accent}
             />
           }
           contentContainerStyle={{ paddingBottom: 100 }}
@@ -1249,7 +1249,7 @@ const ReportsTab: React.FC = () => {
 
       <View style={styles.reportActions}>
         {actioning === r.id ? (
-          <ActivityIndicator size="small" color="#6366f1" />
+          <ActivityIndicator size="small" color={colors.accent} />
         ) : (
           <View style={{ flexDirection: 'column', gap: 8, width: '100%' }}>
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -1284,14 +1284,14 @@ const ReportsTab: React.FC = () => {
     <View style={styles.tabContent}>
       <Text style={styles.countLabel}>{reports.length} pending reports</Text>
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={reports}
           keyExtractor={r => r.id}
           renderItem={renderReport}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor="#6366f1" />
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.accent} />
           }
           contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
           ListEmptyComponent={
@@ -1529,7 +1529,7 @@ const VerificationsTab: React.FC = () => {
       {r.status === 'pending' && (
         <View style={styles.requestActions}>
           {actioning === r.id ? (
-            <ActivityIndicator size="small" color="#6366f1" />
+            <ActivityIndicator size="small" color={colors.accent} />
           ) : (
             <>
               <TouchableOpacity
@@ -1574,7 +1574,7 @@ const VerificationsTab: React.FC = () => {
       </View>
 
       {loading ? (
-        <ActivityIndicator color="#6366f1" style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={requests}
@@ -1584,7 +1584,7 @@ const VerificationsTab: React.FC = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => { setRefreshing(true); load(); }}
-              tintColor="#6366f1"
+              tintColor={colors.accent}
             />
           }
           contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
@@ -2140,7 +2140,7 @@ const AdsTab: React.FC = () => {
 
       {/* Ads list */}
       {loading
-        ? <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 40 }} />
+        ? <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 40 }} />
         : ads.length === 0
           ? (
             <View style={{ alignItems: 'center', paddingTop: 50 }}>

@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
   } catch (e: any) {
     console.error('[paystack-init]', e);
     return new Response(
-      JSON.stringify({ error: e.message }),
+      JSON.stringify({ error: 'Payment initialization failed. Please try again.' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
     );
   }

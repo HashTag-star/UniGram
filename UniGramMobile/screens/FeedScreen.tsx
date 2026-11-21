@@ -28,6 +28,7 @@ import { BlurView } from 'expo-blur';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
+import { FadeIn } from '../components/FadeIn';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
 import { usePopup } from '../context/PopupContext';
@@ -65,6 +66,8 @@ import { useHaptics } from '../hooks/useHaptics';
 import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
+import { usePaywall } from '../context/PaywallContext';
+import { ProPromoCard } from '../components/ProPromoCard';
 import { LiveScreen } from './LiveScreen';
 import { TrendingScreen } from './TrendingScreen';
 import { PopupButton } from '../components/PremiumPopup';
@@ -153,6 +156,45 @@ const LiveStoryBubble: React.FC<{ ls: any; onPress: () => void }> = ({ ls, onPre
 };
 
 // ─── Story Bar ────────────────────────────────────────────────────────────────
+const STORY_GRADIENT = ['#feda75', '#fa7e1e', '#d62976', '#962fbf', '#4f5bd5'] as const;
+
+/** Instagram-style ring: gradient when unseen, hairline grey when seen. */
+const StoryRing: React.FC<{
+  uri?: string | null;
+  seen?: boolean;
+  plain?: boolean;
+  bg: string;
+  border: string;
+  children?: React.ReactNode;
+}> = ({ uri, seen, plain, bg, border, children }) => {
+  const avatar = uri
+    ? <CachedImage uri={uri} style={styles.storyAvatar} />
+    : <View style={[styles.storyAvatar, { backgroundColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="person" size={22} color="#666" />
+      </View>;
+  const inner = (
+    <View style={[styles.storyInner, { backgroundColor: bg }]}>
+      <View style={styles.storyAvatarClip}>{avatar}</View>
+    </View>
+  );
+  return (
+    <View style={styles.storyRingWrap}>
+      {plain || seen ? (
+        <View style={[styles.storyRingBase, { borderWidth: plain ? 0 : 1.5, borderColor: border }]}>{inner}</View>
+      ) : (
+        <LinearGradient
+          colors={STORY_GRADIENT as any}
+          start={{ x: 0.1, y: 1 }} end={{ x: 0.9, y: 0 }}
+          style={styles.storyRingBase}
+        >
+          {inner}
+        </LinearGradient>
+      )}
+      {children}
+    </View>
+  );
+};
+
 const StoryBarInternal: React.FC<{
   storyGroups: any[];
   liveSessions: any[];
@@ -167,13 +209,24 @@ const StoryBarInternal: React.FC<{
   const { colors } = useTheme();
   const ownGroup = ownGroupIdx !== -1 ? storyGroups[ownGroupIdx] : null;
   const filteredGroups = storyGroups.filter((_, idx) => idx !== ownGroupIdx);
-  const thumbUri = hasOwnStories
-    ? (ownGroup?.stories?.[0]?.media_url ?? currentProfile?.avatar_url)
-    : currentProfile?.avatar_url;
+  const viewedSet = useMemo(() => new Set(viewedIds), [viewedIds]);
+  const ownAllViewed = !!ownGroup && ownGroup.stories.every((s: any) => viewedSet.has(s.id) || s._pending);
+
+  // Unseen stories first (like Instagram), seen ones sink to the end.
+  const orderedGroups = useMemo(() => {
+    const valid = filteredGroups.filter(g => g.profile?.id);
+    const unseen: any[] = [];
+    const seen: any[] = [];
+    valid.forEach(g => {
+      const allViewed = !g._isAdGroup && g.stories.every((s: any) => viewedSet.has(s.id));
+      (allViewed ? seen : unseen).push(g);
+    });
+    return [...unseen, ...seen];
+  }, [filteredGroups, viewedSet]);
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}
-      style={styles.storyScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 12 }}
+      style={styles.storyScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 10 }}
       onScrollBeginDrag={() => DeviceEventEmitter.emit('setPagerScroll', false)}
       onScrollEndDrag={() => DeviceEventEmitter.emit('setPagerScroll', true)}
       onMomentumScrollEnd={() => DeviceEventEmitter.emit('setPagerScroll', true)}
@@ -182,45 +235,45 @@ const StoryBarInternal: React.FC<{
       {liveSessions.map((ls, i) => (
         <LiveStoryBubble key={ls.id || `live-${i}`} ls={ls} onPress={() => onLivePress(ls.id)} />
       ))}
-      
-      <TouchableOpacity 
+
+      <TouchableOpacity
         key="your-story"
-        style={styles.storyItem} 
+        style={styles.storyItem}
+        activeOpacity={0.85}
         onPress={() => hasOwnStories ? onStoryPress(ownGroupIdx) : onYourStoryPress()}
+        accessibilityRole="button"
+        accessibilityLabel={hasOwnStories ? 'View your story' : 'Add to your story'}
       >
-        <View style={[styles.storyRing, hasOwnStories && styles.storyRingOwnActive]}>
-          <View style={styles.storyAvatarClip}>
-            {thumbUri
-              ? <CachedImage uri={thumbUri} style={styles.storyAvatar} />
-              : <View style={[styles.storyAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="person" size={22} color="#555" />
-                </View>}
-          </View>
-          <TouchableOpacity 
-            style={styles.storyPlusOverlay} 
+        <StoryRing
+          uri={hasOwnStories ? (ownGroup?.stories?.[0]?.media_url ?? currentProfile?.avatar_url) : currentProfile?.avatar_url}
+          plain={!hasOwnStories}
+          seen={hasOwnStories && ownAllViewed}
+          bg={colors.bg}
+          border={colors.border}
+        >
+          <TouchableOpacity
+            style={[styles.storyPlusOverlay, { borderColor: colors.bg }]}
             onPress={(e) => { e.stopPropagation(); onYourStoryPress(); }}
+            hitSlop={6}
           >
             <Ionicons name="add" size={14} color="#fff" />
           </TouchableOpacity>
-        </View>
-        <Text style={[styles.storyUsername, { color: colors.textSub }]} numberOfLines={1}>Your Story</Text>
+        </StoryRing>
+        <Text style={[styles.storyUsername, { color: colors.textSub }]} numberOfLines={1}>Your story</Text>
       </TouchableOpacity>
 
-      {filteredGroups.filter(g => g.profile?.id).map((group, i) => {
+      {orderedGroups.map((group, i) => {
         const globalIdx = storyGroups.indexOf(group);
-        const allViewed = group.stories.every((s: any) => viewedIds.includes(s.id));
+        const allViewed = !group._isAdGroup && group.stories.every((s: any) => viewedSet.has(s.id));
         return (
-          <TouchableOpacity key={group.profile.id || `group-${i}`} style={styles.storyItem} onPress={() => onStoryPress(globalIdx)}>
-            <View style={[styles.storyRing, allViewed && styles.storyRingViewed]}>
-              <View style={styles.storyAvatarClip}>
-                {group.profile.avatar_url
-                  ? <CachedImage uri={group.profile.avatar_url} style={styles.storyAvatar} />
-                  : <View style={[styles.storyAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                      <Ionicons name="person" size={22} color="#555" />
-                    </View>}
-              </View>
-            </View>
-            <Text style={[styles.storyUsername, { color: allViewed ? colors.textMuted : colors.textSub }]} numberOfLines={1}>
+          <TouchableOpacity
+            key={group.profile.id || `group-${i}`}
+            style={styles.storyItem}
+            activeOpacity={0.85}
+            onPress={() => onStoryPress(globalIdx)}
+          >
+            <StoryRing uri={group.profile.avatar_url} seen={allViewed} bg={colors.bg} border={colors.border} />
+            <Text style={[styles.storyUsername, { color: allViewed ? colors.textMuted : colors.text }]} numberOfLines={1}>
               {group.profile.username}
             </Text>
           </TouchableOpacity>
@@ -426,12 +479,12 @@ const StoryViewer: React.FC<{
   useEffect(() => {
     if (!visible || !story) return;
     if (!story._isAd) {
-      markStoryViewed(story.id, currentUserId).catch(() => {});
+      markStoryViewed(story.id, currentUserId).catch((e) => console.warn('[FeedScreen] markStoryViewed:', e?.message));
       onViewed(story.id);
       fetchStats();
     } else {
       // Server-side delivery events deduplicate this per viewer/placement/day.
-      recordCampusAdImpression(story.ad.id, 'stories').catch(() => {});
+      recordCampusAdImpression(story.ad.id, 'stories').catch((e) => console.warn('[FeedScreen] adImpression stories:', e?.message));
     }
     startProgress();
     return () => { progressAnim.current?.stop(); };
@@ -686,8 +739,8 @@ const StoryViewer: React.FC<{
                 borderRadius: 16, paddingVertical: 14,
               }}
               onPress={() => {
-                recordCampusAdClick(story.ad.id, 'stories').catch(() => {});
-                if (story.ad?.link) Linking.openURL(story.ad.link).catch(() => {});
+                recordCampusAdClick(story.ad.id, 'stories').catch((e) => console.warn('[FeedScreen] adClick:', e?.message));
+                if (story.ad?.link) Linking.openURL(story.ad.link).catch((e) => console.warn('[FeedScreen] openURL:', e?.message));
               }}
               activeOpacity={0.8}
             >
@@ -1000,9 +1053,14 @@ export const FeedScreen = React.memo(({
   const { colors } = useTheme();
   const { showPopup } = usePopup();
   const { showToast } = useToast();
+  const { selection } = useHaptics();
+  const { openPaywall, entitlementVersion } = usePaywall();
+  const [proPromoDismissed, setProPromoDismissed] = useState(false);
+  const storyLinkUpsellShownRef = useRef(false);
   const [storyIdx, setStoryIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(cachedFeedPosts.length === 0);
+  const [feedError, setFeedError] = useState(false);
   const [posts, setPosts] = useState<any[]>(cachedFeedPosts);
   const [storyGroups, setStoryGroups] = useState<any[]>(cachedStoryGroups);
   const [liveSessions, setLiveSessions] = useState<any[]>([]);
@@ -1050,8 +1108,18 @@ export const FeedScreen = React.memo(({
   const isLoadingRef = useRef(false);
   const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingPosts, setPendingPosts] = useState<any[]>([]);
+  const pendingPostsRef = useRef<any[]>([]);
+  useEffect(() => { pendingPostsRef.current = pendingPosts; }, [pendingPosts]);
   const flatListRef = useRef<any>(null);
-  const pillAnim = useRef(new Animated.Value(-120)).current; // Increased offset
+  // Ids of accounts the viewer follows - decides which realtime posts deserve the pill.
+  const followingIdsRef = useRef<Set<string>>(new Set());
+  const myUniversityRef = useRef<string | null>(null);
+  // Jitter seed sent to the ranker; bumped on every manual refresh.
+  const feedSeedRef = useRef(Math.floor(Math.random() * 100000));
+  const isLoadingMoreRef = useRef(false);
+  const postsRef = useRef<any[]>(cachedFeedPosts);
+  useEffect(() => { postsRef.current = posts; cachedFeedPosts = posts; }, [posts]);
+  const pillAnim = useRef(new Animated.Value(-120)).current;
 
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 50,
@@ -1064,7 +1132,8 @@ export const FeedScreen = React.memo(({
 
   const onViewableItemsChanged = useRef(({ viewableItems, changed }: any) => {
     if (viewableItems.length > 0) {
-      const topId = viewableItems[0].key;
+      const topItem = [...viewableItems].sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0))[0];
+      const topId = topItem?.item?._type ? null : topItem?.item?.id ?? topItem?.key;
       if (lastEmittedActiveRef.current !== topId) {
         lastEmittedActiveRef.current = topId;
         DeviceEventEmitter.emit('feedActivePost', topId);
@@ -1077,7 +1146,7 @@ export const FeedScreen = React.memo(({
           const adId = info.item?.ad?.id;
           if (adId && !adImpressionsRef.current.has(adId)) {
             adImpressionsRef.current.add(adId);
-            recordCampusAdImpression(adId, 'feed').catch(() => {});
+                    recordCampusAdImpression(adId, 'feed').catch((e) => console.warn('[FeedScreen] adImpression feed:', e?.message));
           }
         } else if (id && !id.startsWith('__') && !recordedImpressions.current.has(id)) {
           recordedImpressions.current.add(id);
@@ -1098,6 +1167,7 @@ export const FeedScreen = React.memo(({
       changed.forEach((info: any) => {
         const id: string = info.item?.id ?? info.key;
         if (!id || id.startsWith('__')) return;
+        if (info.item?._type) return; // ads / strips / suggestions aren't posts
         if (info.isViewable) {
           dwellStartTimes.current.set(id, Date.now());
         } else {
@@ -1107,6 +1177,9 @@ export const FeedScreen = React.memo(({
             const duration_ms = Date.now() - start;
             if (duration_ms >= 1_000) {
               enqueueInteraction({ user_id: uid, post_id: id, type: 'dwell', duration_ms });
+            } else if (duration_ms < 600 && info.item?.user_id !== uid) {
+              // Flicked past in well under a second - a soft "not for me" signal.
+              enqueueInteraction({ user_id: uid, post_id: id, type: 'skip', duration_ms });
             }
           }
         }
@@ -1135,6 +1208,17 @@ export const FeedScreen = React.memo(({
     }
   }).current;
 
+  /** Close out dwell timers for posts still on screen (tab hidden, app backgrounded). */
+  const flushVisibleDwell = useCallback(() => {
+    const uid = currentUserIdRef.current;
+    const now = Date.now();
+    dwellStartTimes.current.forEach((start, id) => {
+      const duration_ms = now - start;
+      if (uid && duration_ms >= 1_000) enqueueInteraction({ user_id: uid, post_id: id, type: 'dwell', duration_ms });
+    });
+    dwellStartTimes.current.clear();
+  }, []);
+
   const lastScrollY = useRef(0);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerVisible = useRef(new Animated.Value(1)).current;
@@ -1145,6 +1229,9 @@ export const FeedScreen = React.memo(({
     const y = e.nativeEvent.contentOffset.y;
     const diff = y - lastScrollY.current;
     lastScrollY.current = y;
+
+    // Back at the very top with unseen posts waiting -> just show them, no tap needed.
+    if (y < 24 && pendingPostsRef.current.length > 0) revealPendingRef.current(false);
 
     // Only fire timing() when the target state actually changes — calling it
     // on every 16 ms scroll frame was the source of the jitter.
@@ -1171,30 +1258,82 @@ export const FeedScreen = React.memo(({
   useEffect(() => {
     Animated.spring(pillAnim, {
       toValue: pendingPosts.length > 0 ? 0 : -120,
-      tension: 58, friction: 11, useNativeDriver: true,
+      tension: 60, friction: 10, useNativeDriver: true,
     }).start();
   }, [pendingPosts.length]);
 
-
-  const flushPendingPosts = useCallback(() => {
+  // Drop pending posts that already made it into the list some other way (e.g. a
+  // background refresh) so the pill never advertises something already on screen.
+  useEffect(() => {
     if (pendingPosts.length === 0) return;
+    const have = new Set(posts.map((p: any) => p.id));
+    const still = pendingPosts.filter((p: any) => !have.has(p.id));
+    if (still.length !== pendingPosts.length) setPendingPosts(still);
+  }, [posts]);
+
+  const revealPendingRef = useRef<(scroll: boolean) => void>(() => {});
+  const revealPending = useCallback((scroll: boolean) => {
+    const pending = pendingPostsRef.current;
+    if (pending.length === 0) return;
+    pendingPostsRef.current = [];
+    setPendingPosts([]);
     setPosts((prev: any[]) => {
       const existingIds = new Set(prev.map((p: any) => p.id));
-      const newOnes = pendingPosts.filter((p: any) => !existingIds.has(p.id));
-      return [...newOnes, ...prev];
+      const newOnes = pending.filter((p: any) => !existingIds.has(p.id));
+      const next = [...newOnes, ...prev];
+      cachedFeedPosts = next;
+      return next;
     });
-    setPendingPosts([]);
-    // Ensure scroll happens after the list updates its data
-    setTimeout(() => {
-      if (flatListRef.current) {
-        // Handle both AnimatedFlashList and standard refs
-        const list = flatListRef.current.scrollToOffset 
-          ? flatListRef.current 
-          : flatListRef.current.getNode?.();
+    if (scroll) {
+      // Wait for the prepended rows to be laid out before jumping to the top.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const list = flatListRef.current?.scrollToOffset ? flatListRef.current : flatListRef.current?.getNode?.();
         list?.scrollToOffset({ offset: 0, animated: true });
-      }
-    }, 100);
-  }, [pendingPosts]);
+      }));
+    }
+  }, []);
+  revealPendingRef.current = revealPending;
+
+  const flushPendingPosts = useCallback(() => {
+    selection();
+    revealPending(true);
+  }, [revealPending]);
+
+  /** Is this realtime post something the viewer would plausibly want to see? */
+  const isRelevantNewPost = (post: any) => {
+    if (followingIdsRef.current.has(post.user_id)) return true;
+    const uni = myUniversityRef.current;
+    return !!uni && post.profiles?.university === uni;
+  };
+
+  const receiveNewPost = useCallback((post: any) => {
+    if (!post?.id || post.user_id === currentUserIdRef.current) return;
+    if (post.type === 'repost' && !post.repost_of) return;
+    if (!isRelevantNewPost(post)) return;
+    if (postsRef.current.some((p: any) => p.id === post.id)) return;
+    Cache.invalidatePattern(`feed:${currentUserIdRef.current}:`);
+    setPendingPosts((prev: any[]) => {
+      if (prev.some((item: any) => item.id === post.id)) return prev;
+      return [post, ...prev].slice(0, 30);
+    });
+    // Already at the top -> no need to make the user tap, show it straight away.
+    if (lastScrollY.current < 24) {
+      requestAnimationFrame(() => revealPendingRef.current(false));
+    }
+  }, []);
+
+  const fetchAndReceiveNewPost = useCallback(async (postId: string) => {
+    if (postsRef.current.some((p: any) => p.id === postId) || pendingPostsRef.current.some((p: any) => p.id === postId)) return;
+    const { data: post } = await supabase
+      .from('posts')
+      .select('*, profiles(id, username, full_name, avatar_url, is_verified, verification_type, university)')
+      .eq('id', postId)
+      .single();
+    if (!post) return;
+    // Quotes/reposts need their original attached or they render as empty cards.
+    const [enriched] = await enrichWithOriginalPosts([post]).catch(() => [post]);
+    receiveNewPost(enriched ?? post);
+  }, [receiveNewPost]);
   const borderOpacity = scrollY.interpolate({
     inputRange: [0, 15],
     outputRange: [0, 1],
@@ -1204,6 +1343,9 @@ export const FeedScreen = React.memo(({
   const load = useCallback(async (isManualRefresh = false) => {
     if (isLoadingRef.current && !isManualRefresh) return;
     isLoadingRef.current = true;
+    setFeedError(false);
+    const prevLoadedAt = lastLoadedRef.current;
+    if (isManualRefresh) feedSeedRef.current = Math.floor(Math.random() * 100000);
     const safetyTimer = setTimeout(() => {
       setLoading(false);
       setRefreshing(false);
@@ -1238,45 +1380,116 @@ export const FeedScreen = React.memo(({
         } catch (err) {}
       }
 
-      // ── Phase 1 (critical path): fetch only what's needed to render the feed ──
-      const [postsData, storiesData, likedData, savedData, prof] = await Promise.all([
-        getPersonalizedFeed(user.id, FEED_PAGE, 0),
+      // Fetch user profile first (quick from local cache or DB) so we can fetch campus-targeted ads and events
+      const prof = await getProfile(user.id);
+      setCurrentProfile(prof);
+      cachedCurrentProfile = prof;
+      myUniversityRef.current = prof?.university ?? null;
+
+      // Pull-to-refresh must never be answered from the 2-minute cache.
+      if (isManualRefresh) Cache.invalidatePattern(`feed:${user.id}:`);
+
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+
+      // Fetch all critical data, stories, suggestions, live sessions, and ads in parallel to prevent layout shifting
+      const [
+        postsData,
+        storiesData,
+        likedData,
+        savedData,
+        repostedData,
+        viewedData,
+        liveSessionsData,
+        reelsData,
+        usersData,
+        fcData,
+        feedAdsData,
+        storyAdsData,
+        followingData,
+      ] = await Promise.all([
+        getPersonalizedFeed(user.id, FEED_PAGE, 0, { seed: feedSeedRef.current, fresh: isManualRefresh }),
         getActiveStories(),
         getLikedPostIds(user.id),
         getSavedPostIds(user.id),
-        // getProfile already uses cache internally, so avoid nested Cache.getOrFetch
-        getProfile(user.id),
+        getRepostedPostIds(user.id).catch(() => [] as string[]),
+        getViewedStoryIds(user.id).catch(() => [] as string[]),
+        supabase.from('live_sessions')
+          .select('*, profiles!creator_id(username, avatar_url)')
+          .eq('status', 'live')
+          .gt('started_at', twelveHoursAgo)
+          .then(r => r.data || [], () => []),
+        getPersonalizedReels(user.id, 6, 0).catch(() => []),
+        getFollowSuggestions(user.id, 8).catch(() => []),
+        getUserFollowCount(user.id).catch(() => 999),
+        getActiveFeedAds(prof?.university ?? null, user.id).catch(() => []),
+        getActiveAdsForPlacement('stories', prof?.university ?? null, user.id).catch(() => []),
+        supabase.from('follows').select('following_id').eq('follower_id', user.id).limit(2000)
+          .then(r => (r.data ?? []).map((f: any) => f.following_id as string), () => [] as string[]),
+      ]);
+      followingIdsRef.current = new Set(followingData);
+
+      // Enrich feed posts with reposts/quotes in parallel with potential event fetching
+      const [enrichedPosts, campusEventsData] = await Promise.all([
+        enrichWithOriginalPosts(postsData).catch(() => postsData),
+        (fcData < 5 && prof?.university) ? getCampusEvents(prof.university, 4).catch(() => []) : Promise.resolve([]),
       ]);
 
-      setCurrentProfile(prof);
+      // Update all feed status states in a single batch to avoid layout jumps
       setStoryGroups(storiesData);
       setLikedIds(new Set(likedData));
       setSavedIds(new Set(savedData));
-      setHasMore(postsData.length === FEED_PAGE);
+      setHasMore(postsData.length > 0);
       pageRef.current = 0;
       lastLoadedRef.current = Date.now();
 
-      // Show posts immediately — enrich reposts/quotes in the background
-      if (cachedFeedPosts.length > 0 && !isManualRefresh) {
-        setPosts(prev => {
-          const map = new Map(prev.map((p: any) => [p.id, p]));
-          postsData.forEach((p: any) => {
-            if (map.has(p.id)) map.set(p.id, { ...map.get(p.id), ...p });
-            else map.set(p.id, p);
-          });
-          const newOnes = postsData.filter((p: any) => !prev.find((pp: any) => pp.id === p.id));
-          return [...newOnes, ...Array.from(map.values()).filter((p: any) => !newOnes.find((n: any) => n.id === p.id))];
-        });
+      if (prevLoadedAt > 0 && postsRef.current.length > 0 && !isManualRefresh) {
+        // Silent background refresh. Never reshuffle what the user is reading:
+        // refresh the data of posts already shown, and surface genuinely NEW
+        // posts (created since the last load) either at the top (if the user is
+        // there) or behind the "New posts" pill.
+        const prevIds = new Set(postsRef.current.map((p: any) => p.id));
+        const fresh = new Map(enrichedPosts.map((p: any) => [p.id, p]));
+        const cutoff = prevLoadedAt - 60_000;
+        const brandNew = enrichedPosts.filter((p: any) =>
+          !prevIds.has(p.id) && new Date(p.created_at).getTime() >= cutoff && p.user_id !== user.id);
+        setPosts(prev => prev.map((p: any) => fresh.has(p.id) ? { ...p, ...fresh.get(p.id) } : p));
+        if (brandNew.length > 0) {
+          if (lastScrollY.current < 24) {
+            setPosts(prev => {
+              const have = new Set(prev.map((p: any) => p.id));
+              return [...brandNew.filter((p: any) => !have.has(p.id)), ...prev];
+            });
+          } else {
+            setPendingPosts(prev => {
+              const have = new Set(prev.map((p: any) => p.id));
+              return [...brandNew.filter((p: any) => !have.has(p.id)), ...prev].slice(0, 30);
+            });
+          }
+        }
       } else {
-        setPosts(postsData);
+        setPosts(enrichedPosts);
+        if (isManualRefresh) {
+          recordedImpressions.current.clear();
+          pendingPostsRef.current = [];
+        }
       }
+
+      setRepostedIds(new Set(repostedData));
+      setViewedIds(viewedData);
+      setLiveSessions(liveSessionsData ?? []);
+      setPreviewReels(reelsData ?? []);
+      setSuggestedUsers(usersData ?? []);
+      setFollowCount(fcData ?? 999);
+      setFeedAds(feedAdsData ?? []);
+      setStoryAds(storyAdsData ?? []);
+      setCampusEvents(campusEventsData ?? []);
 
       cachedStoryGroups = storiesData;
       cachedLikedIds = new Set(likedData);
       cachedSavedIds = new Set(savedData);
-      cachedCurrentProfile = prof;
+      cachedRepostedIds = new Set(repostedData);
 
-      // Reveal feed immediately — skeleton disappears here
+      // Reveal feed immediately with no additional layout shifts
       clearTimeout(safetyTimer);
       setLoading(false);
       setRefreshing(false);
@@ -1287,46 +1500,8 @@ export const FeedScreen = React.memo(({
         AsyncStorage.setItem(`ug_feed_cache:${user.id}`, JSON.stringify({
           cachedPosts: postsData.slice(0, 15),
           cachedStories: storiesData,
-        })).catch(() => {});
+        })).catch((e) => console.warn('[FeedScreen] cacheFeed:', e?.message));
       }
-
-      // ── Phase 2 (deferred): everything else loads after the feed is visible ──
-      // Ads run independently so a failure in any other Phase 2 query can't block them.
-      getActiveFeedAds(prof?.university ?? null, user.id).then(setFeedAds).catch(() => {});
-      getActiveAdsForPlacement('stories', prof?.university ?? null, user.id).then(setStoryAds).catch(() => {});
-
-      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-      Promise.all([
-        enrichWithOriginalPosts(postsData).catch(() => postsData),
-        getRepostedPostIds(user.id).catch(() => [] as string[]),
-        getViewedStoryIds(user.id).catch(() => [] as string[]),
-        supabase.from('live_sessions')
-          .select('*, profiles(username, avatar_url)')
-          .eq('status', 'live')
-          .gt('created_at', twelveHoursAgo)
-          .then(r => r, () => ({ data: [] })),
-        getPersonalizedReels(user.id, 6, 0).catch(() => []),
-        getFollowSuggestions(user.id, 8).catch(() => []),
-        getUserFollowCount(user.id).catch(() => 999),
-      ]).then(([enrichedPosts, repostedData, viewedData, lRes, reelsData, usersData, fc]) => {
-        setPosts(prev => {
-          const map = new Map(prev.map((p: any) => [p.id, p]));
-          enrichedPosts.forEach((p: any) => { map.set(p.id, p); });
-          return Array.from(map.values());
-        });
-        cachedFeedPosts = enrichedPosts;
-        setRepostedIds(new Set(repostedData));
-        setViewedIds(viewedData);
-        setLiveSessions((lRes as any).data ?? []);
-        setPreviewReels(reelsData ?? []);
-        setSuggestedUsers(usersData ?? []);
-        setFollowCount(fc ?? 999);
-        cachedRepostedIds = new Set(repostedData);
-
-        if ((fc ?? 999) < 5 && prof?.university) {
-          getCampusEvents(prof.university, 4).then(setCampusEvents).catch(() => {});
-        }
-      }).catch(() => {});
 
     } catch (e: any) {
       clearTimeout(safetyTimer);
@@ -1338,6 +1513,7 @@ export const FeedScreen = React.memo(({
       if (feedItemsRef.current.length > 0) {
         showToast('Network issue — viewing cached content.', 'error');
       } else {
+        setFeedError(true);
         showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
       }
     }
@@ -1384,31 +1560,12 @@ export const FeedScreen = React.memo(({
 
           // post_id holds the post UUID for new_post notifications
           if (payload.new.type === 'new_post' && payload.new.post_id) {
-            supabase.from('posts')
-              .select('*, profiles(id, username, avatar_url, is_verified, verification_type, university)')
-              .eq('id', payload.new.post_id)
-              .single()
-              .then(({ data: post }) => {
-                if (!post) return;
-                if (lastScrollY.current < 80) {
-                  // Near the top — prepend directly, no pill needed
-                  setPosts((prev: any[]) => {
-                    if (prev.find((p: any) => p.id === post.id)) return prev;
-                    return [post, ...prev];
-                  });
-                } else {
-                  // Scrolled down — queue for pill
-                  setPendingPosts((prev: any[]) => {
-                    if (prev.find((p: any) => p.id === post.id)) return prev;
-                    return [post, ...prev];
-                  });
-                }
-              });
+            fetchAndReceiveNewPost(payload.new.post_id).catch(() => {});
           }
 
           if (payload.new.type === 'new_story') {
             try { Cache.invalidate(`stories:active`); } catch (e) {}
-            getActiveStories().then(setStoryGroups).catch(() => {});
+            getActiveStories().then(setStoryGroups).catch((e) => console.warn('[FeedScreen] refreshStories:', e?.message));
           }
 
           if (payload.new.type === 'live_ended') {
@@ -1416,6 +1573,17 @@ export const FeedScreen = React.memo(({
             if (sessionId) setLiveSessions(prev => prev.filter(ls => ls.id !== sessionId));
           }
         }
+      )
+      // A feed update must not depend on a notification being generated for the
+      // viewer. Subscribe to actual post creation and dedupe against the
+      // notification path above.
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'posts' },
+        (payload: any) => {
+          const postId = payload.new?.id;
+          if (postId) fetchAndReceiveNewPost(postId).catch(() => {});
+        },
       )
       // Live sessions ending → remove from status bar
       .on(
@@ -1432,20 +1600,24 @@ export const FeedScreen = React.memo(({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUserId]);
+  }, [currentUserId, fetchAndReceiveNewPost]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    if (isLoadingMoreRef.current || !hasMore || loading) return;
+    isLoadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const nextPage = pageRef.current + 1;
-      const rawMore = await getPersonalizedFeed(user.id, FEED_PAGE, nextPage * FEED_PAGE);
+      // Page by "everything already on screen" instead of OFFSET: ranking shifts
+      // as posts get seen, so offsets skip or repeat posts.
+      const shown = postsRef.current.map((p: any) => p.id).filter(Boolean).slice(-300);
+      const rawMore = await getPersonalizedFeed(user.id, FEED_PAGE, 0, {
+        excludeIds: shown, seed: feedSeedRef.current, fresh: true,
+      });
       if (rawMore.length === 0) { setHasMore(false); return; }
       const morePosts = await enrichWithOriginalPosts(rawMore).catch(() => rawMore);
-      pageRef.current = nextPage;
-      setHasMore(morePosts.length === FEED_PAGE);
+      pageRef.current += 1;
       setPosts(prev => {
         const existing = new Set(prev.map((p: any) => p.id));
         return [...prev, ...morePosts.filter((p: any) => !existing.has(p.id))];
@@ -1453,9 +1625,10 @@ export const FeedScreen = React.memo(({
     } catch (e: any) {
       showToast('Could not load more posts.', 'error');
     } finally {
+      isLoadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore]);
+  }, [hasMore, loading]);
 
   useEffect(() => {
     load();
@@ -1471,7 +1644,10 @@ export const FeedScreen = React.memo(({
 
   // Pause all active posts when the tab is backgrounded
   useEffect(() => {
-    if (!isVisible) DeviceEventEmitter.emit('feedActivePost', null);
+    if (!isVisible) {
+      DeviceEventEmitter.emit('feedActivePost', null);
+      flushVisibleDwell();
+    }
   }, [isVisible]);
 
   // Background refresh when tab becomes visible and data is stale
@@ -1489,13 +1665,14 @@ export const FeedScreen = React.memo(({
     const sub = AppState.addEventListener('change', (next) => {
       // Flush dwell interactions and update preference affinities on background
       if (next.match(/inactive|background/)) {
+        flushVisibleDwell();
         const uid = currentUserIdRef.current;
         flushInteractions()
-          .then(() => { if (uid) processUnprocessedInteractions(uid).catch(() => {}); })
-          .catch(() => {});
+          .then(() => { if (uid) processUnprocessedInteractions(uid).catch((e) => console.warn('[FeedScreen] processInteractions:', e?.message)); })
+          .catch((e) => console.warn('[FeedScreen] flushInteractions:', e?.message));
       }
 
-      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+      if (appStateRef.current?.match(/inactive|background/) && next === 'active') {
         const age = Date.now() - lastLoadedRef.current;
         if (age > FEED_TTL) load();
 
@@ -1509,7 +1686,7 @@ export const FeedScreen = React.memo(({
                 return sendFollowSuggestionNotif(uid, suggestions.map((s: any) => ({ id: s.id, username: s.username })));
               }
             })
-            .catch(() => {}); // fire-and-forget, never surface errors to the user
+            .catch((e) => console.warn('[FeedScreen] followSuggestionNotif:', e?.message));
         }
       }
       appStateRef.current = next;
@@ -1599,6 +1776,7 @@ export const FeedScreen = React.memo(({
   const adSlotSeedRef = useRef(Math.floor(Math.random() * 1000));
 
   const handleRefresh = useCallback(() => {
+    pendingPostsRef.current = [];
     setPendingPosts([]);
     setRefreshing(true);
     // Reseed ad slot offsets so the user gets a fresh layout on pull-to-refresh
@@ -1618,6 +1796,7 @@ export const FeedScreen = React.memo(({
     const eventSlots = followCount < 5 ? [1, 4, 8] : [];
     let eventIdx = 0;
     let adIdx = 0;
+    const showProPromo = !proPromoDismissed && !isProActive(currentProfile);
     const feedAdInterval = feedAds.length > 0 ? adFrequencyInterval(feedAds[0]?.budget ?? 60, feedAds[0]?.reach_multiplier ?? 1) : 11;
     // First ad never lands in the top 3 posts — Instagram-style breathing room.
     const FIRST_AD_MIN_INDEX = 3;
@@ -1626,6 +1805,9 @@ export const FeedScreen = React.memo(({
       items.push(p);
       if (i === 2 && previewReels.length > 0) {
         items.push({ id: '__reels_strip__', _type: 'reels_strip', reels: previewReels });
+      }
+      if (i === 5 && showProPromo) {
+        items.push({ id: '__pro_promo__', _type: 'pro_promo' });
       }
       if (i === 7 && suggestedUsers.length > 0) {
         items.push({ id: '__suggestions__', _type: 'suggestions', users: suggestedUsers });
@@ -1656,7 +1838,7 @@ export const FeedScreen = React.memo(({
     }
 
     return items;
-  }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds]);
+  }, [posts, previewReels, suggestedUsers, campusEvents, followCount, feedAds, proPromoDismissed, currentProfile, entitlementVersion]);
 
   useEffect(() => { feedItemsRef.current = feedItems; }, [feedItems]);
 
@@ -1699,7 +1881,9 @@ export const FeedScreen = React.memo(({
     });
     if (!result.canceled && result.assets?.[0] && currentUserId) {
       const uri = result.assets[0].uri;
-      if (isProActive(currentProfile)) {
+      if (isProActive(currentProfile) || !storyLinkUpsellShownRef.current) {
+        // Pro: link prompt. Free: shown once per session as a Pro teaser, then out of the way.
+        if (!isProActive(currentProfile)) storyLinkUpsellShownRef.current = true;
         setPendingStoryUri(uri);
         setStoryLinkInput('');
         setShowStoryLinkModal(true);
@@ -1730,6 +1914,7 @@ export const FeedScreen = React.memo(({
   };
 
   const ownGroupIdx = storyGroups.findIndex(g => g.profile?.id === currentUserId);
+  const storyIsPro = isProActive(currentProfile);
 
   // storyGroupsWithAds now drives the StoryBar, so the index passed back
   // is already the correct index for StoryViewer.
@@ -1737,29 +1922,44 @@ export const FeedScreen = React.memo(({
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} />
+      <StatusBar barStyle={colors.statusBar} />
 
       <Animated.View style={[styles.topBar, { paddingTop: insets.top + 6, transform: [{ translateY: headerTranslateY }], backgroundColor: colors.bg }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <TouchableOpacity onPress={onCameraPress} style={{ padding: 4 }}>
-            <Ionicons name="camera-outline" size={26} color={colors.text} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TouchableOpacity
+            onPress={onCameraPress}
+            style={{ padding: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Open camera"
+          >
+            <Ionicons name="add-circle-outline" size={28} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity onPress={onMessagePress} style={{ padding: 4, position: 'relative' }}>
-            <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
-            {messageBadge > 0 && (
-              <View style={styles.notifHeaderBadge}>
-                <Text style={styles.notifHeaderBadgeText}>{messageBadge > 99 ? '99+' : messageBadge}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <TouchableOpacity
+            onPress={onNotifPress}
+            style={{ position: 'relative', padding: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Notifications"
+          >
+            <Ionicons name="heart-outline" size={27} color={colors.text} />
+            {notifBadge > 0 && (
+              <View style={[styles.notifHeaderBadge, { borderColor: colors.bg }]}>
+                <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity onPress={onNotifPress} style={{ position: 'relative', padding: 4 }}>
-            <Ionicons name="notifications-outline" size={24} color={colors.text} />
-            {notifBadge > 0 && (
-              <View style={styles.notifHeaderBadge}>
-                <Text style={styles.notifHeaderBadgeText}>{notifBadge > 99 ? '99+' : notifBadge}</Text>
+          <TouchableOpacity
+            onPress={onMessagePress}
+            style={{ padding: 4, position: 'relative' }}
+            accessibilityRole="button"
+            accessibilityLabel="Messages"
+          >
+            <Ionicons name="paper-plane-outline" size={25} color={colors.text} />
+            {messageBadge > 0 && (
+              <View style={[styles.notifHeaderBadge, { borderColor: colors.bg }]}>
+                <Text style={styles.notifHeaderBadgeText}>{messageBadge > 99 ? '99+' : messageBadge}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -1781,60 +1981,53 @@ export const FeedScreen = React.memo(({
 
 
       {/* ── New Posts Pill ─────────────────────────────────────────────── */}
+      {/* Sits just under the header and follows it when the header slides away. */}
       <Animated.View
         pointerEvents={pendingPosts.length > 0 ? 'box-none' : 'none'}
         style={{
           position: 'absolute',
-          top: insets.top + 72, // Moved slightly up from insets.top + 80
+          top: insets.top + 10,
           left: 0, right: 0,
           alignItems: 'center',
           zIndex: 200,
-          transform: [{ translateY: pillAnim }],
-          opacity: pillAnim.interpolate({
-            inputRange: [-60, 0],
-            outputRange: [0, 1],
-            extrapolate: 'clamp'
-          })
+          transform: [{
+            translateY: Animated.add(
+              pillAnim,
+              headerVisible.interpolate({ inputRange: [0, 1], outputRange: [0, 46] }),
+            ),
+          }],
+          opacity: pillAnim.interpolate({ inputRange: [-120, -40, 0], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
         }}
       >
         <TouchableOpacity
           onPress={flushPendingPosts}
-          activeOpacity={0.88}
-          style={{
-            flexDirection: 'row', alignItems: 'center', gap: 8,
-            backgroundColor: '#111',
-            borderRadius: 24, paddingVertical: 9, paddingHorizontal: 14,
-            shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.35, shadowRadius: 12, elevation: 12,
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-          }}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel={pendingPosts.length === 1 ? 'Show 1 new post' : `Show ${pendingPosts.length} new posts`}
+          style={[styles.newPostsPill, { backgroundColor: colors.accent }]}
         >
-          {/* Overlapping avatars */}
           {(() => {
-            const avatarPosts = pendingPosts.slice(0, 3).filter(p => p.profiles?.avatar_url);
-            if (avatarPosts.length === 0) return null;
-            const w = 14 * (avatarPosts.length - 1) + 24;
+            const avatarPosts = pendingPosts.filter(p => p.profiles?.avatar_url).slice(0, 3);
+            if (avatarPosts.length === 0) return <Ionicons name="arrow-up" size={14} color="#fff" />;
             return (
-              <View style={{ width: w, height: 24, position: 'relative' }}>
+              <View style={{ width: 16 * (avatarPosts.length - 1) + 26, height: 26 }}>
                 {avatarPosts.map((p, i) => (
                   <CachedImage
                     key={p.id}
                     uri={p.profiles.avatar_url}
                     style={{
-                      position: 'absolute',
-                      left: i * 14,
-                      width: 24, height: 24, borderRadius: 12,
-                      borderWidth: 1.5, borderColor: '#111',
+                      position: 'absolute', left: i * 16, width: 26, height: 26, borderRadius: 13,
+                      borderWidth: 2, borderColor: colors.accent,
                     }}
                   />
                 ))}
               </View>
             );
           })()}
-          <Ionicons name="arrow-up" size={13} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
-            {pendingPosts.length === 1 ? '1 new post' : `${pendingPosts.length} new posts`}
+          <Text style={styles.newPostsPillText}>
+            {pendingPosts.length === 1 ? '1 new post' : `${pendingPosts.length > 9 ? '9+' : pendingPosts.length} new posts`}
           </Text>
+          <Ionicons name="arrow-up" size={14} color="#fff" />
         </TouchableOpacity>
       </Animated.View>
 
@@ -1861,51 +2054,82 @@ export const FeedScreen = React.memo(({
         ListHeaderComponent={useMemo(() => (
           <>
             <View style={{ height: HEADER_HEIGHT }} />
-            {loading ? <StorySkeleton /> : (
-              <StoryBar
-                storyGroups={storyGroupsWithAds}
-                liveSessions={liveSessions}
-                currentProfile={currentProfile}
-                viewedIds={viewedIds}
-                onStoryPress={i => setStoryIdx(i)}
-                onLivePress={(id) => setActiveLiveSessionId(id)}
-                onYourStoryPress={handleYourStory}
-                hasOwnStories={ownGroupIdx !== -1}
-                ownGroupIdx={storyGroupsWithAds.findIndex(g => !g._isAdGroup && g.profile?.id === currentUserId)}
-              />
+            <FadeIn visible={loading} duration={180}>
+              <StorySkeleton />
+            </FadeIn>
+            {!loading && (
+              <FadeIn visible={!loading} duration={180}>
+                <StoryBar
+                  storyGroups={storyGroupsWithAds}
+                  liveSessions={liveSessions}
+                  currentProfile={currentProfile}
+                  viewedIds={viewedIds}
+                  onStoryPress={i => setStoryIdx(i)}
+                  onLivePress={(id) => setActiveLiveSessionId(id)}
+                  onYourStoryPress={handleYourStory}
+                  hasOwnStories={ownGroupIdx !== -1}
+                  ownGroupIdx={storyGroupsWithAds.findIndex(g => !g._isAdGroup && g.profile?.id === currentUserId)}
+                />
+              </FadeIn>
             )}
-            {!loading && currentUserId && (
-              <CampusPulse
-                userId={currentUserId}
-                university={currentProfile?.university}
-                onPostPress={setPulsePost}
-                onSeeAll={() => setShowTrending(true)}
-                onLivePress={(id) => setActiveLiveSessionId(id)}
-              />
-            )}
-            {!loading && currentProfile?.university && (
-              <CommunityPulse university={currentProfile.university} />
-            )}
-            {!loading && followCount < 5 && currentProfile?.university && (
-              <DiscoveryBanner
-                university={currentProfile.university}
-                followCount={followCount}
-                onFindPeople={() => onUserPress?.({ _openDiscover: true })}
-              />
-            )}
-            {loading && (
-              <View>
-                <FeedPostSkeleton key="skel-1" />
-                <FeedPostSkeleton key="skel-2" />
-              </View>
-            )}
+            <FadeIn visible={!loading} duration={180}>
+              {currentUserId && (
+                <CampusPulse
+                  userId={currentUserId}
+                  university={currentProfile?.university}
+                  onPostPress={setPulsePost}
+                  onSeeAll={() => setShowTrending(true)}
+                  onLivePress={(id) => setActiveLiveSessionId(id)}
+                />
+              )}
+            </FadeIn>
+            <FadeIn visible={!loading} duration={180}>
+              {currentProfile?.university && (
+                <CommunityPulse university={currentProfile.university} />
+              )}
+            </FadeIn>
+            <FadeIn visible={!loading} duration={180}>
+              {followCount < 5 && currentProfile?.university && (
+                <DiscoveryBanner
+                  university={currentProfile.university}
+                  followCount={followCount}
+                  onFindPeople={() => onUserPress?.({ _openDiscover: true })}
+                />
+              )}
+            </FadeIn>
+            <FadeIn visible={loading} duration={180}>
+              {loading && (
+                <View>
+                  <FeedPostSkeleton key="skel-1" />
+                  <FeedPostSkeleton key="skel-2" />
+                </View>
+              )}
+            </FadeIn>
           </>
         // eslint-disable-next-line react-hooks/exhaustive-deps
         ), [loading, storyGroupsWithAds, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT, followCount])}
-        ListEmptyComponent={loading ? null : (
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <Ionicons name="image-outline" size={48} color={colors.textMuted} />
-            <Text style={{ color: colors.textMuted, marginTop: 12, fontSize: 15 }}>Follow people to see their posts!</Text>
+        ListEmptyComponent={loading ? null : feedError ? (
+          <View style={{ alignItems: 'center', paddingTop: 80, paddingHorizontal: 40 }}>
+            <Ionicons name="cloud-offline-outline" size={56} color={colors.textMuted} />
+            <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Couldn't load feed</Text>
+            <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+              Check your connection and try again.
+            </Text>
+            <TouchableOpacity
+              onPress={() => { setFeedError(false); setLoading(true); load(true); }}
+              style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ alignItems: 'center', paddingTop: 80, paddingHorizontal: 40 }}>
+            <Ionicons name="image-outline" size={52} color={colors.textMuted} />
+            <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No posts yet</Text>
+            <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+              Follow people to see their posts here.
+            </Text>
           </View>
         )}
         renderItem={useCallback(({ item }: any) => {
@@ -1929,6 +2153,9 @@ export const FeedScreen = React.memo(({
               />
             );
           }
+          if (item._type === 'pro_promo') {
+            return <ProPromoCard onPress={() => openPaywall('feed')} onDismiss={() => setProPromoDismissed(true)} />;
+          }
           if (item._type === 'campus_event') {
             return <CampusEventCard event={item.event} />;
           }
@@ -1936,11 +2163,12 @@ export const FeedScreen = React.memo(({
             return (
               <SponsoredAdCard
                 ad={item.ad}
+                currentUserId={currentUserId}
                 isActive={lastEmittedActiveRef.current === item.id}
                 onImpression={(adId) => {
                   if (!adImpressionsRef.current.has(adId)) {
                     adImpressionsRef.current.add(adId);
-                    recordCampusAdImpression(adId).catch(() => {});
+                    recordCampusAdImpression(adId).catch((e) => console.warn('[FeedScreen] adImpression card:', e?.message));
                   }
                 }}
               />
@@ -1963,7 +2191,7 @@ export const FeedScreen = React.memo(({
               onPostPress={setPulsePost}
             />
           );
-        }, [isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, handleVideoPress, setPulsePost])}
+        }, [openPaywall, isMuted, setIsMuted, handleCommentCountChange, handleOpenComments, handlePostDeleted, onUserPress, currentUserId, colors, handleVideoPress, setPulsePost])}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         onEndReached={loadMore}
@@ -1975,7 +2203,7 @@ export const FeedScreen = React.memo(({
           </View>
         ) : null}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" progressViewOffset={HEADER_HEIGHT} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSub} colors={[colors.accent]} progressViewOffset={HEADER_HEIGHT} />
         }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
@@ -2054,21 +2282,32 @@ export const FeedScreen = React.memo(({
         </Modal>
       )}
 
-      {/* Pro Story Link Modal */}
+      {/* Story Link Modal (links are Pro-only; free users see a one-time teaser) */}
       <Modal visible={showStoryLinkModal} transparent animationType="slide" onRequestClose={() => setShowStoryLinkModal(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
           <View style={{ backgroundColor: '#161618', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', alignSelf: 'center', marginBottom: 16 }} />
-            <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800', marginBottom: 4 }}>Add a Link</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Add a Link</Text>
+              {!storyIsPro && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#6366f1', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                  <Ionicons name="lock-closed" size={10} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 }}>PRO</Text>
+                </View>
+              )}
+            </View>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 16 }}>
-              Your story will show a "Visit Link" button. Leave empty to skip.
+              {storyIsPro
+                ? 'Your story will show a "Visit Link" button. Leave empty to skip.'
+                : 'Pro members can add a tappable "Visit Link" button to their stories.'}
             </Text>
             <TextInput
-              style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: '#fff', fontSize: 15, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}
+              style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: '#fff', fontSize: 15, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', opacity: storyIsPro ? 1 : 0.45 }}
               placeholder="https://..."
               placeholderTextColor="rgba(255,255,255,0.3)"
-              value={storyLinkInput}
+              value={storyIsPro ? storyLinkInput : ''}
               onChangeText={setStoryLinkInput}
+              editable={storyIsPro}
               autoCapitalize="none"
               keyboardType="url"
               returnKeyType="done"
@@ -2078,13 +2317,24 @@ export const FeedScreen = React.memo(({
                 style={{ flex: 1, paddingVertical: 15, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
                 onPress={() => { setShowStoryLinkModal(false); if (pendingStoryUri) postStory(pendingStoryUri, undefined); }}
               >
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '600', fontSize: 15 }}>Skip</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '600', fontSize: 15 }}>{storyIsPro ? 'Skip' : 'Post story'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: 2, paddingVertical: 15, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center' }}
-                onPress={() => { setShowStoryLinkModal(false); if (pendingStoryUri) postStory(pendingStoryUri, storyLinkInput.trim()); }}
+                style={{ flex: 2, paddingVertical: 15, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+                onPress={() => {
+                  if (storyIsPro) {
+                    setShowStoryLinkModal(false);
+                    if (pendingStoryUri) postStory(pendingStoryUri, storyLinkInput.trim());
+                  } else {
+                    // Post the story as-is, then present the paywall once this modal has dismissed.
+                    setShowStoryLinkModal(false);
+                    if (pendingStoryUri) postStory(pendingStoryUri, undefined);
+                    setTimeout(() => openPaywall('story_links'), 400);
+                  }
+                }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Post Story</Text>
+                {!storyIsPro && <Ionicons name="flash" size={16} color="#fff" />}
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{storyIsPro ? 'Post Story' : 'Unlock with Pro'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2128,24 +2378,27 @@ const styles = StyleSheet.create({
     fontSize: 26, 
     letterSpacing: -1,
   },
+  newPostsPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 24, paddingVertical: 7, paddingLeft: 10, paddingRight: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 10, elevation: 10,
+  },
+  newPostsPillText: { color: '#fff', fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1 },
   notifHeaderBadge: {
     position: 'absolute', top: -4, right: -6,
     minWidth: 16, height: 16, borderRadius: 8,
-    backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#ff3040', alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#000',
   },
   notifHeaderBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
 
-  storyScroll: { paddingVertical: 10 },
-  storyItem: { alignItems: 'center', width: 72 },
-  storyRing: { width: 68, height: 68, borderRadius: 34, padding: 2.5, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center' },
-  storyRingOwnActive: { 
-    borderWidth: 2, 
-    borderColor: '#ff6b35', 
-    padding: 2
-  },
-  storyRingViewed: { opacity: 0.5 },
-  storyAvatarClip: { width: 60, height: 60, borderRadius: 30, overflow: 'hidden', backgroundColor: '#333' },
+  storyScroll: { paddingTop: 8, paddingBottom: 12 },
+  storyItem: { alignItems: 'center', width: 76 },
+  storyRingWrap: { width: 70, height: 70, alignItems: 'center', justifyContent: 'center' },
+  storyRingBase: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
+  storyInner: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  storyAvatarClip: { width: 58, height: 58, borderRadius: 29, overflow: 'hidden', backgroundColor: '#333' },
   storyAvatar: { width: '100%', height: '100%' },
   storyPlusOverlay: {
     position: 'absolute',
@@ -2156,12 +2409,11 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     backgroundColor: '#0095f6',
     borderWidth: 2,
-    borderColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
-  storyUsername: { fontSize: 10, color: 'rgba(255,255,255,0.7)', maxWidth: 64, textAlign: 'center', marginTop: 4 },
+  storyUsername: { fontSize: 11.5, color: 'rgba(255,255,255,0.7)', maxWidth: 70, textAlign: 'center', marginTop: 5 },
 
   postCard: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 8, overflow: 'hidden' },
   postHeader: { 
@@ -2175,12 +2427,12 @@ const styles = StyleSheet.create({
   postMeta: { fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 },
   postMedia: { height: 360, backgroundColor: '#111' },
   videoPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.25)',
   },
   heartOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center', justifyContent: 'center',
   },
   songBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(244,63,94,0.08)' },
@@ -2291,7 +2543,7 @@ const sv = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },
-  tapRow: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
+  tapRow: { ...StyleSheet.absoluteFill, flexDirection: 'row', zIndex: 5 },
   visitLinkBtn: {
     position: 'absolute', left: 24, right: 24,
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -2321,7 +2573,7 @@ const sv = StyleSheet.create({
   },
   // Reshared story card
   reshareCardWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 2,
@@ -2376,7 +2628,7 @@ const sv = StyleSheet.create({
 });
 
 const vv = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
+  overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'transparent' },
   container: {
     position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
     backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20,

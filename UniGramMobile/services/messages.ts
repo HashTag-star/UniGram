@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { uploadFile } from './upload';
 import { sendPushToUser } from './pushNotifications';
+import { cleanUserText } from '../lib/contentSafety';
 
 // ─── Conversations ────────────────────────────────────────────────────────────
 
@@ -139,12 +140,14 @@ export async function sendMessage(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
 
+  const sanitizedText = type === 'text' ? cleanUserText(text, 'comment') : text;
+
   const { data, error } = await supabase
     .from('messages')
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
-      text,
+      text: sanitizedText,
       type,
       media_url: mediaUrl ?? null,
       reply_to_message_id: replyToId ?? null,

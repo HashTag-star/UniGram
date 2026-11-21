@@ -299,24 +299,18 @@ export async function toggleSaveItem(
     // Not saved — insert it (ignore duplicate constraint gracefully)
     const { error } = await supabase
       .from('market_saves')
-      .insert({ user_id: userId, item_id: itemId });
-    if (error && error.code !== '23505') throw error;
+      .upsert({ user_id: userId, item_id: itemId }, { onConflict: 'user_id,item_id' });
+    if (error) throw error;
     return { saved: true };
   }
 }
 
 /**
- * Increment view count for an item. Uses RPC if available, falls back to a
- * read-then-write (best effort — never throws so callers don't break).
+ * Increment view count for an item. Uses a read-then-write fallback directly
+ * to avoid throwing 404 errors on a non-existent database RPC function.
  */
 export async function incrementViewCount(itemId: string): Promise<void> {
   try {
-    const { error: rpcErr } = await supabase.rpc('increment_market_views', {
-      item_id: itemId,
-    });
-    if (!rpcErr) return;
-
-    // RPC not found — fall back to manual increment
     const { data } = await supabase
       .from('market_items')
       .select('views_count')

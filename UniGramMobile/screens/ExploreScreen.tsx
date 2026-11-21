@@ -675,6 +675,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
               {exploreAds.length > 0 && (
                 <SponsoredAdCard
                   ad={exploreAds[0]}
+                  currentUserId={currentUserId}
                   isActive={isVisible && scrollY < 400}
                   onImpression={(adId) => {
                     if (!exploreAdImpressionsRef.current.has(adId)) {

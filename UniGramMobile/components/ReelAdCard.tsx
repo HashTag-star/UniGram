@@ -1,16 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Linking, Alert, Image,
+  Linking, Alert, Image, Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from './CachedImage';
-import { recordCampusAdClick, isReelAdUnskippable, FORCED_REEL_AD_SECONDS, buildWhatsAppCtaUrl } from '../services/campusAds';
+import { 
+  recordCampusAdClick, isReelAdUnskippable, FORCED_REEL_AD_SECONDS, 
+  buildWhatsAppCtaUrl, likeAd, unlikeAd, getLikedAdIds 
+} from '../services/campusAds';
+import { CommentSheet } from './CommentSheet';
 
 const SKIP_DELAY = 5;
+
+function fmtCount(n: number) {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
 
 // ── Video background ──────────────────────────────────────────────────────────
 // `loop` is now controlled by the parent — forced-view ads should play through
@@ -20,7 +30,8 @@ const ReelAdVideo: React.FC<{
   isActive: boolean;
   loop: boolean;
   onEnded?: () => void;
-}> = React.memo(({ url, isActive, loop, onEnded }) => {
+  onSourceError?: () => void;
+}> = React.memo(({ url, isActive, loop, onEnded, onSourceError }) => {
   const player = useVideoPlayer(url, p => {
     p.loop = loop;
     p.muted = false;
@@ -28,14 +39,24 @@ const ReelAdVideo: React.FC<{
   });
   useEffect(() => { player.loop = loop; }, [loop, player]);
   useEffect(() => {
-    if (isActive) player.play();
-    else player.pause();
+    if (isActive) {
+      try { player.play(); } catch { onSourceError?.(); }
+    } else {
+      try { player.pause(); } catch {}
+    }
   }, [isActive, player]);
   useEffect(() => {
     if (!onEnded) return;
     const sub = player.addListener('playToEnd', () => onEnded());
     return () => sub.remove();
   }, [player, onEnded]);
+  // Detect source errors (NotSupportedError) emitted by the native player
+  useEffect(() => {
+    const sub = player.addListener('statusChange', (evt: any) => {
+      if (evt?.status === 'error' || evt?.error) onSourceError?.();
+    });
+    return () => sub.remove();
+  }, [player, onSourceError]);
   return <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />;
 });
 
@@ -46,7 +67,8 @@ export const ReelAdCard: React.FC<{
   itemHeight: number;
   onSkip: () => void;
   onImpression: (adId: string) => void;
-}> = React.memo(({ ad, isActive, itemHeight, onSkip, onImpression }) => {
+  currentUserId: string;
+}> = React.memo(({ ad, isActive, itemHeight, onSkip, onImpression, currentUserId }) => {
   const insets = useSafeAreaInsets();
 
   // ~1/3 of ads are forced-view (no skip) per Instagram-style monetization.
@@ -65,7 +87,16 @@ export const ReelAdCard: React.FC<{
   // timer reaches zero AND the video playToEnd event fires.
   const advancedRef = useRef(false);
 
-  const isVideo = ad.format === 'video' && !!ad.media_url;
+  // Organic Interactions State
+  const [liked, setLiked] = useState(false);
+  const [likesCount, setLikesCount] = useState(ad.likes_count ?? 0);
+  const [commentCount, setCommentCount] = useState(ad.comments_count ?? 0);
+  const [showComments, setShowComments] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+
+  const isVideo = ad.format === 'video' && !!ad.media_url && !videoError;
+  const isImage = (ad.format === 'image' || (ad.format === 'video' && videoError)) && !!ad.media_url;
   const advertiserName = ad.profiles?.full_name || (ad.profiles?.username ? `@${ad.profiles.username}` : ad.name);
   const avatarUri = ad.profiles?.avatar_url ?? null;
 
@@ -74,6 +105,55 @@ export const ReelAdCard: React.FC<{
     advancedRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
     onSkip();
+  };
+
+  useEffect(() => {
+    if (currentUserId && ad.id) {
+      getLikedAdIds(currentUserId)
+        .then((likedIds) => {
+          setLiked(likedIds.includes(ad.id));
+        })
+        .catch(() => {});
+    }
+  }, [ad.id, currentUserId]);
+
+  const toggleLike = async () => {
+    if (!currentUserId || !ad.id) return;
+    const newLiked = !liked;
+    setLiked(newLiked);
+    setLikesCount(prev => Math.max(0, newLiked ? prev + 1 : prev - 1));
+    try {
+      if (newLiked) {
+        await likeAd(ad.id, currentUserId);
+      } else {
+        await unlikeAd(ad.id, currentUserId);
+      }
+    } catch (e) {
+      // Revert on error
+      setLiked(!newLiked);
+      setLikesCount(prev => Math.max(0, !newLiked ? prev + 1 : prev - 1));
+    }
+  };
+
+  const handleShare = async () => {
+    try {
+      const shareUrl = ad.link || `https://unigram.social/ad/${ad.id}`;
+      await Share.share({
+        message: `Check out this on UniGram: ${ad.headline || ''} ${shareUrl}`,
+        url: shareUrl
+      });
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
+  const toggleSave = () => {
+    const newSaved = !saved;
+    setSaved(newSaved);
+    Alert.alert(
+      newSaved ? 'Ad Bookmarked' : 'Bookmark Removed',
+      newSaved ? 'You can view this ad in your saved promotions.' : 'Ad removed from your saved promotions.'
+    );
   };
 
   useEffect(() => {
@@ -129,12 +209,11 @@ export const ReelAdCard: React.FC<{
         <ReelAdVideo
           url={ad.media_url}
           isActive={isActive}
-          // Forced ads play through once and auto-advance; skippable ads loop
-          // until the user swipes.
           loop={!forced}
           onEnded={forced ? autoAdvance : undefined}
+          onSourceError={() => setVideoError(true)}
         />
-      ) : ad.media_url ? (
+      ) : isImage ? (
         <CachedImage uri={ad.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
       ) : (
         // Text / no-media fallback — indigo branded card
@@ -160,8 +239,8 @@ export const ReelAdCard: React.FC<{
       {/* ── Top-right: skip / countdown ──────────────────────────────────
           - Skippable ad: shows a numeric countdown for 5s, then "Skip Ad".
           - Forced-view ad: shows "Ad · 12s" (no skip), counts to 0, then
-            auto-advances. The pill stays visible the whole time so the user
-            knows the ad will end. */}
+             auto-advances. The pill stays visible the whole time so the user
+             knows the ad will end. */}
       <View style={[styles.skipWrap, { top: insets.top + 12 }]}>
         {forced ? (
           <View style={[styles.countdownPill, styles.forcedPill]}>
@@ -215,23 +294,40 @@ export const ReelAdCard: React.FC<{
           </TouchableOpacity>
         </View>
 
-        {/* Right column: action icons (decorative — matches regular reel layout) */}
+        {/* Right column: action icons (interactive — matches regular reel layout) */}
         <View style={styles.rightCol}>
-          <View style={styles.actionItem}>
-            <Ionicons name="heart-outline" size={28} color="#fff" />
-          </View>
-          <View style={styles.actionItem}>
-            <Ionicons name="chatbubble-ellipses-outline" size={26} color="#fff" />
-          </View>
-          <View style={styles.actionItem}>
-            <Ionicons name="paper-plane-outline" size={26} color="#fff" />
-          </View>
-          <View style={styles.actionItem}>
-            <Ionicons name="bookmark-outline" size={26} color="#fff" />
-          </View>
+          <TouchableOpacity onPress={toggleLike} style={styles.actionItem} activeOpacity={0.8}>
+            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ef4444' : '#fff'} />
+            <Text style={styles.actionLabel}>{likesCount > 0 ? fmtCount(likesCount) : 'Like'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setShowComments(true)} style={styles.actionItem} activeOpacity={0.8}>
+            <Ionicons name="chatbubble-outline" size={32} color="#fff" />
+            <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={handleShare} style={styles.actionItem} activeOpacity={0.8}>
+            <Ionicons name="paper-plane-outline" size={30} color="#fff" />
+            <Text style={styles.actionLabel}>Share</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={toggleSave} style={styles.actionItem} activeOpacity={0.8}>
+            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={28} color="#fff" />
+            <Text style={styles.actionLabel}>{saved ? 'Saved' : 'Save'}</Text>
+          </TouchableOpacity>
         </View>
 
       </View>
+
+      <CommentSheet
+        visible={showComments}
+        targetId={ad.id}
+        targetType="ad"
+        currentUserId={currentUserId}
+        authorId={ad.user_id || ''}
+        onClose={() => setShowComments(false)}
+        onCountChange={(newCount) => setCommentCount(newCount)}
+      />
     </View>
   );
 });
@@ -241,6 +337,7 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#000',
     overflow: 'hidden',
+    position: 'relative',
   },
   solidBg: {
     backgroundColor: '#1e1b4b',
@@ -315,7 +412,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', gap: 18,
     paddingBottom: 4,
   },
-  actionItem: { alignItems: 'center' },
+  actionItem: { alignItems: 'center', gap: 4 },
+  actionLabel: {
+    color: '#fff', fontSize: 12, fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
 
   // Advertiser info
   advertiserRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },

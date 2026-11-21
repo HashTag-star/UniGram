@@ -40,7 +40,7 @@ function SearchModal({ visible, title, placeholder, icon, onSearch, onSelect, on
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
 
   useEffect(() => {
     if (visible) {
@@ -119,10 +119,10 @@ function SearchModal({ visible, title, placeholder, icon, onSearch, onSelect, on
                 <Ionicons name="add-circle-outline" size={16} color="#8b5cf6" />
                 <Text style={[modal.rowText, { color: '#a855f7' }]}>Use "{query}"</Text>
               </TouchableOpacity>
-            ) : null
+            ) : undefined
           }
           ListEmptyComponent={
-            query.length >= 2 && !loading ? null : (
+            query.length >= 2 && !loading ? undefined : (
               <View style={modal.hint}>
                 <Text style={modal.hintText}>
                   {query.length < 2 ? `Type at least 2 characters to search` : `No results — type to add your own`}

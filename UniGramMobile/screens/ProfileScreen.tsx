@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProfilePostsSkeleton, ProfileHeaderSkeleton } from '../components/Skeleton';
+import { FadeIn } from '../components/FadeIn';
 import { EditProfileModal } from './EditProfileModal';
 import { SettingsScreen } from './SettingsScreen';
 import { VerificationScreen } from './VerificationScreen';
@@ -27,7 +28,7 @@ import { recordProfileView } from '../services/algorithm';
 import { AccountService } from '../services/accounts';
 import { isProActive, getPostAnalytics, getProfileAnalytics, recordProfileViewAnalytics, getAIInsights } from '../services/pro';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ProSheet } from '../components/ProSheet';
+import { usePaywall } from '../context/PaywallContext';
 import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
@@ -78,6 +79,7 @@ export const ProfileScreen = React.memo<Props>(({
   const [isFollowingUser, setIsFollowingUser] = useSocialFollow(propUserId ?? '', false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'tagged' | 'saved' | 'threads' | 'analytics'>('posts');
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState('');
@@ -97,7 +99,7 @@ export const ProfileScreen = React.memo<Props>(({
   const [saving, setSaving] = useState(false);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [activeAccounts, setActiveAccounts] = useState<any[]>([]);
-  const [showProSheet, setShowProSheet] = useState(false);
+  const { openPaywall } = usePaywall();
   const [proAnalytics, setProAnalytics] = useState<any>(null);
   const [postAnalytics, setPostAnalytics] = useState<any[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -111,6 +113,7 @@ export const ProfileScreen = React.memo<Props>(({
   const isPro = isProActive(profile);
 
   const load = useCallback(async () => {
+    setLoadError(false);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -131,7 +134,7 @@ export const ProfileScreen = React.memo<Props>(({
         supabase.from('posts')
           .select(`
             id, user_id, type, caption, media_url, media_urls, location, song, 
-            likes_count, comments_count, reposts_count, created_at, tagged_users, is_flagged, aspect_ratio,
+            likes_count, comments_count, reposts_count, created_at, tagged_users, aspect_ratio,
             profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type)
           `)
           .contains('tagged_users', [targetId])
@@ -152,17 +155,22 @@ export const ProfileScreen = React.memo<Props>(({
       if (!own) {
         const following = await isFollowing(user.id, targetId);
         setIsFollowingUser(following);
-        recordProfileView(user.id, targetId).catch(() => {});
-        recordProfileViewAnalytics(targetId, user.id).catch(() => {});
+        recordProfileView(user.id, targetId).catch((e) => console.warn('[ProfileScreen] recordView:', e?.message));
+        recordProfileViewAnalytics(targetId, user.id).catch((e) => console.warn('[ProfileScreen] viewAnalytics:', e?.message));
       }
     } catch (e: any) {
+      setLoadError(true);
       showToast(e?.message || 'Failed to load profile.', 'error');
     } finally {
       setLoading(false);
     }
   }, [propUserId, propIsOwn]);
 
-  useEffect(() => { load(); }, [load, refreshKey]);
+  useEffect(() => {
+    if (isVisible || loading) {
+      load();
+    }
+  }, [load, isVisible, refreshKey]);
 
   useEffect(() => {
     if (isOwn) {
@@ -351,10 +359,12 @@ export const ProfileScreen = React.memo<Props>(({
   }, [activeTab, posts, reels, taggedPosts, savedPosts]);
 
   if (loading) return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <ProfileHeaderSkeleton />
-      <ProfilePostsSkeleton colSize={COL} />
-    </View>
+    <FadeIn visible={loading} duration={180}>
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
+        <ProfileHeaderSkeleton />
+        <ProfilePostsSkeleton colSize={COL} />
+      </View>
+    </FadeIn>
   );
 
   const Header = () => (
@@ -365,22 +375,24 @@ export const ProfileScreen = React.memo<Props>(({
         <View style={styles.coverOverlay} />
         <View style={[styles.headerTop, { top: insets.top + 10 }]}>
           {onBack && (
-            <TouchableOpacity onPress={onBack} style={styles.navBtn}>
+            <TouchableOpacity onPress={onBack} style={styles.navBtn} accessibilityLabel="Go back" accessibilityRole="button">
               <Ionicons name="chevron-back" size={24} color="#fff" />
             </TouchableOpacity>
           )}
           {isOwn && (
-            <TouchableOpacity 
-              style={styles.headerInfo} 
-              onPress={() => { selection(); setShowAccountSwitcher(true); }}
-            >
+              <TouchableOpacity 
+                style={styles.headerInfo} 
+                onPress={() => { selection(); setShowAccountSwitcher(true); }}
+                accessibilityLabel="Switch account"
+                accessibilityRole="button"
+              >
               <Text style={styles.headerUsername}>@{profile?.username}</Text>
               <Ionicons name="chevron-down" size={14} color="#fff" />
             </TouchableOpacity>
           )}
           <View style={{ flex: 1 }} />
           {isOwn && (
-            <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn}>
+            <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn} accessibilityLabel="Settings" accessibilityRole="button">
               <Ionicons name="settings-outline" size={20} color="#fff" />
             </TouchableOpacity>
           )}
@@ -400,7 +412,7 @@ export const ProfileScreen = React.memo<Props>(({
                 <CachedImage uri={profile?.avatar_url} style={styles.avatar} />
               </TouchableOpacity>
               {isOwn && (
-                <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange}>
+                <TouchableOpacity style={styles.avatarEditOverlay} onPress={handleAvatarChange} accessibilityLabel="Change profile photo" accessibilityRole="button">
                   <Ionicons name="camera" size={24} color="#fff" />
                 </TouchableOpacity>
               )}
@@ -416,17 +428,17 @@ export const ProfileScreen = React.memo<Props>(({
             <View style={styles.actionRow}>
               {isOwn ? (
                 <>
-                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit}>
+                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openEdit} accessibilityLabel="Edit profile" accessibilityRole="button">
                     <Text style={[styles.btnText, { color: colors.text }]}>Edit Profile</Text>
                   </TouchableOpacity>
                   {!profile?.is_verified && (
-                    <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)}>
+                    <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)} accessibilityLabel="Get verified" accessibilityRole="button">
                       <Ionicons name="shield-checkmark" size={16} color="#fff" />
                       <Text style={styles.verifyText}>Get Verified</Text>
                     </TouchableOpacity>
                   )}
                   {!isPro && (
-                    <TouchableOpacity style={styles.proBtn} onPress={() => setShowProSheet(true)}>
+                    <TouchableOpacity style={styles.proBtn} onPress={() => openPaywall('profile')} accessibilityLabel="Go Pro" accessibilityRole="button">
                       <Ionicons name="flash" size={14} color="#fff" />
                       <Text style={styles.proText}>Go Pro</Text>
                     </TouchableOpacity>
@@ -440,12 +452,14 @@ export const ProfileScreen = React.memo<Props>(({
                       isFollowingUser ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: '#6366f1' }
                     ]} 
                     onPress={toggleFollow}
+                    accessibilityLabel={isFollowingUser ? 'Unfollow' : 'Follow'}
+                    accessibilityRole="button"
                   >
                     <Text style={[styles.followBtnText, isFollowingUser && { color: colors.text }]}>
                       {isFollowingUser ? 'Following' : 'Follow'}
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}}>
+                  <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={() => {/* message logic */}} accessibilityLabel="Send message" accessibilityRole="button">
                     <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
                   </TouchableOpacity>
                 </>
@@ -478,11 +492,11 @@ export const ProfileScreen = React.memo<Props>(({
 
         <View style={[styles.statsRow, { borderColor: colors.border }]}>
           <View style={styles.statItem}><Text style={[styles.statVal, { color: colors.text }]}>{posts.length}</Text><Text style={[styles.statLab, { color: colors.textMuted }]}>Posts</Text></View>
-          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowersSheet(true)} activeOpacity={0.7} accessibilityLabel={`Followers`} accessibilityRole="button">
             <Text style={[styles.statVal, { color: colors.text }]}>{profile?.followers_count || 0}</Text>
             <Text style={[styles.statLab, { color: colors.textMuted }]}>Followers</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.statItem} onPress={() => setShowFollowingSheet(true)} activeOpacity={0.7} accessibilityLabel={`Following`} accessibilityRole="button">
             <Text style={[styles.statVal, { color: colors.text }]}>{profile?.following_count || 0}</Text>
             <Text style={[styles.statLab, { color: colors.textMuted }]}>Following</Text>
           </TouchableOpacity>
@@ -490,33 +504,47 @@ export const ProfileScreen = React.memo<Props>(({
       </View>
 
       <View style={[styles.tabHeader, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
-        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('posts'); }}>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('posts'); }} accessibilityLabel="Posts" accessibilityRole="button">
           <Ionicons name={activeTab === 'posts' ? 'apps' : 'apps-outline'} size={22} color={activeTab === 'posts' ? colors.text : colors.textMuted} />
           {activeTab === 'posts' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('reels'); }}>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('reels'); }} accessibilityLabel="Reels" accessibilityRole="button">
           <Ionicons name={activeTab === 'reels' ? 'film' : 'film-outline'} size={22} color={activeTab === 'reels' ? colors.text : colors.textMuted} />
           {activeTab === 'reels' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('threads'); }}>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('threads'); }} accessibilityLabel="Threads" accessibilityRole="button">
           <Ionicons name={activeTab === 'threads' ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={activeTab === 'threads' ? colors.text : colors.textMuted} />
           {activeTab === 'threads' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
         </TouchableOpacity>
         {isOwn && (
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('saved'); }}>
+          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('saved'); }} accessibilityLabel="Saved" accessibilityRole="button">
             <Ionicons name={activeTab === 'saved' ? 'bookmark' : 'bookmark-outline'} size={22} color={activeTab === 'saved' ? colors.text : colors.textMuted} />
             {activeTab === 'saved' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
         )}
         {isOwn && (
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('tagged'); }}>
+          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('tagged'); }} accessibilityLabel="Tagged" accessibilityRole="button">
             <Ionicons name={activeTab === 'tagged' ? 'person-add' : 'person-add-outline'} size={22} color={activeTab === 'tagged' ? colors.text : colors.textMuted} />
             {activeTab === 'tagged' && <View style={[styles.tabActiveBar, { backgroundColor: colors.text }]} />}
           </TouchableOpacity>
         )}
-        {isOwn && isPro && (
-          <TouchableOpacity style={styles.tabBtn} onPress={() => { selection(); setActiveTab('analytics'); }}>
+        {isOwn && (
+          <TouchableOpacity
+            style={styles.tabBtn}
+            onPress={() => {
+              selection();
+              if (!isPro) { openPaywall('analytics'); return; }
+              setActiveTab('analytics');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={isPro ? 'Analytics' : 'Analytics (Pro)'}
+          >
             <Ionicons name={activeTab === 'analytics' ? 'bar-chart' : 'bar-chart-outline'} size={22} color={activeTab === 'analytics' ? '#6366f1' : colors.textMuted} />
+            {!isPro && (
+              <View style={styles.tabLock}>
+                <Ionicons name="lock-closed" size={9} color="#fff" />
+              </View>
+            )}
             {activeTab === 'analytics' && <View style={[styles.tabActiveBar, { backgroundColor: '#6366f1' }]} />}
           </TouchableOpacity>
         )}
@@ -525,8 +553,9 @@ export const ProfileScreen = React.memo<Props>(({
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <FlatList
+    <FadeIn visible={!loading} duration={180}>
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
+        <FlatList
         key={activeTab === 'threads' || activeTab === 'analytics' ? 'list-view' : 'grid-list'}
         data={listData}
         renderItem={renderItem}
@@ -554,13 +583,35 @@ export const ProfileScreen = React.memo<Props>(({
               aiError={aiInsightsError}
               onLoadAI={loadAIInsights}
             />
+          ) : loadError ? (
+            <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 }}>
+              <Ionicons name="cloud-offline-outline" size={52} color={colors.textMuted} />
+              <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Couldn't load profile</Text>
+              <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                Check your connection and try again.
+              </Text>
+              <TouchableOpacity
+                onPress={() => { setLoadError(false); setLoading(true); load(); }}
+                style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <View style={{ alignItems: 'center', marginTop: 60, paddingHorizontal: 40 }}>
-              <Ionicons name="images-outline" size={48} color={colors.textMuted} />
-              <Text style={{ color: colors.textMuted, marginTop: 12, textAlign: 'center' }}>No {activeTab} yet</Text>
+            <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 }}>
+              <Ionicons name="images-outline" size={52} color={colors.textMuted} />
+              <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No {activeTab} yet</Text>
+              <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                {activeTab === 'posts' && 'Share something with your followers!'}
+                {activeTab === 'reels' && 'Create a reel to see it here.'}
+                {activeTab === 'tagged' && 'Posts you\'re tagged in will appear here.'}
+                {activeTab === 'saved' && 'Save posts to revisit them later.'}
+                {activeTab === 'threads' && 'Start a conversation with a thread.'}
+              </Text>
             </View>
           )
-        ) : null}
+        ) : undefined}
         ListFooterComponent={isSuspended ? (
           <View style={styles.suspendedOverlay}>
             <View style={styles.suspendedCard}>
@@ -571,7 +622,7 @@ export const ProfileScreen = React.memo<Props>(({
               </Text>
             </View>
           </View>
-        ) : null}
+        ) : undefined}
       />
 
       {/* Admin Dashboard Modal */}
@@ -670,17 +721,6 @@ export const ProfileScreen = React.memo<Props>(({
         onClose={() => setShowPicViewer(false)}
       />
 
-      <ProSheet
-        visible={showProSheet}
-        onClose={() => setShowProSheet(false)}
-        onSuccess={() => {
-          // Optimistic update so the UI responds immediately
-          setProfile((p: any) => p ? { ...p, is_pro: true, pro_disabled: false, pro_expires_at: new Date(Date.now() + 30 * 86400000).toISOString() } : p);
-          showToast('Welcome to UniGram Pro!', 'success');
-          // Re-fetch from DB to confirm the subscription persisted
-          load();
-        }}
-      />
 
       <UsersListSheet
         visible={showFollowersSheet}
@@ -702,7 +742,8 @@ export const ProfileScreen = React.memo<Props>(({
           DeviceEventEmitter.emit('NAVIGATE_PROFILE', { userId: profile.id });
         }}
       />
-    </View>
+      </View>
+    </FadeIn>
   );
 });
 
@@ -1030,10 +1071,14 @@ const AccountSwitcherModal = ({ visible, onClose, accounts, currentUserId, onSwi
 };
 
 const styles = StyleSheet.create({
+  tabLock: {
+    position: 'absolute', top: 6, right: '24%', width: 14, height: 14, borderRadius: 7,
+    backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
+  },
   container: { flex: 1 },
   coverSection: { height: 160, position: 'relative' },
   cover: { width: '100%', height: '100%' },
-  coverOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' },
+  coverOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.3)' },
   headerTop: { position: 'absolute', top: 10, left: 16, right: 16, flexDirection: 'row', alignItems: 'center' },
   navBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   
@@ -1046,7 +1091,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a1a',
   },
   avatar: { width: '100%', height: '100%' },
-  avatarEditOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
+  avatarEditOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
   verifiedBadgeRow: {
     position: 'absolute',
     bottom: 5,

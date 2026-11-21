@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
-  InteractionManager, BackHandler, Platform, ToastAndroid,
+  BackHandler, Platform, ToastAndroid,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +25,7 @@ import { VerificationScreen } from './screens/VerificationScreen';
 import { DiscoverPeopleScreen } from './screens/DiscoverPeopleScreen';
 import { TrendingScreen } from './screens/TrendingScreen';
 import { CreatePostModal } from './screens/CreatePostModal';
+import { LiveScreen } from './screens/LiveScreen';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
 import ResetPasswordScreen from './screens/auth/ResetPasswordScreen';
@@ -33,7 +34,7 @@ import { QuickCaptureScreen } from './screens/QuickCaptureScreen';
 import PrivacyPolicyScreen from './screens/legal/PrivacyPolicyScreen';
 import TermsOfServiceScreen from './screens/legal/TermsOfServiceScreen';
 import CommunityGuidelinesScreen from './screens/legal/CommunityGuidelinesScreen';
-import PagerView from 'react-native-pager-view';
+import PagerView, { PagerViewRef } from './components/PagerViewWrapper';
 import { isOnboardingComplete } from './services/onboarding';
 import { getPersonalizedExplorePosts, getPersonalizedReels } from './services/algorithm';
 import { Cache, TTL } from './lib/cache';
@@ -43,6 +44,7 @@ import { supabase, SupabaseTimeoutError } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { PopupProvider } from './context/PopupContext';
 import { ToastProvider, useToast } from './context/ToastContext';
+import { PaywallProvider } from './context/PaywallContext';
 import { createStory } from './services/stories';
 import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
@@ -173,7 +175,7 @@ const LoadingScreen: React.FC = () => {
 
   return (
     <View style={loadStyles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#09090b" />
+      <StatusBar barStyle="light-content" />
       <Animated.View style={[loadStyles.orb1, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.15, 0.25] }) }]} />
       <Animated.View style={[loadStyles.orb2, { transform: [{ scale: bgOrbAnim }], opacity: bgOrbAnim.interpolate({ inputRange:[1, 1.2], outputRange:[0.1, 0.2] }) }]} />
       <LinearGradient colors={['rgba(139,92,246,0.15)', 'rgba(79,70,229,0.05)', 'transparent']} style={loadStyles.bgGrad} />
@@ -407,7 +409,7 @@ function AppShell() {
   const [activeLegal, setActiveLegal] = useState<LegalOverlay>(null);
   const [initialConv, setInitialConv] = useState<any>(null);
   const [pagerPage, setPagerPage] = useState(1);
-  const pagerRef = useRef<PagerView>(null);
+  const pagerRef = useRef<PagerViewRef>(null);
   const [createInitialType, setCreateInitialType] = useState<'thread' | undefined>(undefined);
   const [hideTabBar, setHideTabBar] = useState(false);
   const [notifPost, setNotifPost] = useState<any>(null);
@@ -416,6 +418,12 @@ function AppShell() {
   const [showResetPassword, setShowResetPassword] = useState(false);
 
   useLastSeen(session?.user?.id ?? null);
+
+  useEffect(() => {
+    if (activeMedia) {
+      setShowCreate(true);
+    }
+  }, [activeMedia]);
 
   // Tracks the currently authenticated user ID so auth-change events don't
   // reset onboardingDone on token refreshes for the same user.
@@ -438,7 +446,7 @@ function AppShell() {
         supabase.auth.getSession(),
         // Audio pre-warm: fire-and-forget
         setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'doNotMix', shouldRouteThroughEarpiece: false })
-          .catch(() => {}),
+          .catch((e) => console.warn('[App] setAudioModeAsync:', e?.message)),
       ];
 
       const settled = await Promise.allSettled(promises);
@@ -512,7 +520,7 @@ function AppShell() {
 
     // Pre-mount other tabs after interactions settle but stagger mounts to avoid jank.
     const timers: Array<any> = [];
-    const task = InteractionManager.runAfterInteractions(() => {
+    const idleHandle = setTimeout(() => {
       startTransition(() => {
         const tabsToMount: Tab[] = ['explore', 'market', 'messages', 'profile', 'reels'];
         tabsToMount.forEach((t, i) => {
@@ -523,10 +531,10 @@ function AppShell() {
               const uid = session?.user?.id;
               if (!uid) return;
               if (t === 'explore') {
-                Cache.getOrFetch(`explore:${uid}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(uid, 24, 0)).catch(() => {});
+                Cache.getOrFetch(`explore:${uid}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(uid, 24, 0)).catch((e) => console.warn('[App] prefetch explore:', e?.message));
               }
               if (t === 'reels') {
-                Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0)).catch(() => {});
+                Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0)).catch((e) => console.warn('[App] prefetch reels:', e?.message));
               }
             } catch {}
           }, i * 300);
@@ -551,7 +559,7 @@ function AppShell() {
       listener.subscription.unsubscribe();
       clearTimeout(splashTimer);
       timers.forEach(t => clearTimeout(t));
-      try { task.cancel(); } catch {}
+      clearTimeout(idleHandle);
       hS.remove();
       hM.remove();
       hSu.remove();
@@ -576,8 +584,8 @@ function AppShell() {
         const done = data.onboarding_completed ?? false;
         setOnboardingDone(done);
         // Cache onboarding status so next launch doesn't need a DB round-trip
-        if (done) AsyncStorage.setItem(`ug_onboard:${uid}`, 'true').catch(() => {});
-        AccountService.registerAccount(data, session).catch(() => {});
+        if (done) AsyncStorage.setItem(`ug_onboard:${uid}`, 'true').catch((e) => console.warn('[App] cache onboard:', e?.message));
+        AccountService.registerAccount(data, session).catch((e) => console.warn('[App] registerAccount:', e?.message));
       } else {
         // [Ama Mensah - Lead Dev] No profile row found — treat as onboarding complete to avoid
         // an infinite loading gate, but do NOT leave userProfile as null.
@@ -693,7 +701,7 @@ function AppShell() {
       // Priority-ordered pop. First match wins.
       if (activeLegal) { setActiveLegal(null); return true; }
       if (notifPost)   { setNotifPost(null);   return true; }
-      if (showCreate)  { setShowCreate(false); return true; }
+      if (showCreate)  { setShowCreate(false); setActiveMedia(null); return true; }
       if (showVerification)  { setShowVerification(false);  return true; }
       if (showNotifications) { setShowNotifications(false); return true; }
       if (showTrending)      { setShowTrending(false);      return true; }
@@ -775,7 +783,7 @@ function AppShell() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg }]}>
-      <StatusBar barStyle={colors.statusBar} backgroundColor={colors.bg} translucent={false} />
+      <StatusBar barStyle={colors.statusBar} />
       <PagerView ref={pagerRef} style={{ flex: 1 }} initialPage={1} onPageSelected={(e) => setPagerPage(e.nativeEvent.position)} scrollEnabled={false}>
         <View key="0" style={{ flex: 1 }}>
           <QuickCaptureScreen isVisible={pagerPage === 0 && !activeMedia && !isLive} onClose={() => pagerRef.current?.setPage(1)} onCapture={setActiveMedia} onLiveStart={() => setIsLive(true)} onThreadStart={() => { pagerRef.current?.setPage(1); setCreateInitialType('thread'); setShowCreate(true); }} />
@@ -812,7 +820,7 @@ function AppShell() {
           />
           {showTabBar && (
             <TouchableOpacity
-              style={styles.fab}
+              style={[styles.fab, { backgroundColor: colors.accent, shadowColor: colors.accent }]}
               onPress={() => pagerRef.current?.setPage(0)}
               activeOpacity={0.8}
             >
@@ -823,11 +831,16 @@ function AppShell() {
       </PagerView>
       {showTabBar && <BottomTabBar activeTabVisual={activeTabVisual} onTabChange={handleTabChange} colors={colors} />}
       {showNotifications && <View style={styles.notifOverlay}><NotificationsScreen userId={session.user.id} myAvatarUrl={userProfile?.avatar_url ?? null} onBadgeClear={() => setNotifBadge(0)} onBack={() => setShowNotifications(false)} onUserPress={(uid: string) => { setViewedUserId(uid); setActiveTabVisual('profile'); setActiveTab('profile'); setShowNotifications(false); }} onPostPress={(pid: any) => { supabase.from('posts').select('*, profiles(*)').eq('id', pid).single().then(({data}: any) => { setNotifPost(data); }); }} onMessagePress={navigateToMessages} onDiscoverPress={() => setShowDiscoverPeople(true)} /></View>}
-      <CreatePostModal visible={showCreate} userId={session.user.id} initialType={createInitialType} onClose={() => setShowCreate(false)} onPosted={() => setFeedRefreshKey(k => k + 1)} preCapturedMedia={activeMedia} />
+      <CreatePostModal visible={showCreate} userId={session.user.id} initialType={createInitialType} onClose={() => { setShowCreate(false); setActiveMedia(null); }} onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); }} preCapturedMedia={activeMedia} />
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
       {showDiscoverPeople && <View style={styles.notifOverlay}><DiscoverPeopleScreen onClose={() => setShowDiscoverPeople(false)} onUserPress={(u: any) => { setViewedUserId(u.id); setActiveTabVisual('profile'); setActiveTab('profile'); setShowDiscoverPeople(false); }} /></View>}
       {showTrending && <View style={styles.notifOverlay}><TrendingScreen userId={session.user.id} university={userProfile?.university ?? ''} onBack={() => setShowTrending(false)} onUserPress={(u: any) => { setViewedUserId(u.id); setActiveTabVisual('profile'); setActiveTab('profile'); setShowTrending(false); }} /></View>}
       <Modal visible={!!notifPost} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setNotifPost(null)}>{notifPost && <PostDetailModal post={notifPost} currentUserId={session?.user?.id ?? ''} openComments={notifPostComments} initialCommentId={notifCommentId} onClose={() => setNotifPost(null)} />}</Modal>
+      {isLive && (
+        <Modal visible={true} animationType="slide" onRequestClose={() => setIsLive(false)}>
+          <LiveScreen onClose={() => setIsLive(false)} />
+        </Modal>
+      )}
     </View>
   );
 }
@@ -840,9 +853,11 @@ export default function App() {
           <AppStateProvider>
             <PopupProvider>
               <ToastProvider>
-                <BottomSheetModalProvider>
-                  <AppShell />
-                </BottomSheetModalProvider>
+                <PaywallProvider>
+                  <BottomSheetModalProvider>
+                    <AppShell />
+                  </BottomSheetModalProvider>
+                </PaywallProvider>
               </ToastProvider>
             </PopupProvider>
           </AppStateProvider>

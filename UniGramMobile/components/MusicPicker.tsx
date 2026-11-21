@@ -119,7 +119,7 @@ export const MusicPicker: React.FC<MusicPickerProps> = ({ visible, onClose, onSe
     }
   };
 
-  const waveformScrollRef = useRef<ScrollView>(null);
+  const waveformScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   const handleTrackSelect = (track: any) => {
     Keyboard.dismiss();

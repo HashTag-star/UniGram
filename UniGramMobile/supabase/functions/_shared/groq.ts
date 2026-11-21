@@ -1,7 +1,18 @@
-export const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+const ALLOWED_ORIGINS = [
+  'https://unigram-mobile.netlify.app',
+  'https://unigram.app',
+  'unigram://',
+]
+
+function getCorsHeaders(origin: string | null) {
+  const allowed = origin && ALLOWED_ORIGINS.some(o => origin.startsWith(o)) ? origin : ALLOWED_ORIGINS[0]
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  }
 }
+
+export const CORS = getCorsHeaders(null)
 
 export const GROQ_MODEL_FAST = 'llama-3.1-8b-instant'
 export const GROQ_MODEL_SMART = 'llama-3.3-70b-versatile'

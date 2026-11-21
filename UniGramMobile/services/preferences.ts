@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase';
 import { Cache } from '../lib/cache';
 import { INTERESTS } from '../data/interests';
 
-type InteractionType = 'like' | 'comment' | 'save' | 'share' | 'dwell';
+type InteractionType = 'like' | 'comment' | 'save' | 'share' | 'dwell' | 'skip';
 
 export interface SessionInteraction {
   post_id: string;
@@ -10,38 +10,72 @@ export interface SessionInteraction {
   duration_ms?: number;
 }
 
+/** Affinity half-life: taste fades by half every two weeks without reinforcement. */
+const HALF_LIFE_DAYS = 14;
+/** Keep the largest affinity bounded so one binge can't permanently dominate. */
+const MAX_AFFINITY = 60;
+/** One post can contribute at most this much per processing run. */
+const MAX_POST_WEIGHT = 8;
+const MIN_POST_WEIGHT = -1;
+const MIN_KEEP = 0.05;
+
 export function getInteractionWeight(type: InteractionType, duration_ms?: number): number {
   switch (type) {
     case 'like':    return 1;
     case 'comment': return 3;
     case 'save':    return 4;
     case 'share':   return 5;
-    case 'dwell':   return (duration_ms ?? 0) > 10_000 ? 2 : 0;
+    case 'skip':    return -0.6;
+    case 'dwell': {
+      // Ramp instead of a cliff: <2.5s is a glance (0), 2.5s -> 8.5s climbs to +2.
+      const d = duration_ms ?? 0;
+      if (d < 2_500) return 0;
+      return Math.min(2, ((d - 2_500) / 6_000) * 2);
+    }
     default:        return 0;
   }
 }
 
-/**
- * Derives an interest category for a post caption by matching its first
- * hashtag against the INTERESTS catalogue. Returns null if no match.
- */
-function categoryFromCaption(caption: string): string | null {
-  const tags = caption.match(/#\w+/g) ?? [];
-  for (const tag of tags) {
-    const match = INTERESTS.find(
-      i => i.hashtag.toLowerCase() === tag.toLowerCase(),
-    );
-    if (match) return match.category;
+/** Lower-cased hashtag words in a caption, without the '#'. */
+function tagsFromCaption(caption: string, limit = 5): string[] {
+  const tags = (caption.match(/#\w+/g) ?? []).map(t => t.slice(1).toLowerCase());
+  return [...new Set(tags)].slice(0, limit);
+}
+
+/** Maps a hashtag word to its INTERESTS category, if the catalogue knows it. */
+function categoryForTag(tag: string): string | null {
+  const match = INTERESTS.find(i => i.hashtag.slice(1).toLowerCase() === tag);
+  return match?.category ?? null;
+}
+
+function decayAndPrune(map: Record<string, number>, factor: number) {
+  for (const key of Object.keys(map)) {
+    const v = (Number(map[key]) || 0) * factor;
+    if (v < MIN_KEEP) delete map[key];
+    else map[key] = v;
   }
-  return null;
+}
+
+function capMax(map: Record<string, number>) {
+  const max = Math.max(0, ...Object.values(map));
+  if (max <= MAX_AFFINITY) return;
+  const k = MAX_AFFINITY / max;
+  for (const key of Object.keys(map)) map[key] *= k;
+}
+
+function round2(map: Record<string, number>) {
+  for (const key of Object.keys(map)) map[key] = Math.round(map[key] * 100) / 100;
+  return map;
 }
 
 /**
- * Updates user_preferences.affinities after a session.
- * Called from the feed screen when the user backgrounds the app
- * or navigates away (use React Native AppState for the trigger).
- *
- * Also invalidates the feed cache so the next session uses fresh weights.
+ * Updates user_preferences after a session. Learns, per post interacted with:
+ *   - topic (hashtag) affinity — every tag, not just the first
+ *   - category affinity (the coarse INTERESTS buckets from onboarding)
+ *   - format affinity (image / video / thread ...)
+ *   - cross-campus affinity
+ * Signals are time-decayed (14-day half-life, based on when the profile was last
+ * updated, NOT on how often this runs) and can go negative via quick skips.
  */
 export async function updateUserPreferences(
   userId: string,
@@ -49,24 +83,55 @@ export async function updateUserPreferences(
 ): Promise<void> {
   if (!sessionInteractions.length) return;
 
-  // Load current preferences (or start with empty objects)
-  const { data: existing } = await supabase
+  // Load current preferences. Try the v2 columns first; fall back if migration
+  // 059 hasn't been applied so learning keeps working either way.
+  let hasV2 = true;
+  let existing: any = null;
+  const v2 = await supabase
     .from('user_preferences')
-    .select('affinities, university_affinities')
+    .select('affinities, university_affinities, tag_affinities, type_affinities, updated_at')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
+  if (v2.error) {
+    hasV2 = false;
+    const v1 = await supabase
+      .from('user_preferences')
+      .select('affinities, university_affinities, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    existing = v1.data;
+  } else {
+    existing = v2.data;
+  }
 
-  const affinities: Record<string, number> =
-    (existing?.affinities as Record<string, number>) ?? {};
-  const universityAffinities: Record<string, number> =
-    (existing?.university_affinities as Record<string, number>) ?? {};
+  const affinities: Record<string, number> = { ...(existing?.affinities ?? {}) };
+  const universityAffinities: Record<string, number> = { ...(existing?.university_affinities ?? {}) };
+  const tagAffinities: Record<string, number> = { ...(existing?.tag_affinities ?? {}) };
+  const typeAffinities: Record<string, number> = { ...(existing?.type_affinities ?? {}) };
 
-  // Fetch captions for the interacted posts (to derive categories)
-  const postIds = [...new Set(sessionInteractions.map(i => i.post_id))];
+  // Time-based decay: a run 10 minutes after the last one barely decays anything.
+  const lastUpdated = existing?.updated_at ? new Date(existing.updated_at).getTime() : Date.now();
+  const days = Math.max(0, (Date.now() - lastUpdated) / 86_400_000);
+  const factor = Math.pow(0.5, days / HALF_LIFE_DAYS);
+  if (factor < 0.999) {
+    decayAndPrune(affinities, factor);
+    decayAndPrune(universityAffinities, factor);
+    decayAndPrune(tagAffinities, factor);
+    decayAndPrune(typeAffinities, factor);
+  }
+
+  // Net weight per post (a like + 12s dwell + save on one post is ONE strong
+  // signal, but clamped so it can't swamp the profile).
+  const perPost = new Map<string, number>();
+  for (const i of sessionInteractions) {
+    perPost.set(i.post_id, (perPost.get(i.post_id) ?? 0) + getInteractionWeight(i.type, i.duration_ms));
+  }
+
+  const postIds = [...perPost.keys()];
   const [postsResult, profileResult] = await Promise.all([
     supabase
       .from('posts')
-      .select('id, caption, profiles!posts_user_id_fkey(university)')
+      .select('id, caption, type, profiles!posts_user_id_fkey(university)')
       .in('id', postIds),
     supabase
       .from('profiles')
@@ -77,46 +142,59 @@ export async function updateUserPreferences(
 
   const myUniversity = profileResult.data?.university ?? null;
 
-  const postMeta: Record<string, { category: string | null; university: string | null }> = {};
-  (postsResult.data ?? []).forEach((p: any) => {
+  for (const p of (postsResult.data ?? []) as any[]) {
+    const raw = perPost.get(p.id) ?? 0;
+    if (raw === 0) continue;
+    const weight = Math.max(MIN_POST_WEIGHT, Math.min(MAX_POST_WEIGHT, raw));
     const profile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-    postMeta[p.id] = {
-      category: categoryFromCaption(p.caption ?? ''),
-      university: profile?.university ?? null,
-    };
-  });
 
-  // Accumulate weights into affinities
-  for (const interaction of sessionInteractions) {
-    const weight = getInteractionWeight(interaction.type, interaction.duration_ms);
-    if (weight === 0) continue;
-
-    const meta = postMeta[interaction.post_id];
-    if (!meta) continue;
-
-    if (meta.category) {
-      affinities[meta.category] = (affinities[meta.category] ?? 0) + weight;
+    const tags = tagsFromCaption(p.caption ?? '');
+    // Spread the signal over the tags (sqrt keeps multi-tag posts from being
+    // either dominant or ignored).
+    const perTag = tags.length ? weight / Math.sqrt(tags.length) : 0;
+    const seenCategories = new Set<string>();
+    for (const tag of tags) {
+      tagAffinities[tag] = Math.max(0, (tagAffinities[tag] ?? 0) + perTag);
+      const cat = categoryForTag(tag);
+      if (cat && !seenCategories.has(cat)) {
+        seenCategories.add(cat);
+        affinities[cat] = Math.max(0, (affinities[cat] ?? 0) + weight);
+      }
     }
 
-    if (meta.university && meta.university !== myUniversity) {
-      universityAffinities[meta.university] =
-        (universityAffinities[meta.university] ?? 0) + weight;
+    if (p.type) {
+      typeAffinities[p.type] = Math.max(0, (typeAffinities[p.type] ?? 0) + weight * 0.5);
+    }
+
+    if (profile?.university && profile.university !== myUniversity) {
+      universityAffinities[profile.university] = Math.max(0, (universityAffinities[profile.university] ?? 0) + weight);
     }
   }
 
-  await supabase.from('user_preferences').upsert(
-    {
-      user_id: userId,
-      affinities,
-      university_affinities: universityAffinities,
-      updated_at: new Date().toISOString(),
-    },
+  capMax(affinities); capMax(universityAffinities); capMax(tagAffinities); capMax(typeAffinities);
+
+  const base = {
+    user_id: userId,
+    affinities: round2(affinities),
+    university_affinities: round2(universityAffinities),
+    updated_at: new Date().toISOString(),
+  };
+  let { error: upsertErr } = await supabase.from('user_preferences').upsert(
+    hasV2 ? { ...base, tag_affinities: round2(tagAffinities), type_affinities: round2(typeAffinities) } : base,
     { onConflict: 'user_id' },
   );
+  if (upsertErr && hasV2) {
+    ({ error: upsertErr } = await supabase.from('user_preferences').upsert(base, { onConflict: 'user_id' }));
+  }
+  if (upsertErr) {
+    // Don't mark rows processed — they'll be retried next time.
+    console.warn('[preferences] upsert failed:', upsertErr.message);
+    return;
+  }
 
-  // Mark processed + invalidate cached feed
+  // Mark processed + invalidate cached feed so the next load uses fresh weights
   try { await supabase.rpc('mark_interactions_processed', { p_user_id: userId }); } catch {}
-  Cache.invalidate(`feed:${userId}`);
+  Cache.invalidatePattern(`feed:${userId}:`);
 }
 
 /**

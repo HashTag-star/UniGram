@@ -91,7 +91,7 @@ const TrendingCard: React.FC<{
           {/* Gradient overlay for rank + multi-count badges */}
           <LinearGradient
             colors={['rgba(0,0,0,0.55)', 'transparent']}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
             pointerEvents="none"
           />
 
@@ -357,7 +357,7 @@ export const TrendingScreen: React.FC<Props> = ({
         </View>
       ) : posts.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <Ionicons name="flame-outline" size={48} color={colors.textMuted} />
+          <Ionicons name="trending-up-outline" size={48} color={colors.textMuted} />
           <Text style={[styles.emptyTitle, { color: colors.text }]}>Nothing trending yet</Text>
           <Text style={[styles.emptySub, { color: colors.textMuted }]}>
             Posts from {university || 'your campus'} will appear here as people engage with them.
@@ -477,7 +477,7 @@ const styles = StyleSheet.create({
     left: 10,
   },
   playOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -196,7 +196,7 @@ export const BoostSheet: React.FC<BoostSheetProps> = ({
 
 const bs = StyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.65)',
   },
   sheet: {

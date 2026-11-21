@@ -65,7 +65,17 @@ Deno.serve(async (req) => {
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    if (expectedSig !== signature) {
+    // Constant-time comparison to prevent timing attacks
+    const sigBytes = new TextEncoder().encode(expectedSig);
+    const providedBytes = new TextEncoder().encode(signature);
+    if (sigBytes.length !== providedBytes.length) {
+      return new Response('Invalid signature', { status: 401 });
+    }
+    let mismatch = 0;
+    for (let i = 0; i < sigBytes.length; i++) {
+      mismatch |= sigBytes[i] ^ providedBytes[i];
+    }
+    if (mismatch !== 0) {
       return new Response('Invalid signature', { status: 401 });
     }
 

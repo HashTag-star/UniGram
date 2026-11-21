@@ -40,15 +40,18 @@ const SecureStoreAdapter = {
         return;
       }
       const total = Math.ceil(value.length / CHUNK_SIZE);
-      await SecureStore.setItemAsync(`${key}_chunks`, total.toString());
-      // Write chunks in parallel to reduce latency on large values
+      // Write every chunk before publishing its count. Publishing first meant a
+      // single failed chunk could make the next app launch read a partial token.
+      // Let the outer catch fall back to AsyncStorage instead of accepting a
+      // corrupted SecureStore session.
       const writes = Array.from({ length: total }, (_, i) =>
         SecureStore.setItemAsync(
           `${key}_${i}`,
           value.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
-        ).catch(() => {})
+        )
       );
-      await Promise.allSettled(writes);
+      await Promise.all(writes);
+      await SecureStore.setItemAsync(`${key}_chunks`, total.toString());
     } catch {
       await AsyncStorage.setItem(key, value);
     }
@@ -78,6 +81,8 @@ const SecureStoreAdapter = {
 // take 60s+); without context the bare AbortError told the operator nothing.
 const FETCH_TIMEOUT_MS = 20_000;
 let _wasOffline = false;
+let _offlineTimer: any = null;
+let _onlineTimer: any = null;
 
 export class SupabaseTimeoutError extends Error {
   url: string;
@@ -93,10 +98,19 @@ export class SupabaseTimeoutError extends Error {
     // Friendly message intended for display to end users (no URLs or internals)
     this.userMessage = `You're offline.`;
     
-    // Mark global state so we can notify when it comes back
-    if (!_wasOffline) {
-      _wasOffline = true;
-      DeviceEventEmitter.emit('app_offline', { message: this.userMessage });
+    // Clear any pending online trigger, since we just had a failure
+    if (_onlineTimer) {
+      clearTimeout(_onlineTimer);
+      _onlineTimer = null;
+    }
+
+    // Grace period: Wait 5 seconds of continuous failures before declaring offline
+    if (!_wasOffline && !_offlineTimer) {
+      _offlineTimer = setTimeout(() => {
+        _wasOffline = true;
+        _offlineTimer = null;
+        DeviceEventEmitter.emit('app_offline', { message: this.userMessage });
+      }, 5000);
     }
   }
 }
@@ -117,13 +131,22 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
     }
     return fetch(url, { ...options, signal: controller.signal })
     .then((res) => {
-      // If we were previously offline and this request succeeded, notify the app
-      if (_wasOffline) {
-        _wasOffline = false;
-        DeviceEventEmitter.emit('app_online');
+      // If we got a successful response, clear any pending offline declaration
+      if (_offlineTimer) {
+        clearTimeout(_offlineTimer);
+        _offlineTimer = null;
       }
-      // Release one token back for long-polling / streaming endpoints? Keep
-      // conservative and do not auto-release here — releases can be done by callers.
+      
+      // If we were offline and now succeed, trigger online after a 3s stable connection
+      if (_wasOffline) {
+        if (!_onlineTimer) {
+          _onlineTimer = setTimeout(() => {
+            _wasOffline = false;
+            _onlineTimer = null;
+            DeviceEventEmitter.emit('app_online');
+          }, 3000);
+        }
+      }
       return res;
     })
     .catch((err: any) => {

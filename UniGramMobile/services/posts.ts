@@ -271,11 +271,8 @@ export async function deletePost(postId: string, userId: string) {
 export async function likePost(postId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
-  const { error } = await supabase.from('post_likes').insert({ post_id: postId, user_id: userId });
-  if (error && error.code !== '23505') throw error; // ignore duplicate
-  try {
-    await supabase.rpc('increment_post_likes', { p_post_id: postId });
-  } catch (e) {}
+  const { error } = await supabase.from('post_likes').upsert({ post_id: postId, user_id: userId }, { onConflict: 'post_id,user_id' });
+  if (error) throw error;
   SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: true });
   
   // Notify author
@@ -314,8 +311,8 @@ export async function unlikePost(postId: string, userId: string) {
 export async function savePost(postId: string, userId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
-  const { error } = await supabase.from('post_saves').insert({ post_id: postId, user_id: userId });
-  if (error && error.code !== '23505') throw error;
+  const { error } = await supabase.from('post_saves').upsert({ post_id: postId, user_id: userId }, { onConflict: 'post_id,user_id' });
+  if (error) throw error;
 }
 
 export async function unsavePost(postId: string, userId: string) {

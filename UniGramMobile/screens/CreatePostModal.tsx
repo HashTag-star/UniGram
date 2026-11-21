@@ -693,7 +693,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                   disabled={loadingCaptions}
                 >
                   {loadingCaptions
-                    ? <ActivityIndicator size="small" color="#818cf8" />
+                    ? <ActivityIndicator size="small" color={colors.accentLight} />
                     : <Text style={styles.aiSuggestBtnText}>✨ Suggest</Text>
                   }
                 </TouchableOpacity>
@@ -730,7 +730,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
             {/* Hashtags */}
             <View style={styles.composeField}>
-              <Ionicons name="pricetag-outline" size={20} color="#818cf8" />
+              <Ionicons name="pricetag-outline" size={20} color={colors.accentLight} />
               <TextInput
                 style={styles.composeInput}
                 placeholder="#Hashtags"

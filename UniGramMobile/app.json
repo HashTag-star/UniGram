@@ -8,27 +8,6 @@
     "icon": "./assets/icon.png",
     "scheme": "unigram",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#05050a"
-    },
-    "intentFilters": [
-      {
-        "action": "VIEW",
-        "autoVerify": true,
-        "data": [
-          {
-            "scheme": "unigram"
-          }
-        ],
-        "category": [
-          "BROWSABLE",
-          "DEFAULT"
-        ]
-      }
-    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.unigram.mobile",
@@ -50,15 +29,8 @@
       },
       "package": "com.unigram.mobile",
       "googleServicesFile": "./google-services.json",
-      "edgeToEdgeEnabled": true,
-      "softwareKeyboardLayoutMode": "adjustResize",
-      "targetSdkVersion": 34,
-      "minSdkVersion": 24,
+      "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false,
-      "statusBar": {
-        "backgroundColor": "#000000",
-        "barStyle": "light-content"
-      },
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -74,6 +46,21 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "unigram"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
@@ -114,10 +101,21 @@
       [
         "@sentry/react-native",
         {
-          "organization": "heis-hashtag",
-          "project": "unigram-mobile-v2"
+          "organization": "hashtechs",
+          "project": "unigram-mobile"
         }
-      ]
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#05050a"
+        }
+      ],
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

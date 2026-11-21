@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Dimensions, TouchableOpacity,
   Image, ScrollView, TextInput, KeyboardAvoidingView,
-  Platform, Animated, PanResponder, Alert, StatusBar, FlatList, Modal
+  Platform, Animated, PanResponder, Alert, StatusBar, FlatList, Modal, ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,12 +31,39 @@ interface MediaEditScreenProps {
 }
 
 const FILTERS = [
+  // Normal
   { id: 'normal', name: 'Normal', color: 'transparent', overlay: 'transparent' },
+
+  // Vivid & Bright
   { id: 'vivid', name: 'Vivid', color: 'rgba(255, 255, 255, 0.1)', overlay: 'rgba(255, 255, 255, 0.05)' },
+  { id: 'bright', name: 'Bright', color: 'rgba(255, 255, 220, 0.1)', overlay: 'rgba(255, 255, 220, 0.05)' },
+  { id: 'radiance', name: 'Radiance', color: 'rgba(255, 240, 200, 0.15)', overlay: 'rgba(255, 240, 200, 0.08)' },
+
+  // Warm Tones
   { id: 'warm', name: 'Valencia', color: 'rgba(255, 165, 0, 0.15)', overlay: 'rgba(255, 165, 0, 0.1)' },
+  { id: 'golden', name: 'Golden', color: 'rgba(255, 200, 100, 0.2)', overlay: 'rgba(255, 200, 100, 0.1)' },
+  { id: 'summer', name: 'Summer', color: 'rgba(255, 220, 150, 0.15)', overlay: 'rgba(255, 220, 150, 0.08)' },
+
+  // Cool Tones
   { id: 'cool', name: 'Hudson', color: 'rgba(0, 191, 255, 0.15)', overlay: 'rgba(0, 191, 255, 0.1)' },
-  { id: 'mono', name: 'Inkwell', color: 'rgba(0, 0, 0, 0.5)', overlay: 'rgba(0, 0, 0, 0.3)' },
-  { id: 'sepia', name: 'Earlybird', color: 'rgba(112, 66, 20, 0.25)', overlay: 'rgba(112, 66, 20, 0.15)' },
+  { id: 'blue', name: 'Blue Steel', color: 'rgba(100, 180, 255, 0.15)', overlay: 'rgba(100, 180, 255, 0.08)' },
+  { id: 'aquatic', name: 'Aquatic', color: 'rgba(0, 200, 255, 0.15)', overlay: 'rgba(0, 200, 255, 0.08)' },
+
+  // Mono & Contrast
+  { id: 'mono', name: 'Monochrome', color: 'rgba(0, 0, 0, 0.5)', overlay: 'rgba(0, 0, 0, 0.3)' },
+  { id: 'sharp', name: 'Sharp', color: 'rgba(0, 0, 0, 0.3)', overlay: 'rgba(0, 0, 0, 0.15)' },
+  { id: 'dramatic', name: 'Dramatic', color: 'rgba(0, 0, 0, 0.4)', overlay: 'rgba(0, 0, 0, 0.2)' },
+
+  // Vintage & Film
+  { id: 'sepia', name: 'Sepia', color: 'rgba(112, 66, 20, 0.25)', overlay: 'rgba(112, 66, 20, 0.15)' },
+  { id: 'vintage', name: 'Vintage', color: 'rgba(120, 100, 80, 0.2)', overlay: 'rgba(120, 100, 80, 0.1)' },
+  { id: 'film', name: 'Film Grain', color: 'rgba(100, 100, 100, 0.1)', overlay: 'rgba(50, 50, 50, 0.05)' },
+  { id: 'retro', name: 'Retro', color: 'rgba(150, 100, 100, 0.2)', overlay: 'rgba(150, 100, 100, 0.1)' },
+
+  // Special Effects
+  { id: 'hdr', name: 'HDR', color: 'rgba(255, 255, 200, 0.2)', overlay: 'rgba(255, 255, 200, 0.1)' },
+  { id: 'matte', name: 'Matte', color: 'rgba(120, 120, 120, 0.15)', overlay: 'rgba(80, 80, 80, 0.08)' },
+  { id: 'blush', name: 'Blush', color: 'rgba(255, 180, 180, 0.15)', overlay: 'rgba(255, 180, 180, 0.08)' }
 ];
 
 export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, onNext, onCancel }) => {
@@ -119,14 +146,58 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
   // the Rules of Hooks.
   if (!currentItem) {
     return (
-      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <Text style={{ color: 'rgba(255,255,255,0.6)' }}>Loading media…</Text>
-        <TouchableOpacity onPress={onCancel} style={{ marginTop: 16, padding: 12 }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Go back</Text>
+      <View style={[
+        styles.container,
+        {
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(0,0,0,0.7)'
+        }
+      ]}>
+      <View style={{
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 20,
+        borderRadius: 12,
+        alignItems: 'center'
+      }}>
+        <ActivityIndicator
+          size="large"
+          color="#fff"
+          style={{ marginBottom: 16 }}
+        />
+        <Text style={{
+          color: '#fff',
+          fontSize: 18,
+          fontWeight: '600',
+          textShadowColor: 'rgba(0,0,0,0.5)',
+          textShadowRadius: 4,
+          textShadowOffset: { width: 0, height: 0 },
+          marginBottom: 8
+        }}>Processing media…</Text>
+        <Text style={{
+          color: 'rgba(255,255,255,0.8)',
+          fontSize: 14,
+          maxWidth: 200,
+          textAlign: 'center'
+        }}>This may take a moment while we prepare your media for editing.</Text>
+        <TouchableOpacity
+          onPress={onCancel}
+          style={{
+            marginTop: 20,
+            paddingVertical: 10,
+            paddingHorizontal: 20,
+            backgroundColor: '#fff',
+            borderRadius: 8
+          }}
+        >
+          <Text style={{ color: '#000', fontWeight: '600' }}>
+            Cancel
+          </Text>
         </TouchableOpacity>
       </View>
-    );
-  }
+    </View>
+  );
+}
 
   const currentTextItems = currentItem.textItems;
 
@@ -455,7 +526,7 @@ const styles = StyleSheet.create({
   filterNameActive: { color: '#fff' },
 
   textInputOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.7)',
     alignItems: 'center', justifyContent: 'center',
     zIndex: 1000,
@@ -693,7 +764,7 @@ const cropStyles = StyleSheet.create({
     overflow: 'hidden',
   },
   maskContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   handle: {

@@ -48,7 +48,7 @@ export function OnboardingNavigator({ userId, onComplete }: Props) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <StatusBar barStyle="light-content" />
 
       {/* Progress bar */}
       <View style={styles.progressBar}>

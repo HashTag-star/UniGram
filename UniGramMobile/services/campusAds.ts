@@ -251,7 +251,7 @@ export async function getActiveAdsForPlacement(
 ): Promise<any[]> {
   // Previews and eligibility are viewer-specific; do not share their cache.
   const cacheKey = `ads:placement:${placement}:uni:${university ?? 'none'}:viewer:${userId}`;
-  return await Cache.getOrFetch<any[]>(cacheKey, TTL.explore, async () => {
+  const cached = await Cache.getOrFetch<any[]>(cacheKey, TTL.explore, async () => {
     // NOTE: campus_ads.user_id references auth.users(id), NOT public.profiles(id),
     // so the PostgREST relationship embed `profiles:user_id(...)` can't be inferred
     // and the join silently errors out. We fetch the ads and the advertiser
@@ -295,7 +295,7 @@ export async function getActiveAdsForPlacement(
     if (ownerIds.length > 0) {
       const { data: profs } = await supabase
         .from('profiles')
-        .select('id, username, full_name, avatar_url, age, gender')
+        .select('id, username, full_name, avatar_url')
         .in('id', ownerIds);
       if (profs) profileMap = new Map(profs.map((p: any) => [p.id, p]));
     }
@@ -333,7 +333,7 @@ export async function getActiveAdsForPlacement(
         return true;
       })
       .map(ad => {
-        const score = computeAuctionScore(ad, profileMap.get(ad.user_id ?? ''), now, placement);
+        const score = computeAuctionScore(ad, now.getTime());
         return { ad, score };
       })
       .filter(item => item.score >= 0) // filter out any invalid scores (though we don't produce negative)
@@ -342,10 +342,14 @@ export async function getActiveAdsForPlacement(
 
     return scoredAds;
   });
+  if (cached === null) {
+    return [];
+  }
+  return cached;
 }
 
 // Helper function to compute auction score for an ad
-function computeAuctionScore(ad: CampusAd, userProfile: any | null, now: number, placement: string): number {
+function computeAuctionScore(ad: CampusAd, now: number): number {
   // If ad is not active, return -1 (should not happen as we filter active ads earlier)
   if (ad.status !== 'active') return -1;
 
@@ -424,7 +428,7 @@ function isWithinSchedule(ad: CampusAd, now: number): boolean {
   if (!Array.isArray(daySlots) || daySlots.length === 0) {
     return false; // no slots for this day
   }
-  const time = date.toTimeString().substr(0, 5); // "HH:MM"
+  const time = date.toTimeString().slice(0, 5); // "HH:MM"
   for (const slot of daySlots) {
     if (typeof slot === 'object' && slot.start && slot.end) {
       if (time >= slot.start && time <= slot.end) {
@@ -434,99 +438,39 @@ function isWithinSchedule(ad: CampusAd, now: number): boolean {
   }
   return false;
 }
-      .order('created_at', { ascending: false })
-      .limit(30),
-    // Allow the campaign owner to see preview_live campaigns (preview mode)
-    supabase
-      .from('campus_ads')
-      .select('*')
-      .eq('preview_live', true)
-      .eq('user_id', userId)
-      .limit(10),
-  ]);
-
-  const error = activeErr;
-
-  if (error) {
-    console.warn('[campusAds] getActiveAdsForPlacement select failed:', error.message);
-    return [];
-  }
-  const ads = (activeAds ?? []) as any[];
-  const previews = (previewAds ?? []) as any[];
-  if (ads.length === 0 && previews.length === 0) return [];
-
-  // Owners can inspect explicit previews, but paid delivery never targets them.
-  const allAds = [...previews, ...ads.filter(a => a.user_id !== userId)];
-  const ownerIds = Array.from(new Set(allAds.map(a => a.user_id).filter(Boolean)));
-  let profileMap = new Map<string, any>();
-  if (ownerIds.length > 0) {
-    const { data: profs } = await supabase
-      .from('profiles')
-      .select('id, username, full_name, avatar_url')
-      .in('id', ownerIds);
-    if (profs) profileMap = new Map(profs.map((p: any) => [p.id, p]));
-  }
-
-  // Merge previews first (they are intentionally shown to the owner),
-  // then active ads. Deduplicate to avoid the owner seeing their own ad twice
-  // in both preview and active states.
-  const combined: any[] = [];
-  const seenIds = new Set<string>();
-
-  for (const p of previews) {
-    if (!seenIds.has(p.id)) {
-      combined.push({ ...p, _isPreview: true, profiles: profileMap.get(p.user_id) });
-      seenIds.add(p.id);
-    }
-  }
-  for (const a of ads) {
-    if (!seenIds.has(a.id)) {
-      combined.push({ ...a, _isPreview: false, profiles: profileMap.get(a.user_id) });
-      seenIds.add(a.id);
-    }
-  }
-
-    return combined
-    .filter((a): a is any => {
-      if (!a) return false;
-      // placement filtering: if placements configured, ad must include this placement
-      if (placement && Array.isArray(a.placements) && a.placements.length > 0
-          && !a.placements.includes(placement)) return false;
-      // university targeting: skip ads targeted to other campuses
-      if (a.university && a.university !== university) return false;
-      return true;
-    })
-    // final client-side sort based on explicit priority + budget to control reach
-    .sort((x, y) => {
-      const px = Number(x.priority ?? 0);
-      const py = Number(y.priority ?? 0);
-      if (px !== py) return py - px;
-      const bx = Number(x.budget ?? 0);
-      const by = Number(y.budget ?? 0);
-      if (bx !== by) return by - bx;
-      // Randomize among equal priority/budget to ensure variety
-      return Math.random() - 0.5;
-    });
-  }) ?? [];
-}
-
+      
 export async function getActiveFeedAds(university: string | null, userId: string): Promise<any[]> {
   return getActiveAdsForPlacement('feed', university, userId);
 }
 
+async function assertCampaignOwnership(id: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+  const { data: campaign, error } = await supabase
+    .from('campus_ads')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+  if (error || !campaign) throw new Error('Campaign not found');
+  if (campaign.user_id !== user.id) throw new Error('Unauthorized');
+}
+
 export async function pauseCampaign(id: string): Promise<void> {
+  await assertCampaignOwnership(id);
   const { error } = await supabase.from('campus_ads').update({ status: 'paused' }).eq('id', id);
   if (error) throw error;
   try { Cache.invalidatePattern('ads:'); } catch (e) {}
 }
 
 export async function resumeCampaign(id: string): Promise<void> {
+  await assertCampaignOwnership(id);
   const { error } = await supabase.from('campus_ads').update({ status: 'active' }).eq('id', id);
   if (error) throw error;
   try { Cache.invalidatePattern('ads:'); } catch (e) {}
 }
 
 export async function deleteCampaign(id: string): Promise<void> {
+  await assertCampaignOwnership(id);
   const { error } = await supabase.from('campus_ads').delete().eq('id', id);
   if (error) throw error;
   try { Cache.invalidatePattern('ads:'); } catch (e) {}
@@ -535,20 +479,19 @@ export async function deleteCampaign(id: string): Promise<void> {
 export async function recordCampusAdImpression(adId: string, placement?: string): Promise<void> {
   if (placement) {
     const { error } = await supabase.rpc('record_campus_ad_delivery', { p_ad_id: adId, p_placement: placement });
-    // Compatibility for installations that have not yet applied migration 053.
     if (!error) return;
-    if (error.code !== '42883') throw error;
   }
-  await supabase.rpc('record_campus_ad_impression', { p_ad_id: adId });
+  const { error: fallbackError } = await supabase.rpc('record_campus_ad_impression', { p_ad_id: adId });
+  if (fallbackError) throw fallbackError;
 }
 
 export async function recordCampusAdClick(adId: string, placement?: string): Promise<void> {
   if (placement) {
     const { error } = await supabase.rpc('record_campus_ad_click_event', { p_ad_id: adId, p_placement: placement });
     if (!error) return;
-    if (error.code !== '42883') throw error;
   }
-  await supabase.rpc('record_campus_ad_click', { p_ad_id: adId });
+  const { error: fallbackError } = await supabase.rpc('record_campus_ad_click', { p_ad_id: adId });
+  if (fallbackError) throw fallbackError;
 }
 
 /** Build a wa.me deep-link from an ad's `whatsapp_number` field. We strip
@@ -658,9 +601,11 @@ export async function addAdComment(
   userId: string,
   content: string,
 ): Promise<any> {
+  const { cleanUserText } = require('../lib/contentSafety');
+  const sanitized = cleanUserText(content, 'comment');
   const { data, error } = await supabase
     .from('campus_ad_comments')
-    .insert({ ad_id: adId, user_id: userId, content })
+    .insert({ ad_id: adId, user_id: userId, content: sanitized })
     .select(`*, profiles!campus_ad_comments_user_id_fkey(*)`)
     .single();
 

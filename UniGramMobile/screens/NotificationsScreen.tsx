@@ -470,7 +470,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
               {notifs.length === 0 ? (
                 <View style={styles.empty}>
                   <Ionicons name="notifications-off-outline" size={48} color={colors.textMuted} />
-                  <Text style={[styles.emptyTitle, { color: colors.textSub }]}>No notifications yet</Text>
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
                   <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
                     When people like, comment, or follow you, you'll see it here.
                   </Text>

@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader?.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Missing or invalid Authorization header' }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: 'Missing or invalid Authorization header' }), { status: 401, headers: CORS })
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
     const token = authHeader.slice(7)
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
     if (authErr || !user) {
-      return new Response(JSON.stringify({ error: `Authentication failed: ${authErr?.message || 'User not found'}` }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: `Authentication failed` }), { status: 401, headers: CORS })
     }
 
     const { data: adminProfile, error: profileErr } = await supabase
@@ -109,11 +109,11 @@ Deno.serve(async (req) => {
       .single()
 
     if (profileErr) {
-      return new Response(JSON.stringify({ error: `Failed to fetch user profile: ${profileErr.message}` }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: 'Failed to verify admin status' }), { status: 403, headers: CORS })
     }
 
     if (!adminProfile?.is_admin) {
-      return new Response(JSON.stringify({ error: 'Access denied: You are not flagged as an admin in the profiles table' }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: 'Access denied: admin only' }), { status: 403, headers: CORS })
     }
 
     // Process Payload
@@ -121,12 +121,12 @@ Deno.serve(async (req) => {
     try {
       body = await req.json()
     } catch (e) {
-      return new Response(JSON.stringify({ error: 'Invalid JSON payload in request body' }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: 'Invalid JSON payload in request body' }), { status: 400, headers: CORS })
     }
 
     const { messages: incomingMessages } = body
     if (!incomingMessages || !Array.isArray(incomingMessages)) {
-      return new Response(JSON.stringify({ error: 'Invalid messages array in request body' }), { status: 200, headers: CORS })
+      return new Response(JSON.stringify({ error: 'Invalid messages array in request body' }), { status: 400, headers: CORS })
     }
 
     const lastUserMessage = incomingMessages[incomingMessages.length - 1].content

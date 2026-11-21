@@ -190,6 +190,8 @@ const ItemCard = memo<CardProps>(({
       ]}
       onPress={() => onPress(item)}
       activeOpacity={0.88}
+      accessibilityLabel={`${item.title}, ${formatPrice(item.price)}`}
+      accessibilityRole="button"
     >
       {/* Image area */}
       <View style={card.imgWrap}>
@@ -212,6 +214,8 @@ const ItemCard = memo<CardProps>(({
             style={[card.bookmarkBtn, { backgroundColor: isSaved ? 'rgba(251,191,36,0.18)' : 'rgba(0,0,0,0.5)' }]}
             onPress={() => onToggleSave(item.id)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityLabel={isSaved ? 'Unsave item' : 'Save item'}
+            accessibilityRole="button"
           >
             <Ionicons
               name={isSaved ? 'bookmark' : 'bookmark-outline'}
@@ -260,6 +264,8 @@ const ItemCard = memo<CardProps>(({
             <TouchableOpacity
               style={[card.ownerBtn, { borderColor: colors.border }]}
               onPress={() => onEdit?.(item)}
+              accessibilityLabel="Edit listing"
+              accessibilityRole="button"
             >
               <Ionicons name="pencil-outline" size={11} color="#818cf8" />
               <Text style={[card.ownerBtnText, { color: '#818cf8' }]}>Edit</Text>
@@ -268,6 +274,8 @@ const ItemCard = memo<CardProps>(({
               <TouchableOpacity
                 style={[card.ownerBtn, { borderColor: '#22c55e30' }]}
                 onPress={() => onMarkSold?.(item.id)}
+                accessibilityLabel="Mark as sold"
+                accessibilityRole="button"
               >
                 <Ionicons name="checkmark-circle-outline" size={11} color="#22c55e" />
                 <Text style={[card.ownerBtnText, { color: '#22c55e' }]}>Sold</Text>
@@ -276,6 +284,8 @@ const ItemCard = memo<CardProps>(({
             <TouchableOpacity
               style={[card.ownerBtn, { borderColor: '#ef444430' }]}
               onPress={() => onDelete?.(item.id)}
+              accessibilityLabel="Delete listing"
+              accessibilityRole="button"
             >
               <Ionicons name="trash-outline" size={11} color="#ef4444" />
               <Text style={[card.ownerBtnText, { color: '#ef4444' }]}>Del</Text>
@@ -387,15 +397,20 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
 
           {/* Overlay actions */}
           <View style={[dtl.overlayRow, { top: overlayTop }]}>
-            <TouchableOpacity style={dtl.overlayBtn} onPress={onClose}>
+              <TouchableOpacity
+                style={dtl.overlayBtn}
+                onPress={onClose}
+                accessibilityLabel="Close"
+                accessibilityRole="button"
+              >
               <Ionicons name="chevron-down" size={20} color="#fff" />
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={dtl.overlayBtn} onPress={handleShare}>
+              <TouchableOpacity style={dtl.overlayBtn} onPress={handleShare} accessibilityLabel="Share listing" accessibilityRole="button">
                 <Ionicons name="share-outline" size={19} color="#fff" />
               </TouchableOpacity>
               {!isOwn && (
-                <TouchableOpacity style={dtl.overlayBtn} onPress={() => onToggleSave(item.id)}>
+                <TouchableOpacity style={dtl.overlayBtn} onPress={() => onToggleSave(item.id)} accessibilityLabel={isSaved ? 'Unsave item' : 'Save item'} accessibilityRole="button">
                   <Ionicons
                     name={isSaved ? 'bookmark' : 'bookmark-outline'}
                     size={19}
@@ -485,6 +500,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
               <TouchableOpacity
                 style={[dtl.actionBtn, { backgroundColor: '#4f46e5' }]}
                 onPress={() => onMessage(seller?.id ?? item.seller_id)}
+                accessibilityLabel="Message seller"
+                accessibilityRole="button"
               >
                 <Ionicons name="chatbubble-outline" size={17} color="#fff" />
                 <Text style={dtl.actionBtnText}>Message Seller</Text>
@@ -496,6 +513,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
                 <TouchableOpacity
                   style={[dtl.actionBtn, dtl.actionBtnOutline, { borderColor: '#4f46e5' }]}
                   onPress={() => { onClose(); onEdit(item); }}
+                  accessibilityLabel="Edit listing"
+                  accessibilityRole="button"
                 >
                   <Ionicons name="pencil-outline" size={17} color="#818cf8" />
                   <Text style={[dtl.actionBtnText, { color: '#818cf8' }]}>Edit Listing</Text>
@@ -506,6 +525,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
                     style={[dtl.actionBtn, dtl.actionBtnOutline, { borderColor: '#22c55e' }]}
                     onPress={handleMarkSold}
                     disabled={marking}
+                    accessibilityLabel="Mark as sold"
+                    accessibilityRole="button"
                   >
                     {marking
                       ? <ActivityIndicator size="small" color="#22c55e" />
@@ -521,6 +542,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
                   <TouchableOpacity
                     style={[dtl.actionBtn, dtl.actionBtnOutline, { borderColor: '#f59e0b' }]}
                     onPress={() => setShowBoost(true)}
+                    accessibilityLabel="Boost listing"
+                    accessibilityRole="button"
                   >
                     <Ionicons name="rocket-outline" size={17} color="#f59e0b" />
                     <Text style={[dtl.actionBtnText, { color: '#f59e0b' }]}>
@@ -535,6 +558,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
                   style={[dtl.actionBtn, dtl.actionBtnOutline, { borderColor: '#ef4444' }]}
                   onPress={handleDelete}
                   disabled={deleting}
+                  accessibilityLabel="Delete listing"
+                  accessibilityRole="button"
                 >
                   {deleting
                     ? <ActivityIndicator size="small" color="#ef4444" />
@@ -1105,6 +1130,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
         }}>
           <SponsoredAdCard
             ad={item.ad}
+            currentUserId={currentUserId}
             onImpression={(adId) => {
               if (!adImpressionsRef.current.has(adId)) {
                 adImpressionsRef.current.add(adId);
@@ -1200,7 +1226,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
           <Text style={[scr.headerTitle, { color: colors.text }]}>Campus Market</Text>
           <Text style={[scr.headerSub, { color: colors.textMuted }]}>Buy &amp; sell within your campus</Text>
         </View>
-        <TouchableOpacity style={scr.sellBtn} onPress={openSell} activeOpacity={0.85}>
+        <TouchableOpacity style={scr.sellBtn} onPress={openSell} activeOpacity={0.85} accessibilityLabel="Create listing" accessibilityRole="button">
           <Ionicons name="add" size={16} color="#fff" />
           <Text style={scr.sellBtnText}>Sell</Text>
         </TouchableOpacity>
@@ -1215,18 +1241,20 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
         ] as const).map(tab => {
           const active = activeTab === tab.id;
           return (
-            <TouchableOpacity
-              key={tab.id}
-              style={[
-                scr.tabBtn,
-                {
-                  backgroundColor: active ? colors.accent + '18' : 'transparent',
-                  borderColor: active ? colors.accent + '55' : 'transparent',
-                },
-              ]}
-              onPress={() => setActiveTab(tab.id)}
-              activeOpacity={0.7}
-            >
+              <TouchableOpacity
+                key={tab.id}
+                style={[
+                  scr.tabBtn,
+                  {
+                    backgroundColor: active ? colors.accent + '18' : 'transparent',
+                    borderColor: active ? colors.accent + '55' : 'transparent',
+                  },
+                ]}
+                onPress={() => setActiveTab(tab.id)}
+                activeOpacity={0.7}
+                accessibilityLabel={tab.label}
+                accessibilityRole="button"
+              >
               <Ionicons name={tab.icon} size={13} color={active ? colors.accent : colors.textMuted} />
               <Text style={[scr.tabLabel, { color: active ? colors.accent : colors.textMuted, fontWeight: active ? '700' : '500' }]}>
                 {tab.label}
@@ -1258,6 +1286,8 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
                     },
                   ]}
                   onPress={() => setCategory(cat.id)}
+                  accessibilityLabel={`Filter by ${cat.label}`}
+                  accessibilityRole="button"
                 >
                   <Text style={scr.catChipEmoji}>{cat.icon}</Text>
                   <Text style={[scr.catChipLabel, { color: active ? colors.accent : colors.textMuted, fontWeight: active ? '700' : '500' }]}>
@@ -1283,6 +1313,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
             returnKeyType="search"
             autoCapitalize="none"
             autoCorrect={false}
+            accessibilityLabel="Search listings"
           />
           {search.length > 0 && (
             <TouchableOpacity onPress={() => handleSearchChange('')} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
@@ -1470,7 +1501,7 @@ const card = StyleSheet.create({
   img: { width: '100%', aspectRatio: 1 },
   imgPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   soldOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.65)',
     alignItems: 'center', justifyContent: 'center',
   },
@@ -1508,7 +1539,7 @@ const dtl = StyleSheet.create({
   heroWrap: { position: 'relative' },
   heroImg: { width, aspectRatio: 1.2, backgroundColor: '#111' },
   soldOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.65)',
     alignItems: 'center', justifyContent: 'center',
   },
@@ -1581,7 +1612,7 @@ const sell = StyleSheet.create({
   },
   imgPreview: { width: '100%', height: '100%', position: 'absolute' },
   imgOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center', justifyContent: 'center', gap: 6,
   },

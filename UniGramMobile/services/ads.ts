@@ -76,6 +76,18 @@ export async function createAd(data: {
   return row as SponsoredPost;
 }
 
+async function assertAdOwnership(id: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+  const { data: ad, error } = await supabase
+    .from('sponsored_posts')
+    .select('created_by')
+    .eq('id', id)
+    .single();
+  if (error || !ad) throw new Error('Ad not found');
+  if (ad.created_by !== user.id) throw new Error('Unauthorized');
+}
+
 export async function updateAd(id: string, updates: Partial<{
   business_name: string;
   title: string;
@@ -88,6 +100,7 @@ export async function updateAd(id: string, updates: Partial<{
   ends_at: string;
   is_active: boolean;
 }>): Promise<void> {
+  await assertAdOwnership(id);
   const { error } = await supabase
     .from('sponsored_posts')
     .update(updates)
@@ -96,6 +109,7 @@ export async function updateAd(id: string, updates: Partial<{
 }
 
 export async function toggleAd(id: string, isActive: boolean): Promise<void> {
+  await assertAdOwnership(id);
   const { error } = await supabase
     .from('sponsored_posts')
     .update({ is_active: isActive })
@@ -104,6 +118,7 @@ export async function toggleAd(id: string, isActive: boolean): Promise<void> {
 }
 
 export async function deleteAd(id: string): Promise<void> {
+  await assertAdOwnership(id);
   const { error } = await supabase
     .from('sponsored_posts')
     .delete()

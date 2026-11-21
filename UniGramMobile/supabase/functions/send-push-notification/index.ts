@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
 import admin from "npm:firebase-admin@12.2.0";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': 'unigram://',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
@@ -40,6 +40,29 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Authenticate the caller via JWT
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const token = authHeader.slice(7);
+    const { data: { user }, error: authErr } = await supabaseClient.auth.getUser(token);
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const bodyJson = await req.json();
     const { userId, title, body, data, imageUrl, senderAvatarUrl, categoryId, groupId } = bodyJson;
 
@@ -55,11 +78,6 @@ Deno.serve(async (req) => {
       if (!firebaseConfig) throw new Error("FIREBASE_SERVICE_ACCOUNT environment variable is not set");
       admin.initializeApp({ credential: admin.credential.cert(JSON.parse(firebaseConfig)) });
     }
-
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
 
     // Fetch tokens + recipient profile in parallel
     const [tokensResult, recipientResult] = await Promise.all([
@@ -175,7 +193,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error("send-push-notification error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: 'Failed to send notification' }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

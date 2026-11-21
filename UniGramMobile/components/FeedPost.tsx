@@ -4,7 +4,7 @@ import {
   StyleSheet, Dimensions, Modal, FlatList,
   StatusBar, RefreshControl, Animated, Alert, Share,
   TouchableWithoutFeedback, ActivityIndicator, DeviceEventEmitter,
-  TextInput, InteractionManager, AppState,
+  TextInput, AppState,
   Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { 
@@ -61,16 +61,12 @@ import { useSocialFollow, useSocialLike } from '../hooks/useSocialSync';
 import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 import { PopupButton } from '../components/PremiumPopup';
+import { timeAgo as _timeAgo, fmtCount as _fmtCount } from '../lib/formatUtils';
+
+export const timeAgo = _timeAgo;
+export const fmtCount = _fmtCount;
 
 const { width, height: screenHeight } = Dimensions.get('window');
-
-export function timeAgo(ts: string) {
-  const diff = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
-}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -123,12 +119,6 @@ export interface FeedPostProps {
   onPostPress?: (post: Post) => void;
 }
 
-export function fmtCount(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
 // ─── Thread Text Card ─────────────────────────────────────────────────────────
 const ThreadTextCard: React.FC<{ caption?: string | null }> = ({ caption }) => {
   const { colors, isDark } = useTheme();
@@ -149,7 +139,7 @@ const ThreadTextCard: React.FC<{ caption?: string | null }> = ({ caption }) => {
         <Text style={styles.threadQuoteMark}>"</Text>
         <Text style={[styles.threadCardText, { color: colors.text }]}>{displayText}</Text>
         {isLong && (
-          <Text style={styles.threadCardMore}>{expanded ? ' less' : '...more'}</Text>
+          <Text style={[styles.threadCardMore, { color: colors.accent }]}>{expanded ? ' less' : '...more'}</Text>
         )}
       </LinearGradient>
     </TouchableOpacity>
@@ -868,6 +858,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const [showShare, setShowShare] = useState(false);
   const [showRepostSheet, setShowRepostSheet] = useState(false);
   const [showLikers, setShowLikers] = useState(false);
+  const [postCaptionExpanded, setPostCaptionExpanded] = useState(false);
   // If a post has >= 5 pending reports it's soft-hidden; user can reveal it
   const [showFlagged, setShowFlagged] = useState(false);
   // Initialize directly from parent-passed props — no per-post server round-trip
@@ -971,10 +962,6 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     }
   }, [post.song]);
 
-  useEffect(() => {
-    if (currentUserId && post.id) recordImpression(post.id, currentUserId).catch(() => {});
-  }, [post.id, currentUserId]);
-
   // Fetch AI context — reads caption text and, for image posts, the actual image via vision model
   useEffect(() => {
     if (post.type === 'repost') return; // reposts have no original content to analyze
@@ -1059,8 +1046,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     if (next) await medium();
     else await selection();
     try {
-      if (next) await likePost(post.id, currentUserId);
-      else await unlikePost(post.id, currentUserId);
+      if (next) {
+        await likePost(post.id, currentUserId);
+        enqueueInteraction({ user_id: currentUserId, post_id: post.id, type: 'like' });
+      } else {
+        await unlikePost(post.id, currentUserId);
+      }
     } catch (e: any) {
       const isSchemaError = e.message?.includes('relation') || 
                           e.message?.includes('not found') || 
@@ -1079,8 +1070,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     setSaved(next);
     if (next) await success(); else await selection();
     try {
-      if (next) await savePost(post.id, currentUserId);
-      else await unsavePost(post.id, currentUserId);
+      if (next) {
+        await savePost(post.id, currentUserId);
+        enqueueInteraction({ user_id: currentUserId, post_id: post.id, type: 'save' });
+      } else {
+        await unsavePost(post.id, currentUserId);
+      }
     } catch (e: any) {
       const isSchemaError = e.message?.includes('relation') || 
                           e.message?.includes('not found') || 
@@ -1288,13 +1283,11 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             accessibilityRole="button"
             accessibilityLabel={`Open ${profile?.username ?? 'user'} profile`}
           >
-            <View style={styles.avatarRing}>
-              {profile?.avatar_url
-                ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
-                : <View style={[styles.postAvatar, { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' }]}>
-                    <Ionicons name="person" size={18} color="#555" />
-                  </View>}
-            </View>
+            {profile?.avatar_url
+              ? <CachedImage uri={profile.avatar_url} style={styles.postAvatar} />
+              : <View style={[styles.postAvatar, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="person" size={18} color={colors.textMuted} />
+                </View>}
           </TouchableOpacity>
           <View style={{ marginLeft: 10, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -1315,6 +1308,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
                   <VerifiedBadge type={profile.verification_type as any} />
                 </TouchableOpacity>
               )}
+              <Text style={[styles.postTimeInline, { color: colors.textMuted }]}>· {timeAgo(post.created_at)}</Text>
             </View>
             <PostMetaCycler 
               location={post.location ?? undefined} 
@@ -1332,11 +1326,19 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
                 buttons: [{ text: 'OK', onPress: () => {} }]
               })}
             />
-            <Text style={[styles.postMeta, { color: colors.textSub }]}>{profile?.major ? `${profile.major} · ` : ''}{timeAgo(post.created_at)}</Text>
+            {!post.location && !post.song && profile?.major ? (
+              <Text style={[styles.postMeta, { color: colors.textMuted }]} numberOfLines={1}>{profile.major}</Text>
+            ) : null}
           </View>
         </View>
-        <TouchableOpacity style={{ padding: 4 }} onPress={() => setShowOptions(true)}>
-          <Ionicons name="ellipsis-horizontal" size={20} color={colors.textMuted} />
+        <TouchableOpacity
+          style={{ padding: 8 }}
+          onPress={() => setShowOptions(true)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Post options"
+        >
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
 
@@ -1468,39 +1470,58 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
       {/* [Abena Owusu - Frontend] Added accessibilityLabel + accessibilityRole to all action buttons */}
       <View style={[styles.postActions, { backgroundColor: colors.background }]}>
-        <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
-          <TouchableOpacity
-            onPress={() => doLike()}
-            style={styles.actionBtn}
-            accessibilityLabel={liked ? 'Unlike post' : 'Like post'}
-            accessibilityRole="button"
-          >
-            <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#ef4444' : colors.text} />
-            </Animated.View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            accessibilityLabel="Comment on post"
-            accessibilityRole="button"
-            onPress={() => {
-              selection();
-              onOpenComments?.(post.id, post.user_id);
-            }}
-          >
-            <Ionicons name="chatbubble-outline" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            accessibilityLabel={reposted ? 'Undo repost' : 'Repost'}
-            accessibilityRole="button"
-            onPress={() => {
-              selection();
-              setShowRepostSheet(true);
-            }}
-          >
-            <Ionicons name="repeat" size={25} color={reposted ? '#22c55e' : colors.text} />
-          </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.actionGroup}>
+            <TouchableOpacity
+              onPress={() => doLike()}
+              style={styles.actionBtn}
+              accessibilityLabel={liked ? 'Unlike post' : 'Like post'}
+              accessibilityRole="button"
+            >
+              <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+                <Ionicons name={liked ? 'heart' : 'heart-outline'} size={27} color={liked ? '#ff3040' : colors.text} />
+              </Animated.View>
+            </TouchableOpacity>
+            {likes > 0 && (
+              <TouchableOpacity onPress={() => setShowLikers(true)} hitSlop={6} activeOpacity={0.7}>
+                <Text style={[styles.actionCount, { color: colors.text }]}>{fmtCount(likes)}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.actionGroup}>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              accessibilityLabel="Comment on post"
+              accessibilityRole="button"
+              onPress={() => {
+                selection();
+                onOpenComments?.(post.id, post.user_id);
+              }}
+            >
+              <Ionicons name="chatbubble-outline" size={24} color={colors.text} style={{ transform: [{ scaleX: -1 }] }} />
+            </TouchableOpacity>
+            {commentCount > 0 && (
+              <TouchableOpacity onPress={() => onOpenComments?.(post.id, post.user_id)} hitSlop={6} activeOpacity={0.7}>
+                <Text style={[styles.actionCount, { color: colors.text }]}>{fmtCount(commentCount)}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.actionGroup}>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              accessibilityLabel={reposted ? 'Undo repost' : 'Repost'}
+              accessibilityRole="button"
+              onPress={() => {
+                selection();
+                setShowRepostSheet(true);
+              }}
+            >
+              <Ionicons name="repeat" size={26} color={reposted ? '#22c55e' : colors.text} />
+            </TouchableOpacity>
+            {repostCount > 0 && (
+              <Text style={[styles.actionCount, { color: reposted ? '#22c55e' : colors.text }]}>{fmtCount(repostCount)}</Text>
+            )}
+          </View>
           <TouchableOpacity
             style={styles.actionBtn}
             accessibilityLabel="Share post"
@@ -1509,9 +1530,10 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               selection();
               setShowShare(true);
               try { await recordShare(post.id, post.user_id, currentUserId); } catch {}
+              enqueueInteraction({ user_id: currentUserId, post_id: post.id, type: 'share' });
             }}
           >
-            <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
+            <Ionicons name="paper-plane-outline" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
         <TouchableOpacity
@@ -1520,7 +1542,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
           accessibilityLabel={saved ? 'Unsave post' : 'Save post'}
           accessibilityRole="button"
         >
-          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? '#fbbf24' : colors.text} />
+          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={25} color={colors.text} />
         </TouchableOpacity>
       </View>
 
@@ -1532,30 +1554,27 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       )}
 
       <View style={styles.postInfo}>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 3, flexWrap: 'wrap' }}>
-          {likes > 0 && (
-            <TouchableOpacity onPress={() => setShowLikers(true)} activeOpacity={0.7}>
-              <Text style={[styles.likesText, { color: colors.text }]}>{fmtCount(likes)} likes</Text>
-            </TouchableOpacity>
-          )}
-          {commentCount > 0 && (
-            <TouchableOpacity onPress={() => onOpenComments?.(post.id, post.user_id)}>
-              <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>{fmtCount(commentCount)} comments</Text>
-            </TouchableOpacity>
-          )}
-          {repostCount > 0 && (
-            <Text style={[styles.likesText, { color: colors.textSub, fontWeight: '400' }]}>
-              {fmtCount(repostCount)} reposts
-            </Text>
-          )}
-        </View>
         {post.caption && post.type !== 'thread' ? (
-          <Text style={[styles.captionText, { color: colors.text }]} numberOfLines={3}>
+          <Text
+            style={[styles.captionText, { color: colors.text }]}
+            numberOfLines={postCaptionExpanded ? undefined : 2}
+          >
             <Text style={[styles.postUsername, { color: colors.text }]} onPress={() => onUserPress?.(profile)}>{profile?.username ?? 'user'} </Text>
             {post.caption}
           </Text>
         ) : null}
-        <Text style={[styles.timeText, { color: colors.textMuted }]}>{timeAgo(post.created_at)}</Text>
+        {post.caption && !postCaptionExpanded && post.caption.length > 90 ? (
+          <TouchableOpacity onPress={() => setPostCaptionExpanded(true)} hitSlop={6}>
+            <Text style={[styles.moreText, { color: colors.textMuted }]}>more</Text>
+          </TouchableOpacity>
+        ) : null}
+        {commentCount > 0 ? (
+          <TouchableOpacity onPress={() => onOpenComments?.(post.id, post.user_id)} hitSlop={6}>
+            <Text style={[styles.viewComments, { color: colors.textMuted }]}>
+              {commentCount === 1 ? 'View 1 comment' : `View all ${fmtCount(commentCount)} comments`}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ShareSheet
@@ -1588,27 +1607,28 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
 
 
 const styles = StyleSheet.create({
-  postCard: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.1)', marginBottom: 0, overflow: 'hidden' },
+  postCard: { marginBottom: 6, overflow: 'hidden' },
   postHeader: { 
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
-    paddingHorizontal: 12, height: 60, backgroundColor: 'transparent' 
+    paddingHorizontal: 12, height: 56, backgroundColor: 'transparent' 
   },
   postUserRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   avatarRing: { 
     width: 38, height: 38, borderRadius: 19, padding: 1.5, 
     backgroundColor: '#ff6b35', overflow: 'hidden' 
   },
-  postAvatar: { width: 35, height: 35, borderRadius: 17.5 },
+  postAvatar: { width: 34, height: 34, borderRadius: 17 },
+  postTimeInline: { fontSize: 12.5, fontWeight: '400', marginLeft: 1 },
   postUsername: { fontSize: 13.5, fontWeight: '700', color: '#fff', letterSpacing: -0.1 },
   postMeta: { fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 0.5 },
   postMedia: { height: 400, backgroundColor: '#111' },
   videoPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.15)',
   },
   heartOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center', justifyContent: 'center',
     zIndex: 50,
   },
@@ -1631,9 +1651,13 @@ const styles = StyleSheet.create({
     padding: 16, borderRadius: 12, borderWidth: 1,
     flexDirection: 'row', alignItems: 'center',
   },
-  postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 8 },
-  actionBtn: { padding: 4 },
-  postInfo: { paddingHorizontal: 14, paddingBottom: 16 },
+  postActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 6, paddingTop: 4, paddingBottom: 2 },
+  actionGroup: { flexDirection: 'row', alignItems: 'center' },
+  actionBtn: { padding: 8, minWidth: 40, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  actionCount: { fontSize: 13, fontWeight: '600', marginLeft: -4, marginRight: 8 },
+  moreText: { fontSize: 13.5, marginTop: -2, marginBottom: 2 },
+  viewComments: { fontSize: 13.5, marginTop: 4 },
+  postInfo: { paddingHorizontal: 14, paddingBottom: 14 },
   likesText: { fontSize: 13, fontWeight: '700' },
   captionText: { fontSize: 13.5, lineHeight: 19, marginBottom: 4, marginTop: 3 },
   timeText: { fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5, marginTop: 6 },
@@ -1651,8 +1675,8 @@ const styles = StyleSheet.create({
   dotActive: { backgroundColor: '#fff', width: 12 },
   muteOverlayBtn: {
     position: 'absolute', bottom: 12, right: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)', width: 26, height: 26,
-    borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)', width: 44, height: 44,
+    borderRadius: 22, alignItems: 'center', justifyContent: 'center',
     zIndex: 10,
   },
 });

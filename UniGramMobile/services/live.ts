@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { cleanUserText } from '../lib/contentSafety';
 
 const activeReactionChannels = new Map<string, ReturnType<typeof supabase.channel>>();
 
@@ -48,9 +49,10 @@ export const LiveService = {
 
   // Post a live comment
   async sendComment(sessionId: string, userId: string, text: string): Promise<void> {
+    const sanitized = cleanUserText(text, 'comment');
     const { error } = await supabase
       .from('live_comments')
-      .insert([{ session_id: sessionId, user_id: userId, text }]);
+      .insert([{ session_id: sessionId, user_id: userId, text: sanitized }]);
 
     if (error) throw error;
   },

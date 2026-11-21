@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
+import { withSimulatedPro, isSimulatedProActive, setSimulatedAutoRenew } from './simulatedPro';
 
 export const PRO_PRICE_GHS = 20;
 export const PRO_DURATION_DAYS = 30;
@@ -64,10 +65,12 @@ async function callEdgeFunction(name: string, body: object) {
 export function isProActive(
   profile: { is_pro?: boolean; pro_expires_at?: string | null; pro_disabled?: boolean } | null,
 ): boolean {
-  if (!profile?.is_pro) return false;
-  if (profile.pro_disabled) return false;
-  if (!profile.pro_expires_at) return true;
-  return new Date(profile.pro_expires_at).getTime() > Date.now();
+  // Overlay the local simulated subscription (no-op once a real one is active).
+  const p = withSimulatedPro(profile);
+  if (!p?.is_pro) return false;
+  if (p.pro_disabled) return false;
+  if (!p.pro_expires_at) return true;
+  return new Date(p.pro_expires_at).getTime() > Date.now();
 }
 
 // True when the user has paid for Pro and the period is still running,
@@ -76,9 +79,10 @@ export function isProActive(
 export function isProPeriodActive(
   profile: { is_pro?: boolean; pro_expires_at?: string | null } | null,
 ): boolean {
-  if (!profile?.is_pro) return false;
-  if (!profile.pro_expires_at) return true;
-  return new Date(profile.pro_expires_at).getTime() > Date.now();
+  const p = withSimulatedPro(profile);
+  if (!p?.is_pro) return false;
+  if (!p.pro_expires_at) return true;
+  return new Date(p.pro_expires_at).getTime() > Date.now();
 }
 
 export async function setProDisabled(disabled: boolean): Promise<void> {
@@ -92,6 +96,8 @@ export async function setProDisabled(disabled: boolean): Promise<void> {
 }
 
 export async function setProAutoRenew(enabled: boolean): Promise<void> {
+  // Simulated subscription lives on-device only.
+  if (isSimulatedProActive()) { await setSimulatedAutoRenew(enabled); return; }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const { error } = await supabase

@@ -145,7 +145,7 @@ export const PostOptionsSheet: React.FC<PostOptionsSheetProps> = React.memo(({
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
