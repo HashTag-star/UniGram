@@ -17,6 +17,88 @@ export const CORS = getCorsHeaders(null)
 export const GROQ_MODEL_FAST = 'llama-3.1-8b-instant'
 export const GROQ_MODEL_SMART = 'llama-3.3-70b-versatile'
 
+// ─── NVIDIA NIM (primary provider) ─────────────────────────────────────────────
+// OpenAI-compatible endpoint. The API key is an Edge Function secret
+// (NVIDIA_API_KEY); which MODEL serves each tier is chosen by an admin in the app
+// and stored in public.ai_settings (migration 060).
+export type AiTier = 'fast' | 'smart' | 'vision'
+
+export const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1/chat/completions'
+export const NVIDIA_DEFAULTS: Record<AiTier, string> = {
+  fast: 'meta/llama-3.1-8b-instruct',
+  smart: 'meta/llama-3.3-70b-instruct',
+  vision: 'meta/llama-3.2-11b-vision-instruct',
+}
+
+/** Existing call sites pass Groq model names; map them onto a tier. */
+export function tierFor(modelOverride?: string, hasTools = false): AiTier {
+  const m = (modelOverride ?? '').toLowerCase()
+  if (m.includes('vision')) return 'vision'
+  if (hasTools || m.includes('70b') || m.includes('versatile')) return 'smart'
+  return 'fast'
+}
+
+interface AiSettings { provider: string; models: Record<AiTier, string> }
+let settingsCache: { at: number; value: AiSettings } | null = null
+
+let keyCache: { at: number; value: string | null } | null = null
+
+/**
+ * NVIDIA API key: the NVIDIA_API_KEY edge secret wins; otherwise the key an admin
+ * saved from the app (public.ai_secrets, readable only with the service role).
+ */
+export async function getNvidiaKey(): Promise<string | null> {
+  const envKey = Deno.env.get('NVIDIA_API_KEY')
+  if (envKey) return envKey
+  if (keyCache && Date.now() - keyCache.at < 60_000) return keyCache.value
+  let value: string | null = null
+  try {
+    const url = Deno.env.get('SUPABASE_URL')
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (url && key) {
+      const resp = await fetch(`${url}/rest/v1/ai_secrets?select=value&key=eq.nvidia_api_key`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      })
+      if (resp.ok) {
+        const rows: Array<{ value: string }> = await resp.json()
+        value = rows[0]?.value ?? null
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[AI-Chain] could not load NVIDIA key: ${e.message}`)
+  }
+  keyCache = { at: Date.now(), value }
+  return value
+}
+
+/** Reads the admin's model choices (60s cache). Never throws — falls back to defaults. */
+export async function loadAiSettings(): Promise<AiSettings> {
+  if (settingsCache && Date.now() - settingsCache.at < 60_000) return settingsCache.value
+  const value: AiSettings = { provider: 'nvidia', models: { ...NVIDIA_DEFAULTS } }
+  try {
+    const url = Deno.env.get('SUPABASE_URL')
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (url && key) {
+      const resp = await fetch(`${url}/rest/v1/ai_settings?select=key,value`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      })
+      if (resp.ok) {
+        const rows: Array<{ key: string; value: string }> = await resp.json()
+        for (const r of rows) {
+          if (r.key === 'ai_provider') value.provider = r.value
+          if (r.key === 'ai_model_fast' && r.value) value.models.fast = r.value
+          if (r.key === 'ai_model_smart' && r.value) value.models.smart = r.value
+          if (r.key === 'ai_model_vision' && r.value) value.models.vision = r.value
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[AI-Chain] could not load ai_settings: ${e.message}`)
+  }
+  settingsCache = { at: Date.now(), value }
+  return value
+}
+
 /**
  * Standardizes error reporting. Hides raw system exceptions from the user
  * but logs full details to the edge function server logs.
@@ -89,18 +171,58 @@ export async function callAiMessageWithFallback(opts: {
   maxTokens?: number
   modelOverride?: string
   tools?: any[] | null
+  /** Admin "test model" button: use exactly this NVIDIA model, no fallbacks. */
+  forceNvidiaModel?: string
 }): Promise<AiMessage> {
   const {
     messages,
     temperature = 0.7,
     maxTokens = 1024,
     modelOverride,
-    tools = null
+    tools = null,
+    forceNvidiaModel,
   } = opts
 
   const startTime = Date.now()
 
-  // 1. Attempt Primary: Groq
+  // 0. Primary: NVIDIA NIM, with the model the admin picked for this tier
+  const nvidiaKey = await getNvidiaKey()
+  if (nvidiaKey) {
+    const settings = await loadAiSettings()
+    if (forceNvidiaModel || settings.provider !== 'off') {
+      const tier = tierFor(modelOverride, !!(tools && tools.length > 0))
+      const model = forceNvidiaModel || settings.models[tier]
+      try {
+        console.log(`[AI-Chain] Attempting NVIDIA (${model}, tier=${tier})`)
+        const body: any = { model, messages, temperature, max_tokens: maxTokens }
+        if (tools && tools.length > 0) body.tools = tools
+        const resp = await fetch(NVIDIA_BASE_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${nvidiaKey}`, Accept: 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (resp.ok) {
+          const data = await resp.json()
+          const message = data.choices?.[0]?.message
+          if (message) {
+            console.log(`[AI-Chain] NVIDIA success in ${Date.now() - startTime}ms`)
+            return message
+          }
+        } else {
+          const errText = await resp.text()
+          console.warn(`[AI-Chain] NVIDIA HTTP error ${resp.status}: ${errText.slice(0, 200)}`)
+          if (forceNvidiaModel) throw new Error(`NVIDIA ${resp.status}: ${errText.slice(0, 160)}`)
+        }
+      } catch (e: any) {
+        console.warn(`[AI-Chain] NVIDIA exception: ${e.message}`)
+        if (forceNvidiaModel) throw e
+      }
+    }
+  } else if (forceNvidiaModel) {
+    throw new Error('No NVIDIA API key set. Add it in Admin → AI Models.')
+  }
+
+  // 1. Fallback: Groq
   const groqKey = Deno.env.get('GROQ_API_KEY')
   if (groqKey) {
     const model = modelOverride || GROQ_MODEL_SMART
@@ -294,6 +416,7 @@ export async function callAiWithFallback(opts: {
   temperature?: number
   maxTokens?: number
   modelOverride?: string
+  forceNvidiaModel?: string
 }): Promise<string> {
   const message = await callAiMessageWithFallback(opts)
   return message.content || ''

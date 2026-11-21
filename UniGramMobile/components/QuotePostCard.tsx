@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
@@ -12,11 +12,17 @@ interface QuotePostCardProps {
 
 export const QuotePostCard: React.FC<QuotePostCardProps> = React.memo(({ post, onPress }) => {
   const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
   if (!post) return null;
 
   const profile = post.profiles;
   const thumb = post.media_urls?.[0] || post.media_url;
   const isThread = post.type === 'thread' || (!thumb && !post.caption);
+  const isVideo = post.type === 'video';
+  const caption: string = post.caption ?? '';
+  // Show a generous 12 lines by default; longer posts expand inline in place.
+  const LONG = caption.length > 420 || caption.split('\n').length > 12;
+  const ratio = Math.min(1.5, Math.max(0.8, Number(post.aspect_ratio) || 1.2));
 
   return (
     <TouchableOpacity
@@ -52,12 +58,23 @@ export const QuotePostCard: React.FC<QuotePostCardProps> = React.memo(({ post, o
       {/* Content */}
       <View style={styles.body}>
         {post.caption ? (
-          <Text style={[styles.caption, { color: colors.text }]} numberOfLines={4}>
-            {post.caption}
-          </Text>
+          <>
+            <Text style={[styles.caption, { color: colors.text }]} numberOfLines={expanded ? undefined : 12}>
+              {caption}
+            </Text>
+            {LONG && !expanded ? (
+              <TouchableOpacity onPress={() => setExpanded(true)} hitSlop={8}>
+                <Text style={[styles.more, { color: colors.accent }]}>Show more</Text>
+              </TouchableOpacity>
+            ) : null}
+          </>
         ) : null}
-        {thumb ? (
-          <CachedImage uri={thumb} style={styles.thumb} resizeMode="cover" recyclingKey={`qpc-${post.id}`} />
+        {thumb && !isVideo ? (
+          <CachedImage uri={thumb} style={[styles.thumb, { height: undefined, aspectRatio: ratio, maxHeight: 340 }]} resizeMode="cover" recyclingKey={`qpc-${post.id}`} />
+        ) : isVideo ? (
+          <View style={[styles.thumb, { height: 200, backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="play-circle" size={44} color="rgba(255,255,255,0.7)" />
+          </View>
         ) : !post.caption ? (
           <Text style={[styles.empty, { color: colors.textMuted }]}>View original post</Text>
         ) : null}
@@ -117,6 +134,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  more: { fontSize: 13.5, fontWeight: '700', marginTop: -2 },
   thumb: {
     width: '100%',
     height: 160,

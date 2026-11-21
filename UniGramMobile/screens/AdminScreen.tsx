@@ -13,6 +13,7 @@ import { AdminReport, getReports, updateReportStatus, banUser as banUserAction, 
 import { sendAdminNotification } from '../services/notifications';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
+import { AIModelsTab } from '../components/admin/AIModelsTab';
 import { getAllAds, createAd, toggleAd, deleteAd, type SponsoredPost } from '../services/ads';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ interface AdminMarketItem {
   profiles: { username: string } | null;
 }
 
-type AdminTab = 'overview' | 'agent' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce' | 'ads';
+type AdminTab = 'overview' | 'agent' | 'users' | 'posts' | 'market' | 'reports' | 'verifications' | 'announce' | 'ads' | 'aimodels';
 type PostFilter = 'all' | 'flagged';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -147,6 +148,7 @@ interface Message {
 }
 
 const AgentTab: React.FC = () => {
+  const { colors } = useTheme();
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: "Hello! I'm your UniGram Admin Agent. I can help you manage users, reports, and content. You can give me commands like 'Ban @user' or ask me for a platform health check." }
   ]);
@@ -407,6 +409,7 @@ const OverviewTab: React.FC<{
   onRefresh: () => void;
   setActiveTab: (tab: AdminTab) => void;
 }> = ({ stats, loading, onRefresh, setActiveTab }) => {
+  const { colors } = useTheme();
   const [recentPosts, setRecentPosts] = useState<AdminPost[]>([]);
   const [recentMarket, setRecentMarket] = useState<AdminMarketItem[]>([]);
   const [pendingVerifs, setPendingVerifs] = useState<AdminVerificationRequest[]>([]);
@@ -1973,6 +1976,7 @@ const annoStyles = StyleSheet.create({
 // ─── Ads Tab ─────────────────────────────────────────────────────────────────
 
 const AdsTab: React.FC = () => {
+  const { colors } = useTheme();
   const [ads, setAds] = useState<SponsoredPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2360,6 +2364,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
     { key: 'reports', label: 'Reports', icon: 'flag' },
     { key: 'announce', label: 'Announce', icon: 'megaphone' },
     { key: 'ads', label: 'Ads', icon: 'megaphone-outline' },
+    { key: 'aimodels', label: 'AI Models', icon: 'hardware-chip' },
   ];
 
   return (
@@ -2415,6 +2420,7 @@ export const AdminScreen: React.FC<Props> = ({ onBack, adminId }) => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'announce' && <AnnouncementsTab adminId={adminId} />}
         {activeTab === 'ads' && <AdsTab />}
+        {activeTab === 'aimodels' && <AIModelsTab adminId={adminId} />}
       </View>
     </View>
   );
