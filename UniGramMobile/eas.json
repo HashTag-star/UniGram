@@ -26,7 +26,9 @@
       },
       "env": {
         "EXPO_PUBLIC_ENV": "preview",
-        "EXPO_PUBLIC_SUPABASE_URL": "https://rcvzcbfmstgwzrolnhvy.supabase.co"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://rcvzcbfmstgwzrolnhvy.supabase.co",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_ALLOW_FAILURE": "true"
       },
       "channel": "preview"
     },
