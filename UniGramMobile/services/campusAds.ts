@@ -118,26 +118,12 @@ export async function createCampaignDraft(
     end_date:   ad.end_date   ?? defaultEnd.toISOString(),
   };
 
-  // Derive cost per impression and click from bid fields if bid_amount is provided
-  if (ad.bid_amount !== undefined && ad.bid_amount !== null && ad.bid_amount > 0) {
-    if (ad.bid_type === 'CPM') {
-      payload.cost_per_impression_pesewas = ad.bid_amount;
-      // For CPM, we typically don't charge per click; set to 0 to avoid double charging
-      payload.cost_per_click_pesewas = 0;
-    } else if (ad.bid_type === 'CPC') {
-      payload.cost_per_click_pesewas = ad.bid_amount;
-      // For CPC, we typically don't charge per impression; set to 0
-      payload.cost_per_impression_pesewas = 0;
-    } else if (ad.bid_type === 'CPA') {
-      // For CPA, we charge per conversion, not per impression or click
-      payload.cost_per_impression_pesewas = 0;
-      payload.cost_per_click_pesewas = 0;
-    }
-    // Note: If the ad already had explicit cost_per_* fields, they are overridden by bid-derived values.
-    // This ensures the charging logic uses the bid-based costs.
+  // bid_amount is in pesewas: CPM = per 1000 impressions, CPC = per click.
+  // The database enforces floor prices (ad_pricing) and does the real billing.
+  if (ad.bid_amount && ad.bid_amount > 0) {
+    if (ad.bid_type === 'CPC') payload.cost_per_click_pesewas = ad.bid_amount;
+    else payload.cpm_pesewas = ad.bid_amount;
   }
-  // If bid_amount is not provided or zero, we keep the existing cost_per_* fields (they may be undefined,
-  // but the database has default values from migrations).
 
   const { data, error } = await supabase
     .from('campus_ads')
@@ -578,10 +564,12 @@ export async function getAdCreditLedger(limit = 25): Promise<any[]> {
 export async function consumeAdCredit(
   campaignId: string,
   maxPesewas: number,
+  durationDays: number = 7,
 ): Promise<number> {
   const { data, error } = await supabase.rpc('consume_ad_credit', {
     p_campaign_id: campaignId,
     p_max_pesewas: maxPesewas,
+    p_duration_days: durationDays,
   });
   if (error) throw error;
   return Number(data ?? 0);

@@ -489,33 +489,23 @@ const CreateCampaignSheet: React.FC<{
       // entirely and the campaign goes live immediately.
       const budgetPesewas = budget * 100;
       let consumedPesewas = 0;
-      try { consumedPesewas = await consumeAdCredit(draft.id, budgetPesewas); } catch { consumedPesewas = 0; }
+      try { consumedPesewas = await consumeAdCredit(draft.id, budgetPesewas, duration); } catch { consumedPesewas = 0; }
       const remainingPesewas = Math.max(0, budgetPesewas - consumedPesewas);
       const remainingGhs     = Math.ceil(remainingPesewas / 100);
 
-      const now     = new Date().toISOString().split('T')[0];
-      const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
       if (remainingGhs === 0) {
-        // Credit covered the whole campaign — activate without Paystack
-        await supabase
-          .from('campus_ads')
-          .update({ status: 'pending', start_date: now, end_date: endDate })
-          .eq('id', draft.id);
-        showToast(`Campaign submitted for review. GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
+        // Credit covered the whole campaign — the database activates it (fully funded).
+        showToast(`Campaign is live. GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
       } else {
         // Charge only the uncovered remainder via Paystack
         const { authorization_url, reference } = await initAdPayment(draft.id, remainingGhs, duration);
         await setPaymentRef(draft.id, reference);
         const success = await openAdCheckout(authorization_url, reference);
         if (success) {
-          await supabase
-            .from('campus_ads')
-          .update({ status: 'pending', start_date: now, end_date: endDate })
-            .eq('id', draft.id);
+          // The server (paystack-verify / webhook) has funded and activated the campaign.
           const msg = consumedPesewas > 0
-            ? `Payment confirmed. Campaign submitted for review; GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`
-            : 'Payment confirmed. Campaign submitted for review.';
+            ? `Payment confirmed. Your campaign is live; GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`
+            : 'Payment confirmed. Your campaign is live.';
           showToast(msg, 'success');
         } else {
           showToast('Campaign saved. Complete payment to go live.', 'info');

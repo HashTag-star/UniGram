@@ -33,12 +33,15 @@ async function applyBoost(supabase: any, payment: any) {
 async function applyAdPayment(supabase: any, payment: any) {
   if (payment.product_type !== 'ad_payment' || !payment.product_id) return;
   const durationDays: number = payment.metadata?.duration_days ?? 7;
-  const startDate = new Date().toISOString();
-  const endDate   = new Date(Date.now() + durationDays * 86_400_000).toISOString();
-  await supabase
-    .from('campus_ads')
-    .update({ status: 'active', start_date: startDate, end_date: endDate })
-    .eq('id', payment.product_id);
+  // Money goes ON the campaign (idempotent per payment reference). The DB flips the
+  // campaign live only once it is fully funded (migration 062).
+  const { error } = await supabase.rpc('fund_campus_ad', {
+    p_campaign_id: payment.product_id,
+    p_reference: payment.reference,
+    p_pesewas: payment.amount,
+    p_days: durationDays,
+  });
+  if (error) throw new Error(`fund_campus_ad failed: ${error.message}`);
 }
 
 Deno.serve(async (req) => {
