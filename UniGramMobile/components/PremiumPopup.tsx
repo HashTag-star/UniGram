@@ -6,6 +6,7 @@ import {
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import { fx } from '../lib/feedback';
 
 const { width } = Dimensions.get('window');
 
@@ -119,6 +120,7 @@ export const PremiumPopup: React.FC<PremiumPopupProps> = ({
                   accessibilityRole="button"
                   accessibilityLabel={btn.text}
                   onPress={() => {
+                    if (isDestructive) fx.warning(); else fx.tap();
                     btn.onPress();
                     onClose();
                   }}

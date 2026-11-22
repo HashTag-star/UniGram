@@ -1,66 +1,23 @@
-import { useCallback, useMemo } from 'react';
-import { Platform } from 'react-native';
+import { useMemo } from 'react';
+import { fx } from '../lib/feedback';
 
-let Haptics: any = null;
-
-async function loadHaptics() {
-  if (!Haptics) {
-    try {
-      Haptics = await import('expo-haptics');
-    } catch {
-      // Haptics not available (web/emulator)
-    }
-  }
-  return Haptics;
-}
+/**
+ * Haptic feedback hook. Kept for the ~25 existing call sites; it now routes through
+ * lib/feedback so the Settings "Haptics" switch applies everywhere, and the
+ * previously mislabelled intensities are corrected:
+ *   light = subtle tap, medium = confirm, heavy = emphasis.
+ */
+const haptics = {
+  light: () => { fx.tick(); },
+  medium: () => { fx.press(); },
+  heavy: () => { fx.heavy(); },
+  success: () => { fx.success(); },
+  error: () => { fx.error(); },
+  warning: () => { fx.warning(); },
+  selection: () => { fx.select(); },
+};
 
 export function useHaptics() {
-  const light = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Medium); } catch {}
-  }, []);
-
-  const medium = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Heavy); } catch {}
-  }, []);
-
-  const heavy = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.notificationAsync(h.NotificationFeedbackType.Success); } catch {}
-  }, []);
-
-  const success = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.notificationAsync(h.NotificationFeedbackType.Success); } catch {}
-  }, []);
-
-  const error = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.notificationAsync(h.NotificationFeedbackType.Error); } catch {}
-  }, []);
-
-  const warning = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.notificationAsync(h.NotificationFeedbackType.Warning); } catch {}
-  }, []);
-
-  const selection = useCallback(async () => {
-    const h = await loadHaptics();
-    if (!h) return;
-    try { await h.impactAsync(h.ImpactFeedbackStyle.Light); } catch {}
-  }, []);
-
-  // Stable object identity — every call to useHaptics returning a new literal
-  // would re-fire useEffects keyed on `haptics` (App.tsx's startup effect did).
-  return useMemo(
-    () => ({ light, medium, heavy, success, error, warning, selection }),
-    [light, medium, heavy, success, error, warning, selection]
-  );
+  // Stable identity: callers put this object in effect deps.
+  return useMemo(() => haptics, []);
 }

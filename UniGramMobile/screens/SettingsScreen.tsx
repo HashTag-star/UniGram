@@ -16,6 +16,7 @@ import { isProActive, isProPeriodActive, setProDisabled, setProAutoRenew } from 
 import { withSimulatedPro } from '../services/simulatedPro';
 import { usePaywall } from '../context/PaywallContext';
 import { getAdPolicy } from '../services/adDelivery';
+import { feedbackPrefs, fx } from '../lib/feedback';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -503,6 +504,10 @@ export const SettingsScreen: React.FC<Props> = ({
     AsyncStorage.setItem(NOTIF_STORAGE_KEY, String(val)).catch(() => {});
   };
 
+  const [sfxOn, setSfxOn] = useState(feedbackPrefs.isSfxOn());
+  const [hapticsOn, setHapticsOn] = useState(feedbackPrefs.isHapticsOn());
+  useEffect(() => feedbackPrefs.subscribe(() => { setSfxOn(feedbackPrefs.isSfxOn()); setHapticsOn(feedbackPrefs.isHapticsOn()); }), []);
+
   // Subscribing to the paywall context re-renders this screen when a (simulated)
   // purchase or cancellation changes the entitlement.
   const { openPaywall } = usePaywall();
@@ -874,6 +879,38 @@ export const SettingsScreen: React.FC<Props> = ({
                 </>
               );
             })()}
+          </Section>
+
+          <Section title="Sounds & haptics">
+            <Row
+              icon="volume-high"
+              iconColor="#0ea5e9"
+              label="Sound effects"
+              sublabel="Soft sounds for likes, sends and notifications"
+              right={
+                <Switch
+                  value={sfxOn}
+                  onValueChange={(v) => { feedbackPrefs.setSfx(v); if (v) setTimeout(() => fx.soundOnly('pop'), 60); }}
+                  trackColor={{ false: '#333', true: colors.accent }}
+                  thumbColor="#fff"
+                />
+              }
+            />
+            <Row
+              icon="phone-portrait"
+              iconColor="#8b5cf6"
+              label="Haptic feedback"
+              sublabel="Subtle vibrations as you tap and swipe"
+              right={
+                <Switch
+                  value={hapticsOn}
+                  onValueChange={(v) => { feedbackPrefs.setHaptics(v); if (v) setTimeout(() => fx.like(), 60); }}
+                  trackColor={{ false: '#333', true: colors.accent }}
+                  thumbColor="#fff"
+                />
+              }
+              noBorder
+            />
           </Section>
 
           <Section title="Preferences">

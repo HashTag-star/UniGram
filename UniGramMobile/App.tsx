@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
-  BackHandler, Platform, ToastAndroid,
+  BackHandler, Platform, ToastAndroid, Easing
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -55,6 +55,8 @@ import { createStory } from './services/stories';
 import { getConversations } from './services/messages';
 import { AccountService } from './services/accounts';
 import { useHaptics as useAppHaptics } from './hooks/useHaptics';
+import { fx, warmUpSounds } from './lib/feedback';
+import { Tap } from './components/ui/Tap';
 import { useLastSeen } from './hooks/useLastSeen';
 import { setAudioModeAsync } from 'expo-audio';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, FadeIn } from 'react-native-reanimated';
@@ -108,6 +110,24 @@ const TABS: Array<{ id: Tab; icon: string; activeIcon: string; label: string }> 
   { id: 'profile',  icon: 'person-outline',         activeIcon: 'person',          label: 'Profile'  },
 ];
 
+/** Tab icon wrapper: springs when pressed and gives a little "pop" when it becomes active. */
+const TabGlyph: React.FC<{ active: boolean; pressed: boolean; children: React.ReactNode }> = ({ active, pressed, children }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    if (active) {
+      scale.setValue(0.78);
+      Animated.spring(scale, { toValue: 1, speed: 18, bounciness: 14, useNativeDriver: true }).start();
+    }
+  }, [active]);
+  return (
+    <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: pressed ? 0.9 : scale }], opacity: pressed ? 0.7 : 1 }]}>
+      {children}
+    </Animated.View>
+  );
+};
+
 const BottomTabBar = memo(({ 
   activeTabVisual, 
   onTabChange, 
@@ -135,7 +155,7 @@ const BottomTabBar = memo(({
               hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
             >
               {({ pressed }) => (
-                <View style={[styles.tabIconWrap, pressed && { opacity: 0.6, transform: [{ scale: 0.92 }] }]}>
+                <TabGlyph active={isActive} pressed={pressed}>
                   {tab.id === 'feed' ? (
                     // Ionicons' home glyph is blocky; the Material "home-variant" has the
                     // softer roofline and chimney that reads as premium.
@@ -152,7 +172,7 @@ const BottomTabBar = memo(({
                     />
                   )}
                   <View style={[styles.tabDot, { backgroundColor: isActive ? colors.text : 'transparent' }]} />
-                </View>
+                </TabGlyph>
               )}
             </Pressable>
           );
@@ -164,10 +184,27 @@ const BottomTabBar = memo(({
 
 // Screen wrapper for tab virtualization
 const ScreenWrapper = memo(({ isActive, children }: { isActive: boolean; children: React.ReactNode }) => {
+  // Tabs stay mounted (display toggled), so animate on every activation: a short
+  // fade + 10px rise makes switching feel like a page arriving, not a hard swap.
+  const enter = useRef(new Animated.Value(isActive ? 1 : 0)).current;
+  useEffect(() => {
+    if (isActive) {
+      enter.setValue(0);
+      Animated.timing(enter, { toValue: 1, duration: 230, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }
+  }, [isActive]);
   return (
-    <View style={[styles.screen, { display: isActive ? 'flex' : 'none', zIndex: isActive ? 10 : 0 }]} pointerEvents={isActive ? 'auto' : 'none'}>
+    <Animated.View
+      style={[styles.screen, {
+        display: isActive ? 'flex' : 'none',
+        zIndex: isActive ? 10 : 0,
+        opacity: enter.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+        transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+      }]}
+      pointerEvents={isActive ? 'auto' : 'none'}
+    >
       {children}
-    </View>
+    </Animated.View>
   );
 });
 
@@ -398,6 +435,7 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     };
 
     startup();
+    warmUpSounds();
 
     // Handle deep links for password reset redirection
     const handleUrl = (url: string) => {
@@ -525,6 +563,7 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     const channel = supabase.channel(`app-notifs-${uid}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` }, () => {
         setNotifBadge(b => b + 1);
+        fx.notify();
       }).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [session?.user?.id]);
@@ -738,13 +777,12 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
             onCameraOpen={onCameraOpen}
           />
           {showTabBar && (
-            <TouchableOpacity
+            <Tap feedback="press" pressedScale={0.88}
               style={[styles.fab, { backgroundColor: colors.accent, shadowColor: colors.accent }]}
               onPress={() => pagerRef.current?.setPage(0)}
-              activeOpacity={0.8}
             >
               <Ionicons name="add" size={28} color="#fff" />
-            </TouchableOpacity>
+            </Tap>
           )}
         </View>
       </PagerView>

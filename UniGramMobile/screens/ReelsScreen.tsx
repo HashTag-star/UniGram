@@ -16,6 +16,8 @@ import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementR
 import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
 import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
+import { fx } from '../lib/feedback';
+import { Tap } from '../components/ui/Tap';
 import { filterEligibleAds, noteAdShown, scaleIntervalForCampaign } from '../services/adDelivery';
 import { useAdPolicy } from '../hooks/useAdPolicy';
 import { ReelAdCard } from '../components/ReelAdCard';
@@ -421,6 +423,7 @@ const ReelItem: React.FC<{
 
   const toggleLike = async () => {
     const next = !liked;
+    if (next) fx.like(); else fx.tick();
     const newCount = likes + (next ? 1 : -1);
     setLiked(next);
     setLikes(newCount);
@@ -785,25 +788,25 @@ const ReelItem: React.FC<{
 
       {/* Right actions */}
       <View style={[styles.rightActions, { bottom: commentBarH + 80 }]}>
-        <TouchableOpacity onPress={toggleLike} style={styles.actionItem} accessibilityLabel={liked ? 'Unlike' : 'Like'} accessibilityRole="button">
+        <Tap feedback="none" onPress={toggleLike} style={styles.actionItem} accessibilityLabel={liked ? 'Unlike' : 'Like'} accessibilityRole="button">
           <Ionicons name={liked ? 'heart' : 'heart-outline'} size={34} color={liked ? '#ff3040' : '#fff'} />
           <Text style={styles.actionLabel}>{likes > 0 ? fmtCount(likes) : 'Like'}</Text>
-        </TouchableOpacity>
+        </Tap>
 
-        <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)} accessibilityLabel="Comment" accessibilityRole="button">
+        <Tap feedback="none" style={styles.actionItem} onPress={() => setShowComments(true)} accessibilityLabel="Comment" accessibilityRole="button">
           <Ionicons name="chatbubble-outline" size={32} color="#fff" />
           <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
-        </TouchableOpacity>
+        </Tap>
 
-        <TouchableOpacity style={styles.actionItem} onPress={() => setShowShare(true)} accessibilityLabel="Share" accessibilityRole="button">
+        <Tap feedback="none" style={styles.actionItem} onPress={() => setShowShare(true)} accessibilityLabel="Share" accessibilityRole="button">
           <Ionicons name="paper-plane-outline" size={30} color="#fff" />
           <Text style={styles.actionLabel}>Share</Text>
-        </TouchableOpacity>
+        </Tap>
 
-        <TouchableOpacity style={styles.actionItem} onPress={onMuteToggle} accessibilityLabel={muted ? 'Unmute' : 'Mute'} accessibilityRole="button">
+        <Tap feedback="none" style={styles.actionItem} onPress={onMuteToggle} accessibilityLabel={muted ? 'Unmute' : 'Mute'} accessibilityRole="button">
           <Ionicons name={muted ? 'volume-mute-outline' : 'volume-high-outline'} size={28} color="#fff" />
           <Text style={styles.actionLabel}>{muted ? 'Unmute' : 'Sound'}</Text>
-        </TouchableOpacity>
+        </Tap>
       </View>
 
       {/* Bottom info */}

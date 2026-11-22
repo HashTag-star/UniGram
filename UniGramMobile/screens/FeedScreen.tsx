@@ -60,6 +60,7 @@ import { processUnprocessedInteractions } from '../services/preferences';
 import { supabase } from '../lib/supabase';
 import { isProActive } from '../services/pro';
 import { getActiveFeedAds, getActiveAdsForPlacement, recordCampusAdImpression, recordCampusAdClick, adFrequencyInterval } from '../services/campusAds';
+import { fx } from '../lib/feedback';
 import { getAdPolicy, filterEligibleAds, noteAdShown, scaleIntervalForCampaign } from '../services/adDelivery';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
@@ -1780,6 +1781,7 @@ export const FeedScreen = React.memo(({
   const adSlotSeedRef = useRef(Math.floor(Math.random() * 1000));
 
   const handleRefresh = useCallback(() => {
+    fx.refresh();
     pendingPostsRef.current = [];
     setPendingPosts([]);
     setRefreshing(true);

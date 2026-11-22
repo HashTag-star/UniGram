@@ -13,6 +13,8 @@ import {
 import { hideAd, AD_WHY_TEXT } from '../services/adDelivery';
 import { usePopup } from '../context/PopupContext';
 import { CommentSheet } from './CommentSheet';
+import { Tap } from './ui/Tap';
+import { fx } from '../lib/feedback';
 
 function fmtCount(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -127,6 +129,7 @@ export const ReelAdCard: React.FC<{
   const toggleLike = async () => {
     if (!currentUserId || !ad.id) return;
     const next = !liked;
+    if (next) fx.like(); else fx.tick();
     setLiked(next);
     setLikesCount((p: number) => Math.max(0, next ? p + 1 : p - 1));
     try {
@@ -235,18 +238,18 @@ export const ReelAdCard: React.FC<{
         </View>
 
         <View style={styles.rightCol}>
-          <TouchableOpacity onPress={toggleLike} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={liked ? 'Unlike' : 'Like'}>
+          <Tap feedback="none" onPress={toggleLike} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={liked ? 'Unlike' : 'Like'}>
             <Ionicons name={liked ? 'heart' : 'heart-outline'} size={32} color={liked ? '#ff3040' : '#fff'} />
             <Text style={styles.actionLabel}>{likesCount > 0 ? fmtCount(likesCount) : 'Like'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowComments(true)} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Comments">
+          </Tap>
+          <Tap feedback="none" onPress={() => setShowComments(true)} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Comments">
             <Ionicons name="chatbubble-outline" size={29} color="#fff" />
             <Text style={styles.actionLabel}>{commentCount > 0 ? fmtCount(commentCount) : 'Comment'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleShare} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Share">
+          </Tap>
+          <Tap feedback="none" onPress={handleShare} style={styles.actionItem} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Share">
             <Ionicons name="paper-plane-outline" size={28} color="#fff" />
             <Text style={styles.actionLabel}>Share</Text>
-          </TouchableOpacity>
+          </Tap>
         </View>
       </View>
 

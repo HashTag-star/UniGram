@@ -3,6 +3,7 @@ import { Animated, Easing, PanResponder, StyleSheet, Text, View } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { status } from '../constants/design';
+import { fx } from '../lib/feedback';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -39,6 +40,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const showToast = useCallback((message: string, type: ToastType = 'info', opts?: { replaceKey?: string }) => {
     const id = ++_id;
+    if (type === 'error') fx.error(); else if (type === 'success') fx.confirm();
     setToasts(prev => {
       let next = opts?.replaceKey ? prev.filter(t => t.key !== opts.replaceKey) : prev;
       // Same message already showing → don't stack duplicates.

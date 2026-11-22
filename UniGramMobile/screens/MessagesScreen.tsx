@@ -31,6 +31,7 @@ import { useTheme } from '../context/ThemeContext';
 import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
 import { useHaptics } from '../hooks/useHaptics';
+import { fx } from '../lib/feedback';
 import { brand, radius, status } from '../constants/design';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -393,6 +394,7 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
         if (nm.sender_id === currentUserId) return; // own messages are added optimistically
         setMessages(p => (p.some(m => m.id === nm.id) ? p : [nm, ...p]));
         markMessagesRead(convId, currentUserId);
+        fx.receive();
       },
       (um) => setMessages(p => p.map(m => (m.id === um.id ? { ...m, ...um } : m))),
     );
@@ -432,6 +434,7 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
     if (!t) return;
     const reply = replyTo;
     setText(''); setReplyTo(null); broadcast('typing', false);
+    fx.send();
     const tmp = { id: `tmp-${Date.now()}`, text: t, type: 'text', sender_id: currentUserId, created_at: new Date().toISOString(), reply: reply ? { id: reply.id, text: reply.text, type: reply.type, profiles: reply.profiles } : null, is_read: false };
     optimistic(tmp, () => sendMessage(convId, currentUserId, t, 'text', undefined, reply?.id), 'Message failed to send.');
   };
@@ -441,12 +444,14 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
     if (res.canceled || !res.assets?.[0]) return;
     const uri = res.assets[0].uri;
     const reply = replyTo; setReplyTo(null);
+    fx.send();
     const tmp = { id: `tmp-${Date.now()}`, type: 'image', text: '📷 Photo', media_url: uri, sender_id: currentUserId, created_at: new Date().toISOString(), is_read: false };
     optimistic(tmp, () => sendImageMessage(convId, currentUserId, uri, reply?.id), 'Photo failed to send.');
   };
 
   const handleVoice = (uri: string, seconds: number) => {
     setRecording(false); broadcast('recording', false);
+    fx.send();
     const tmp = { id: `tmp-${Date.now()}`, type: 'audio', text: '🎤 Voice message', media_url: uri, duration: seconds, sender_id: currentUserId, created_at: new Date().toISOString(), is_read: false };
     optimistic(tmp, () => sendVoiceMessage(convId, currentUserId, uri, seconds), 'Voice message failed to send.');
   };
@@ -455,6 +460,7 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
     const reactions: any[] = msg.reactions ?? [];
     const mineIdx = reactions.findIndex(r => r.emoji === emoji && r.user_id === currentUserId);
     const removing = mineIdx !== -1;
+    if (removing) fx.tick(); else fx.like();
     setActionMsg(null);
     setMessages(p => p.map(m => m.id !== msg.id ? m : {
       ...m, reactions: removing ? reactions.filter((_, i) => i !== mineIdx) : [...reactions, { id: `tmp-${Date.now()}`, emoji, user_id: currentUserId }],

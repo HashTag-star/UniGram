@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
+import { fx } from '../lib/feedback';
 import {
   getBillingProvider, PRO_PLANS, FREE_TRIAL_DAYS, type PlanId,
 } from '../services/billing';
@@ -73,6 +74,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
   };
 
   const handleSubscribe = async () => {
+    fx.press();
     if (!userId || !plan) { setErrorMsg('Sign in to subscribe.'); return; }
     setErrorMsg(null);
     setInfoMsg(null);
@@ -84,6 +86,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
       });
       if (res.success) {
         setPhase('success');
+        fx.success();
         successScale.setValue(0);
         Animated.spring(successScale, { toValue: 1, tension: 60, friction: 7, useNativeDriver: true }).start();
         onPurchased();

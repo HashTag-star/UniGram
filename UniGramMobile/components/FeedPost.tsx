@@ -27,6 +27,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { VerifiedBadge } from '../components/VerifiedBadge';
 import { CachedImage } from '../components/CachedImage';
+import { fx } from '../lib/feedback';
+import { Tap } from './ui/Tap';
+import { getReelThumbnail, getCachedReelThumbnail } from '../services/reelThumbnails';
 import { FeedPostSkeleton, StorySkeleton } from '../components/Skeleton';
 import { CommentSheet } from '../components/CommentSheet';
 import { ShareSheet } from '../components/ShareSheet';
@@ -166,18 +169,29 @@ const ReelVideoLayer: React.FC<{ videoUrl: string; isMuted?: boolean }> = ({ vid
 };
 
 export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.memo(({ reel, isActive }) => {
+  // Stored thumbnail first; otherwise grab a frame from the video itself so the
+  // preview is never an empty film icon while the reel isn't playing.
+  const [generated, setGenerated] = useState<string | null>(() => getCachedReelThumbnail(reel.video_url));
+  useEffect(() => {
+    if (reel.thumbnail_url || generated || !reel.video_url) return;
+    let alive = true;
+    getReelThumbnail(reel.video_url).then(u => { if (alive && u) setGenerated(u); });
+    return () => { alive = false; };
+  }, [reel.thumbnail_url, reel.video_url]);
+  const poster = reel.thumbnail_url || generated;
+
   return (
     <View style={StyleSheet.absoluteFill}>
-      {/* Base Layer: Thumbnail or Fallback Icon */}
-      {reel.thumbnail_url ? (
-        <CachedImage uri={reel.thumbnail_url} style={StyleSheet.absoluteFill} />
+      {/* Base layer: poster frame (or a quiet placeholder while it generates) */}
+      {poster ? (
+        <CachedImage uri={poster} style={StyleSheet.absoluteFill} />
       ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-          <Ionicons name="film-outline" size={42} color="rgba(255,255,255,0.15)" />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#15151b', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="film-outline" size={38} color="rgba(255,255,255,0.18)" />
         </View>
       )}
 
-      {/* Video Layer: Only mounts when active to save resources and avoid "blank" flickers */}
+      {/* Video layer: only mounts for the active preview to save resources */}
       {isActive && reel.video_url && (
         <ReelVideoLayer videoUrl={reel.video_url} />
       )}
@@ -1043,8 +1057,8 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     setLikes(newCount);
     SocialSync.emit('POST_LIKE_CHANGE', { targetId: post.id, isActive: next, newCount });
     bounceHeart();
-    if (next) await medium();
-    else await selection();
+    if (next) fx.like();
+    else fx.tick();
     try {
       if (next) {
         await likePost(post.id, currentUserId);
@@ -1068,7 +1082,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
   const toggleSave = async () => {
     const next = !saved;
     setSaved(next);
-    if (next) await success(); else await selection();
+    if (next) fx.pop(); else fx.tick();
     try {
       if (next) {
         await savePost(post.id, currentUserId);
@@ -1472,7 +1486,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       <View style={[styles.postActions, { backgroundColor: colors.background }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={styles.actionGroup}>
-            <TouchableOpacity
+            <Tap feedback="none"
               onPress={() => doLike()}
               style={styles.actionBtn}
               accessibilityLabel={liked ? 'Unlike post' : 'Like post'}
@@ -1481,15 +1495,15 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               <Animated.View style={{ transform: [{ scale: heartScale }] }}>
                 <Ionicons name={liked ? 'heart' : 'heart-outline'} size={27} color={liked ? '#ff3040' : colors.text} />
               </Animated.View>
-            </TouchableOpacity>
+            </Tap>
             {likes > 0 && (
-              <TouchableOpacity onPress={() => setShowLikers(true)} hitSlop={6} activeOpacity={0.7}>
+              <Tap feedback="none" onPress={() => setShowLikers(true)} hitSlop={6} activeOpacity={0.7}>
                 <Text style={[styles.actionCount, { color: colors.text }]}>{fmtCount(likes)}</Text>
-              </TouchableOpacity>
+              </Tap>
             )}
           </View>
           <View style={styles.actionGroup}>
-            <TouchableOpacity
+            <Tap feedback="none"
               style={styles.actionBtn}
               accessibilityLabel="Comment on post"
               accessibilityRole="button"
@@ -1499,15 +1513,15 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               }}
             >
               <Ionicons name="chatbubble-outline" size={24} color={colors.text} style={{ transform: [{ scaleX: -1 }] }} />
-            </TouchableOpacity>
+            </Tap>
             {commentCount > 0 && (
-              <TouchableOpacity onPress={() => onOpenComments?.(post.id, post.user_id)} hitSlop={6} activeOpacity={0.7}>
+              <Tap feedback="none" onPress={() => onOpenComments?.(post.id, post.user_id)} hitSlop={6} activeOpacity={0.7}>
                 <Text style={[styles.actionCount, { color: colors.text }]}>{fmtCount(commentCount)}</Text>
-              </TouchableOpacity>
+              </Tap>
             )}
           </View>
           <View style={styles.actionGroup}>
-            <TouchableOpacity
+            <Tap feedback="none"
               style={styles.actionBtn}
               accessibilityLabel={reposted ? 'Undo repost' : 'Repost'}
               accessibilityRole="button"
@@ -1517,12 +1531,12 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
               }}
             >
               <Ionicons name="repeat" size={26} color={reposted ? '#22c55e' : colors.text} />
-            </TouchableOpacity>
+            </Tap>
             {repostCount > 0 && (
               <Text style={[styles.actionCount, { color: reposted ? '#22c55e' : colors.text }]}>{fmtCount(repostCount)}</Text>
             )}
           </View>
-          <TouchableOpacity
+          <Tap feedback="none"
             style={styles.actionBtn}
             accessibilityLabel="Share post"
             accessibilityRole="button"
@@ -1534,16 +1548,16 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             }}
           >
             <Ionicons name="paper-plane-outline" size={24} color={colors.text} />
-          </TouchableOpacity>
+          </Tap>
         </View>
-        <TouchableOpacity
+        <Tap feedback="none"
           onPress={toggleSave}
           style={styles.actionBtn}
           accessibilityLabel={saved ? 'Unsave post' : 'Save post'}
           accessibilityRole="button"
         >
           <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={25} color={colors.text} />
-        </TouchableOpacity>
+        </Tap>
       </View>
 
       {aiContext && (
