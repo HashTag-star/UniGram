@@ -26,6 +26,41 @@ interface PaywallSheetProps {
 
 type Phase = 'choose' | 'processing' | 'success';
 
+/** A ring of sparkles that bursts outward behind the success check. */
+const SparkleBurst: React.FC<{ trigger: number }> = ({ trigger }) => {
+  const COUNT = 14;
+  const vals = useRef(Array.from({ length: COUNT }, () => new Animated.Value(0))).current;
+  useEffect(() => {
+    if (!trigger) return;
+    vals.forEach(v => v.setValue(0));
+    Animated.stagger(14, vals.map(v => Animated.timing(v, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }))).start();
+  }, [trigger]);
+  const colors = ['#facc15', '#a78bfa', '#f472b6', '#38bdf8', '#34d399'];
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', alignSelf: 'center', top: 34, width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
+      {vals.map((v, i) => {
+        const ang = (i / COUNT) * Math.PI * 2;
+        const dist = 62 + (i % 3) * 16;
+        return (
+          <Animated.View
+            key={i}
+            style={{
+              position: 'absolute', width: i % 2 ? 7 : 5, height: i % 2 ? 7 : 5, borderRadius: 4,
+              backgroundColor: colors[i % colors.length],
+              opacity: v.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, 1, 0] }),
+              transform: [
+                { translateX: v.interpolate({ inputRange: [0, 1], outputRange: [0, Math.cos(ang) * dist] }) },
+                { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, Math.sin(ang) * dist] }) },
+                { scale: v.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.2, 1.2, 0.4] }) },
+              ],
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+};
+
 export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, userId, onClose, onPurchased }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -43,6 +78,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
   const fade = useRef(new Animated.Value(0)).current;
   const successScale = useRef(new Animated.Value(0)).current;
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [burst, setBurst] = useState(0);
 
   const canTrial = !!userId && provider.canStartTrial(userId);
   const plan = plans.find(p => p.id === planId) ?? plans[0];
@@ -86,6 +122,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
       });
       if (res.success) {
         setPhase('success');
+        setBurst(b => b + 1);
         fx.success();
         successScale.setValue(0);
         Animated.spring(successScale, { toValue: 1, tension: 60, friction: 7, useNativeDriver: true }).start();
@@ -165,6 +202,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
 
         {phase === 'success' ? (
           <View style={[styles.centerBlock, { paddingBottom: insets.bottom + 32 }]}>
+            <SparkleBurst trigger={burst} />
             <Animated.View style={[styles.successRing, { transform: [{ scale: successScale }] }]}>
               <Ionicons name="checkmark" size={44} color="#fff" />
             </Animated.View>
@@ -208,7 +246,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
                     <TouchableOpacity
                       key={p.id}
                       activeOpacity={0.85}
-                      onPress={() => setPlanId(p.id)}
+                      onPress={() => { fx.select(); setPlanId(p.id); }}
                       disabled={phase === 'processing'}
                       accessibilityRole="radio"
                       accessibilityState={{ selected }}

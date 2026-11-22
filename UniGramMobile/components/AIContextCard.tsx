@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, Platform, UIManager, Animated, Easing } from 'react-native';
+import { fx } from '../lib/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -47,6 +48,12 @@ interface Props {
 
 export const AIContextCard: React.FC<Props> = React.memo(({ result, isDark }) => {
   const [expanded, setExpanded] = useState(false);
+  // Arrives with a soft fade + rise instead of popping into the feed.
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (result.type === 'none') return;
+    Animated.timing(enter, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [result.type]);
   if (result.type === 'none') return null;
 
   const cfg = CONFIG[result.type];
@@ -57,12 +64,14 @@ export const AIContextCard: React.FC<Props> = React.memo(({ result, isDark }) =>
   const canExpand = (result.context?.length ?? 0) > 110 || !!result.detail;
 
   const toggle = () => {
+    fx.tick();
     LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeInEaseOut', 'opacity'));
     setExpanded(e => !e);
   };
 
   return (
     // Gradient hairline "border" around a translucent inner surface
+    <Animated.View style={{ opacity: enter, transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }] }}>
     <LinearGradient
       colors={[cfg.accent, cfg.accent2, cfg.accent + '33']}
       start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
@@ -116,6 +125,7 @@ export const AIContextCard: React.FC<Props> = React.memo(({ result, isDark }) =>
         ) : null}
       </TouchableOpacity>
     </LinearGradient>
+    </Animated.View>
   );
 });
 

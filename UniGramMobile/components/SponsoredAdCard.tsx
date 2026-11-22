@@ -10,6 +10,8 @@ import { useTheme } from '../context/ThemeContext';
 import { recordCampusAdClick, buildWhatsAppCtaUrl, likeAd, unlikeAd } from '../services/campusAds';
 import { CommentSheet } from './CommentSheet';
 import { usePopup } from '../context/PopupContext';
+import { Tap } from './ui/Tap';
+import { fx } from '../lib/feedback';
 import { hideAd, AD_WHY_TEXT } from '../services/adDelivery';
 import { VerifiedBadge } from './VerifiedBadge';
 
@@ -167,9 +169,9 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
             )}
           </View>
         </View>
-        <TouchableOpacity onPress={openMenu} hitSlop={10} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel="Ad options">
+        <Tap onPress={openMenu} hitSlop={10} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel="Ad options">
           <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
-        </TouchableOpacity>
+        </Tap>
       </View>
 
       {/* ── Creative ────────────────────────────────────────────────────── */}
@@ -182,7 +184,7 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
       {/* Video Ad — auto-plays when in view; tap creative toggles mute */}
       {ad.format === 'video' && (
         <View style={{ position: 'relative' }}>
-          <TouchableOpacity 
+          <Tap 
             onPress={() => setIsMuted(!isMuted)} 
             activeOpacity={0.95}
           >
@@ -207,7 +209,7 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
 
             {/* Mute toggle indicator */}
             {finalActive && ad.media_url && (
-              <TouchableOpacity 
+              <Tap 
                 style={styles.muteBtn} 
                 onPress={() => setIsMuted(!isMuted)}
               >
@@ -216,31 +218,33 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
                   size={16} 
                   color="#fff" 
                 />
-              </TouchableOpacity>
+              </Tap>
             )}
-          </TouchableOpacity>
+          </Tap>
 
           {/* CTA overlay button (optional, usually ads have a separate bar but some have it on video) */}
-          <TouchableOpacity 
+          <Tap 
+            feedback="press"
             style={[styles.videoCta, { bottom: 12, right: 12 }]} 
             onPress={handleCTA}
           >
             <Text style={styles.videoCtaText}>{ad.cta || 'Learn More'}</Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
-          </TouchableOpacity>
+          </Tap>
         </View>
       )}
 
       {/* ── Premium CTA Bar ─────────────────────────────────────────────── */}
       {ad.format !== 'carousel' && ad.format !== 'text' && (
-        <TouchableOpacity
+        <Tap
+          feedback="press"
           style={[styles.premiumCta, { backgroundColor: colors.bg === '#000000' || colors.bg === '#121212' ? '#1c1c1e' : '#f4f5f7' }]}
           onPress={handleCTA}
           activeOpacity={0.8}
         >
           <Text style={[styles.premiumCtaText, { color: colors.text }]}>{ad.cta || 'Learn more'}</Text>
           <Ionicons name="chevron-forward" size={18} color={colors.text} />
-        </TouchableOpacity>
+        </Tap>
       )}
 
       {/* Carousel / Products */}
@@ -257,7 +261,7 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
             contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
           >
             {cards.map((card: any, i: number) => (
-              <TouchableOpacity
+              <Tap
                 key={i}
                 style={[styles.carouselCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                 onPress={() => {
@@ -286,7 +290,7 @@ export const SponsoredAdCard: React.FC<SponsoredAdCardProps> = React.memo(({ ad,
                     <Ionicons name="arrow-forward" size={13} color={colors.text} />
                   </View>
                 </View>
-              </TouchableOpacity>
+              </Tap>
             ))}
           </ScrollView>
 

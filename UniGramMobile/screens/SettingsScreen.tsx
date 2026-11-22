@@ -17,6 +17,7 @@ import { withSimulatedPro } from '../services/simulatedPro';
 import { usePaywall } from '../context/PaywallContext';
 import { getAdPolicy } from '../services/adDelivery';
 import { feedbackPrefs, fx } from '../lib/feedback';
+import { PRO_FEATURE_LIST } from '../services/paywallFeatures';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -766,6 +767,22 @@ export const SettingsScreen: React.FC<Props> = ({
               noBorder
             />
           </Section>
+
+          {isProActive(proProfile) && (
+            <Section title="Your Pro benefits">
+              {PRO_FEATURE_LIST.map((f, i) => (
+                <Row
+                  key={f.key}
+                  icon={f.icon.replace('-outline', '')}
+                  iconColor={f.color}
+                  label={f.title}
+                  sublabel={f.desc}
+                  right={<Ionicons name="checkmark-circle" size={20} color="#22c55e" />}
+                  noBorder={i === PRO_FEATURE_LIST.length - 1}
+                />
+              ))}
+            </Section>
+          )}
 
           {isProPeriodActive(profile) && (
             <Section title="UniGram Pro">
