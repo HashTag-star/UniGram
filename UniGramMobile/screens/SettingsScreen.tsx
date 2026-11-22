@@ -505,9 +505,8 @@ export const SettingsScreen: React.FC<Props> = ({
     AsyncStorage.setItem(NOTIF_STORAGE_KEY, String(val)).catch(() => {});
   };
 
-  const [sfxOn, setSfxOn] = useState(feedbackPrefs.isSfxOn());
   const [hapticsOn, setHapticsOn] = useState(feedbackPrefs.isHapticsOn());
-  useEffect(() => feedbackPrefs.subscribe(() => { setSfxOn(feedbackPrefs.isSfxOn()); setHapticsOn(feedbackPrefs.isHapticsOn()); }), []);
+  useEffect(() => feedbackPrefs.subscribe(() => { setHapticsOn(feedbackPrefs.isHapticsOn()); }), []);
 
   // Subscribing to the paywall context re-renders this screen when a (simulated)
   // purchase or cancellation changes the entitlement.
@@ -898,21 +897,7 @@ export const SettingsScreen: React.FC<Props> = ({
             })()}
           </Section>
 
-          <Section title="Sounds & haptics">
-            <Row
-              icon="volume-high"
-              iconColor="#0ea5e9"
-              label="Sound effects"
-              sublabel="Soft sounds for likes, sends and notifications"
-              right={
-                <Switch
-                  value={sfxOn}
-                  onValueChange={(v) => { feedbackPrefs.setSfx(v); if (v) setTimeout(() => fx.soundOnly('pop'), 60); }}
-                  trackColor={{ false: '#333', true: colors.accent }}
-                  thumbColor="#fff"
-                />
-              }
-            />
+          <Section title="Haptics">
             <Row
               icon="phone-portrait"
               iconColor="#8b5cf6"
@@ -921,7 +906,7 @@ export const SettingsScreen: React.FC<Props> = ({
               right={
                 <Switch
                   value={hapticsOn}
-                  onValueChange={(v) => { feedbackPrefs.setHaptics(v); if (v) setTimeout(() => fx.like(), 60); }}
+                  onValueChange={(v) => { feedbackPrefs.setHaptics(v); if (v) setTimeout(() => fx.press(), 60); }}
                   trackColor={{ false: '#333', true: colors.accent }}
                   thumbColor="#fff"
                 />
