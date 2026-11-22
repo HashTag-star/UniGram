@@ -15,9 +15,10 @@ import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
 import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
-import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
+import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression, isReelAdUnskippable } from '../services/campusAds';
 import { fx } from '../lib/feedback';
 import { Tap } from '../components/ui/Tap';
+import { ReelMidRollAd } from '../components/ReelMidRollAd';
 import { filterEligibleAds, noteAdShown, scaleIntervalForCampaign } from '../services/adDelivery';
 import { useAdPolicy } from '../hooks/useAdPolicy';
 import { ReelAdCard } from '../components/ReelAdCard';
@@ -286,7 +287,14 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
-}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack }) => {
+  /** Mid-roll ad scheduled for THIS reel (null = none). */
+  midRollAd?: any | null;
+  midRollDwellMs?: number;
+  onMidRollStart?: (ad: any) => void;
+  onMidRollEnd?: (ad: any) => void;
+  onAdImpression?: (adId: string) => void;
+  onAdHide?: (adId: string) => void;
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, midRollAd = null, midRollDwellMs = 2000, onMidRollStart, onMidRollEnd, onAdImpression, onAdHide }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const { colors } = useTheme();
   const [captionOpen, setCaptionOpen] = useState(false);
@@ -299,6 +307,56 @@ const ReelItem: React.FC<{
   const [showShare, setShowShare] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+
+  // ── Mid-roll: "Ad in 5s" notice → ad takes over → reel resumes ─────────────
+  const [preCount, setPreCount] = useState<number | null>(null);
+  const [takeover, setTakeover] = useState(false);
+  const [resumeNotice, setResumeNotice] = useState(false);
+  const midRollDoneRef = useRef<string | null>(null);
+  const takeoverAdRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isActive || !midRollAd || midRollDoneRef.current === midRollAd.id) { setPreCount(null); return; }
+    let n = 5;
+    setPreCount(n);
+    const t = setInterval(() => {
+      n -= 1;
+      if (n <= 0) {
+        clearInterval(t);
+        setPreCount(null);
+        midRollDoneRef.current = midRollAd.id;
+        takeoverAdRef.current = midRollAd;
+        setTakeover(true);
+        setIsPaused(true);
+        onMidRollStart?.(midRollAd);
+      } else {
+        setPreCount(n);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, midRollAd?.id]);
+
+  const endTakeover = useCallback(() => {
+    const ad = takeoverAdRef.current;
+    setTakeover(false);
+    setIsPaused(false);
+    setResumeNotice(true);
+    setTimeout(() => setResumeNotice(false), 1700);
+    if (ad) onMidRollEnd?.(ad);
+    takeoverAdRef.current = null;
+  }, [onMidRollEnd]);
+
+  // Swiped away mid-ad: stop it so it can't keep playing off-screen.
+  useEffect(() => {
+    if (!isActive && takeover) {
+      setTakeover(false);
+      const ad = takeoverAdRef.current;
+      if (ad) onMidRollEnd?.(ad);
+      takeoverAdRef.current = null;
+    }
+  }, [isActive, takeover]);
+
   const [isFastForwarding, setIsFastForwarding] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -930,6 +988,34 @@ const ReelItem: React.FC<{
         }}
       />
 
+      {/* Pre-ad notice */}
+      {preCount !== null && !takeover && (
+        <View style={styles.adNotice} pointerEvents="none">
+          <Ionicons name="megaphone" size={13} color="#111" />
+          <Text style={styles.adNoticeText}>Ad in {preCount}s</Text>
+        </View>
+      )}
+
+      {/* Resume notice */}
+      {resumeNotice && (
+        <View style={[styles.adNotice, { backgroundColor: 'rgba(0,0,0,0.65)' }]} pointerEvents="none">
+          <Ionicons name="play" size={12} color="#fff" />
+          <Text style={[styles.adNoticeText, { color: '#fff' }]}>Continuing your reel…</Text>
+        </View>
+      )}
+
+      {/* The ad itself */}
+      {takeover && takeoverAdRef.current && (
+        <ReelMidRollAd
+          ad={takeoverAdRef.current}
+          forced={isReelAdUnskippable(takeoverAdRef.current)}
+          muted={muted}
+          dwellMs={midRollDwellMs}
+          onImpression={(id) => onAdImpression?.(id)}
+          onHide={(id) => onAdHide?.(id)}
+          onDone={endTakeover}
+        />
+      )}
     </View>
   );
 });
@@ -1068,6 +1154,10 @@ export const ReelsScreen: React.FC<{
   adPolicyRef.current = adPolicy;
   const reelPolicy = adPolicy.reels;
   const [adAnchors, setAdAnchors] = useState<Record<string, any>>({}); // reel id -> ad shown after it
+  const [midRoll, setMidRoll] = useState<{ reelId: string; ad: any } | null>(null);
+  const [scrollLocked, setScrollLocked] = useState(false);
+  // Alternate ad styles: a mid-roll over the playing reel, then a between-reels card.
+  const nextKindRef = useRef<'midroll' | 'card'>('midroll');
   const adSeedRef = useRef(Math.floor(Math.random() * 1000));
   const adsShownRef = useRef(0);
   const lastAdAtRef = useRef(0);
@@ -1091,6 +1181,21 @@ export const ReelsScreen: React.FC<{
     });
     return result;
   }, [rawReels, liveSessions, adAnchors]);
+
+  const handleMidRollStart = useCallback((ad: any) => {
+    midRollStartedRef.current = true;
+    pendingAdRef.current = false;
+    adsShownRef.current += 1;
+    lastAdAtRef.current = Date.now();
+    lastAdOrganicRef.current = organicViewedRef.current;
+    nextKindRef.current = 'card';
+    if (isReelAdUnskippable(ad)) setScrollLocked(true); // forced ads hold the screen
+  }, []);
+  const handleMidRollEnd = useCallback(() => {
+    midRollStartedRef.current = false;
+    setScrollLocked(false);
+    setMidRoll(null);
+  }, []);
 
   const handleAdHide = useCallback((adId: string) => {
     setReelAds(prev => prev.filter(a => a.id !== adId));
@@ -1132,6 +1237,17 @@ export const ReelsScreen: React.FC<{
     if (organicSince < needed) return;
     if (lastAdAtRef.current !== 0 && Date.now() - lastAdAtRef.current < pol.minGapMs) return;
 
+    // Mid-roll: attach the ad to the reel that's playing right now.
+    if (nextKindRef.current === 'midroll') {
+      const cur = reelsRef.current[activeItemIndex];
+      if (!cur || cur._type) return;
+      const ad = pool[adCursorRef.current % pool.length];
+      adCursorRef.current++;
+      pendingAdRef.current = true;
+      setMidRoll({ reelId: cur.id, ad });
+      return;
+    }
+
     // Anchor on the organic reel two ahead so the swap never happens under the viewer.
     const list = reelsRef.current;
     let ahead = 0;
@@ -1152,6 +1268,7 @@ export const ReelsScreen: React.FC<{
 
   // FlatList forbids changing onViewableItemsChanged after mount, so keep this
   // callback identity-stable and reach the latest scheduler through a ref.
+  const midRollStartedRef = useRef(false);
   const maybeScheduleRef = useRef(maybeScheduleAd);
   maybeScheduleRef.current = maybeScheduleAd;
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
@@ -1167,6 +1284,7 @@ export const ReelsScreen: React.FC<{
         adsShownRef.current += 1;
         lastAdAtRef.current = Date.now();
         lastAdOrganicRef.current = organicViewedRef.current;
+        nextKindRef.current = 'midroll';
       }
     } else if (item && item._type !== 'live') {
       // Count organic reels by position among organic items only.
@@ -1178,6 +1296,15 @@ export const ReelsScreen: React.FC<{
       organicViewedRef.current = Math.max(organicViewedRef.current, n);
       maybeScheduleRef.current(newIndex);
     }
+
+    // A mid-roll that never started (viewer swiped first) is cancelled, not counted.
+    setMidRoll(prev => {
+      if (prev && item && item.id !== prev.reelId && !midRollStartedRef.current) {
+        pendingAdRef.current = false;
+        return null;
+      }
+      return prev;
+    });
 
     setActiveIndex(prev => (prev !== newIndex ? newIndex : prev));
   }, []);
@@ -1343,12 +1470,19 @@ export const ReelsScreen: React.FC<{
         onMuteToggle={handleToggleMute}
         itemHeight={containerHeight}
         onBack={onBack}
+        midRollAd={midRoll && midRoll.reelId === item.id ? midRoll.ad : null}
+        midRollDwellMs={reelPolicy.dwellMs}
+        onMidRollStart={handleMidRollStart}
+        onMidRollEnd={handleMidRollEnd}
+        onAdImpression={handleAdImpression}
+        onAdHide={handleAdHide}
       />
     );
   }, [
     containerHeight, activeIndex, isAppActive, currentUserId,
     likedPostIds, likedIds, followingIds, isMuted,
-    handleLivePress, handleAdImpression, handleAdHide, handleToggleMute, onBack, reelPolicy.dwellMs
+    handleLivePress, handleAdImpression, handleAdHide, handleToggleMute, onBack, reelPolicy.dwellMs,
+    midRoll, handleMidRollStart, handleMidRollEnd
   ]);
 
   if (loading) {
@@ -1398,6 +1532,7 @@ export const ReelsScreen: React.FC<{
       >
         <FlatList
           ref={reelsListRef}
+          scrollEnabled={!scrollLocked}
           data={reels}
           keyExtractor={keyExtractor}
           renderItem={renderItem}
@@ -1530,6 +1665,8 @@ const styles = StyleSheet.create({
     color: '#fff', fontWeight: 'bold', fontSize: 14,
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
+  adNotice: { position: 'absolute', top: 64, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#facc15', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 7, zIndex: 40 },
+  adNoticeText: { color: '#111', fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
   followBtn: { backgroundColor: 'transparent', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.85)' },
   followingBtn: { borderColor: 'rgba(255,255,255,0.35)' },
   followBtnText: { color: '#fff', fontSize: 12.5, fontWeight: '700' },
