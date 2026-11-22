@@ -1,3 +1,4 @@
+import { getBillingProvider } from '../services/billing';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
@@ -505,10 +506,19 @@ const CreateCampaignSheet: React.FC<{
         // Credit covered the whole campaign — the database activates it (fully funded).
         showToast(`Campaign is live. GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
       } else {
-        // Charge only the uncovered remainder via Paystack
-        const { authorization_url, reference } = await initAdPayment(draft.id, remainingGhs, duration);
-        await setPaymentRef(draft.id, reference);
-        const success = await openAdCheckout(authorization_url, reference);
+        let success = false;
+        if (getBillingProvider().isSimulated) {
+          // Test mode: no real money. The server funds + activates the campaign.
+          await new Promise<void>(r => setTimeout(r, 1100));
+          const { error: simErr } = await supabase.rpc('simulate_fund_campaign', { p_campaign_id: draft.id, p_days: duration });
+          if (simErr) throw simErr;
+          success = true;
+        } else {
+          // Charge only the uncovered remainder via Paystack
+          const { authorization_url, reference } = await initAdPayment(draft.id, remainingGhs, duration);
+          await setPaymentRef(draft.id, reference);
+          success = await openAdCheckout(authorization_url, reference);
+        }
         if (success) {
           // The server (paystack-verify / webhook) has funded and activated the campaign.
           const msg = consumedPesewas > 0
@@ -1150,7 +1160,7 @@ const CreateCampaignSheet: React.FC<{
                   <Ionicons name="card-outline" size={18} color="#fff" />
                 )}
                 <Text style={styles.payBtnText}>
-                  {submitting ? 'Processing…' : canGoNext ? `Pay GHS ${budget} via Paystack` : 'Complete all fields'}
+                  {submitting ? 'Processing…' : canGoNext ? `${getBillingProvider().isSimulated ? 'Launch' : 'Pay'} GHS ${budget}${getBillingProvider().isSimulated ? ' · test mode' : ' via Paystack'}` : 'Complete all fields'}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
