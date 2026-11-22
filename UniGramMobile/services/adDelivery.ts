@@ -99,11 +99,20 @@ async function loadHidden() {
   return hidden;
 }
 
-/** Drop ads the viewer hid and ads that already hit today's cap. */
+/**
+ * Drops ads the viewer hid, and applies the per-day frequency cap as a SOFT cap:
+ * ads under the cap come first (least-shown first); ads already at the cap are only
+ * used when nothing else is available. A hard cap would leave small inventories
+ * (a handful of campaigns) with no ads at all after a few views.
+ */
 export async function filterEligibleAds<T extends { id: string }>(ads: T[], policy: AdPolicy): Promise<T[]> {
   if (!ads?.length) return [];
   const [f, h] = await Promise.all([loadFreq(), loadHidden()]);
-  return ads.filter(a => !h.has(a.id) && (f.counts[a.id] ?? 0) < policy.perAdDailyCap);
+  const visible = ads.filter(a => !h.has(a.id));
+  const shown = (a: T) => f.counts[a.id] ?? 0;
+  const byLeastShown = [...visible].sort((a, b) => shown(a) - shown(b));
+  const underCap = byLeastShown.filter(a => shown(a) < policy.perAdDailyCap);
+  return underCap.length > 0 ? underCap : byLeastShown;
 }
 
 /** Call when an ad actually counted as seen (dwell satisfied). */
