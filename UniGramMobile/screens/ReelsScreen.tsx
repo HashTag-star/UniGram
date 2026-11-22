@@ -15,7 +15,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { getReels, likeReel, unlikeReel, getLikedReelIds, deleteReel, incrementReelView } from '../services/reels';
 import { likePost, unlikePost, getLikedPostIds } from '../services/posts';
 import { getPersonalizedReels, recordContentFeedback } from '../services/algorithm';
-import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression, isReelAdUnskippable } from '../services/campusAds';
+import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression, getReelAdKind } from '../services/campusAds';
 import { fx } from '../lib/feedback';
 import { Tap } from '../components/ui/Tap';
 import { ReelMidRollAd } from '../components/ReelMidRollAd';
@@ -1008,7 +1008,7 @@ const ReelItem: React.FC<{
       {takeover && takeoverAdRef.current && (
         <ReelMidRollAd
           ad={takeoverAdRef.current}
-          forced={isReelAdUnskippable(takeoverAdRef.current)}
+          kind={getReelAdKind(takeoverAdRef.current)}
           muted={muted}
           dwellMs={midRollDwellMs}
           onImpression={(id) => onAdImpression?.(id)}
@@ -1189,7 +1189,7 @@ export const ReelsScreen: React.FC<{
     lastAdAtRef.current = Date.now();
     lastAdOrganicRef.current = organicViewedRef.current;
     nextKindRef.current = 'card';
-    if (isReelAdUnskippable(ad)) setScrollLocked(true); // forced ads hold the screen
+    if (getReelAdKind(ad) !== 'skippable') setScrollLocked(true); // unskippable ads hold the screen
   }, []);
   const handleMidRollEnd = useCallback(() => {
     midRollStartedRef.current = false;

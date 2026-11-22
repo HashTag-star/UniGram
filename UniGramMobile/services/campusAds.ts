@@ -25,6 +25,9 @@ export interface CampusAd {
   clicks: number;
   payment_ref: string | null;
   university: string | null;
+  /** Multi-campus targeting (migration 061). */
+  target_all_campuses?: boolean;
+  target_universities?: string[] | null;
   start_date: string | null;
   end_date: string | null;
   created_at: string;
@@ -239,9 +242,42 @@ export function isReelAdUnskippable(ad: any): boolean {
   return Math.abs(h) % 3 === 0; // ~33% unskippable
 }
 
+/**
+ * The three mid-roll styles a reel ad can have:
+ *   'skippable' - "Skip in 5s" then Skip Ad; ends by itself at 15s
+ *   'timed'     - plays a fixed 15s, no skip ("Reel continues in Ns")
+ *   'full'      - plays the whole ad, no skip ("Your reel will continue after this ad")
+ * An explicit `ad.skippable` flag wins; otherwise the style is a stable bucket of the
+ * ad id so the same ad always behaves the same for every viewer.
+ */
+export type ReelAdKind = 'skippable' | 'timed' | 'full';
+export function getReelAdKind(ad: any): ReelAdKind {
+  if (!ad) return 'skippable';
+  if (ad.skippable === true) return 'skippable';
+  if (ad.skippable === false) return 'full';
+  const id: string = String(ad.id ?? '');
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  const b = Math.abs(h) % 3;
+  return b === 0 ? 'timed' : b === 1 ? 'full' : 'skippable';
+}
+
 /** How long a forced reel ad plays before auto-advance (seconds). For video ads
  *  the actual clip duration takes precedence — this is the cap / fallback. */
 export const FORCED_REEL_AD_SECONDS = 12;
+
+/**
+ * Is this viewer's campus inside the ad's audience?
+ *   - target_all_campuses            -> everyone
+ *   - target_universities = [...]    -> only students at those campuses
+ *   - neither (legacy campaigns)     -> the advertiser's own campus (null = everyone)
+ */
+export function isInAudience(ad: any, viewerUniversity: string | null): boolean {
+  if (ad.target_all_campuses) return true;
+  const list: string[] = Array.isArray(ad.target_universities) ? ad.target_universities : [];
+  if (list.length > 0) return !!viewerUniversity && list.includes(viewerUniversity);
+  return !ad.university || ad.university === viewerUniversity;
+}
 
 /** Generic placement query used by feed, reels, market, stories, explore. */
 export async function getActiveAdsForPlacement(
@@ -327,7 +363,7 @@ export async function getActiveAdsForPlacement(
         if (placement && Array.isArray(ad.placements) && ad.placements.length > 0
             && !ad.placements.includes(placement)) return false;
         // University targeting: skip ads targeted to other campuses
-        if (ad.university && ad.university !== university) return false;
+        if (!isInAudience(ad, university)) return false;
         // TODO: Implement additional targeting (age, gender, etc.) using profileMap
         // For now, we skip advanced targeting to keep the MVP simple.
         return true;

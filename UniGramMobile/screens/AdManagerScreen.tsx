@@ -18,6 +18,7 @@ import {
   planFromBudget, getAdCreditBalance, consumeAdCredit,
   type CampusAd,
 } from '../services/campusAds';
+import { searchUniversities } from '../constants/universities';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -354,6 +355,20 @@ const CreateCampaignSheet: React.FC<{
 
   // Step 3 — Audience & Budget
   const [placements, setPlacements] = useState<Placement[]>(['feed']);
+  // Audience: own campus (default), hand-picked campuses, or every campus.
+  const [audienceMode, setAudienceMode] = useState<'campus' | 'selected' | 'all'>('campus');
+  const [extraCampuses, setExtraCampuses] = useState<string[]>([]);
+  const [campusQuery, setCampusQuery] = useState('');
+  const [campusResults, setCampusResults] = useState<string[]>([]);
+  useEffect(() => {
+    if (audienceMode !== 'selected' || campusQuery.trim().length < 2) { setCampusResults([]); return; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const r = await searchUniversities(campusQuery).catch(() => [] as string[]);
+      if (alive) setCampusResults(r.slice(0, 6));
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [campusQuery, audienceMode]);
   const [budget, setBudget]         = useState<number | null>(null);
   const [duration, setDuration]     = useState<number | null>(null);
   // Advanced options
@@ -382,6 +397,7 @@ const CreateCampaignSheet: React.FC<{
     setName(''); setMediaUri(''); setHeadline(''); setBody(''); setCta('Learn More'); setLink(''); setWhatsappNumber('');
     setCards([{ id: uid(), imageUri: undefined, title: '', price: '', link: '' }]);
     setPlacements(['feed']); setBudget(null); setDuration(null);
+    setAudienceMode('campus'); setExtraCampuses([]); setCampusQuery('');
     // Advanced options reset
     setAdvancedOptions(false);
     setBidType('CPM');
@@ -458,6 +474,11 @@ const CreateCampaignSheet: React.FC<{
         // Existing fields
         whatsapp_number: whatsappNumber.trim() ?? null,
         university: profile?.university ?? null,
+        // Multi-campus targeting (migration 061): always includes the advertiser's own campus.
+        target_all_campuses: audienceMode === 'all',
+        target_universities: audienceMode === 'selected'
+          ? Array.from(new Set([...(profile?.university ? [profile.university] : []), ...extraCampuses]))
+          : [],
         start_date: null,
         end_date: null,
       });
@@ -776,7 +797,71 @@ const CreateCampaignSheet: React.FC<{
                 })}
               </View>
               <Text style={[styles.fieldHint, { color: colors.textMuted }]}>
-                Select where your ad appears. All placements target students at your university only.
+                Select where your ad appears. Choose which campuses see it below.
+              </Text>
+
+              {/* Audience */}
+              <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 24 }]}>WHO SEES IT</Text>
+              <View style={{ gap: 8 }}>
+                {([
+                  { key: 'campus', icon: 'school', title: 'My campus', sub: profile?.university ?? 'Students at your university' },
+                  { key: 'selected', icon: 'location', title: 'Choose campuses', sub: 'Your campus plus other universities you pick' },
+                  { key: 'all', icon: 'globe', title: 'All campuses', sub: 'Every university on UniGram' },
+                ] as const).map(o => {
+                  const active = audienceMode === o.key;
+                  return (
+                    <TouchableOpacity
+                      key={o.key}
+                      onPress={() => setAudienceMode(o.key)}
+                      activeOpacity={0.8}
+                      style={[styles.placementToggle, { backgroundColor: colors.card, borderColor: active ? '#6366f1' : colors.border, justifyContent: 'flex-start', gap: 12 }]}
+                    >
+                      <Ionicons name={o.icon as any} size={18} color={active ? '#6366f1' : colors.textMuted} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.placementToggleLabel, { color: active ? '#6366f1' : colors.text }]}>{o.title}</Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>{o.sub}</Text>
+                      </View>
+                      {active && <Ionicons name="checkmark-circle" size={16} color="#6366f1" />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {audienceMode === 'selected' && (
+                <View style={{ marginTop: 12 }}>
+                  {extraCampuses.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                      {extraCampuses.map(c => (
+                        <TouchableOpacity key={c} onPress={() => setExtraCampuses(prev => prev.filter(x => x !== c))} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6366f118', borderColor: '#6366f155', borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 }}>
+                          <Text style={{ color: '#6366f1', fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{c}</Text>
+                          <Ionicons name="close" size={13} color="#6366f1" />
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  <TextInput
+                    value={campusQuery}
+                    onChangeText={setCampusQuery}
+                    placeholder="Search a university to add…"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{ color: colors.text, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 }}
+                  />
+                  {campusResults.map(c => (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => { setExtraCampuses(prev => (prev.includes(c) ? prev : [...prev, c])); setCampusQuery(''); setCampusResults([]); }}
+                      style={{ paddingVertical: 11, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                    >
+                      <Ionicons name="add-circle-outline" size={18} color="#6366f1" />
+                      <Text style={{ color: colors.text, fontSize: 13.5, flex: 1 }} numberOfLines={1}>{c}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              <Text style={[styles.fieldHint, { color: colors.textMuted }]}>
+                Ads are shown only to verified students at the campuses you choose.
               </Text>
 
               {/* Budget */}

@@ -6,13 +6,15 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from './CachedImage';
 import { Tap } from './ui/Tap';
-import { recordCampusAdClick, buildWhatsAppCtaUrl } from '../services/campusAds';
+import { recordCampusAdClick, buildWhatsAppCtaUrl, type ReelAdKind } from '../services/campusAds';
 import { hideAd, AD_WHY_TEXT } from '../services/adDelivery';
 import { usePopup } from '../context/PopupContext';
 import { fx } from '../lib/feedback';
 
 /** Max time an ad holds the screen, and how long before a skippable ad can be skipped. */
 export const MIDROLL_MAX_SECONDS = 15;
+/** 'full' ads play to their natural end, capped so a long clip can't hold the reel hostage. */
+export const MIDROLL_FULL_CAP_SECONDS = 30;
 export const MIDROLL_SKIP_AFTER = 5;
 
 const AdVideo: React.FC<{ url: string; muted: boolean; onEnded: () => void; onError: () => void }> = React.memo(({ url, muted, onEnded, onError }) => {
@@ -29,8 +31,7 @@ const AdVideo: React.FC<{ url: string; muted: boolean; onEnded: () => void; onEr
 
 interface Props {
   ad: any;
-  /** true = plays all the way (no skip); false = Skip Ad after 5s. */
-  forced: boolean;
+  kind: ReelAdKind;
   muted: boolean;
   dwellMs?: number;
   onImpression: (adId: string) => void;
@@ -46,11 +47,12 @@ interface Props {
  *  - skippable: "Skip in 5…" then "Skip Ad"; auto-continues at 15s
  * The reel underneath is paused by the parent and resumes when onDone fires.
  */
-export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 2000, onImpression, onDone, onHide }) => {
+export const ReelMidRollAd: React.FC<Props> = ({ ad, kind, muted, dwellMs = 2000, onImpression, onDone, onHide }) => {
   const insets = useSafeAreaInsets();
   const { showPopup } = usePopup();
   const [elapsed, setElapsed] = useState(0);
   const [videoError, setVideoError] = useState(false);
+  const forced = kind !== 'skippable';
   const doneRef = useRef(false);
   const countedRef = useRef(false);
   const enter = useRef(new Animated.Value(0)).current;
@@ -60,6 +62,8 @@ export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 20
   const imageUri = ad.media_url || ad.cards?.[0]?.image_url;
   const isImage = !isVideo && !!imageUri && ad.format !== 'text';
   const advertiser = ad.profiles?.full_name || (ad.profiles?.username ? `@${ad.profiles.username}` : ad.name);
+
+  const maxSeconds = kind === 'full' && isVideo ? MIDROLL_FULL_CAP_SECONDS : MIDROLL_MAX_SECONDS;
 
   const finish = useCallback((reason: 'finished' | 'skipped') => {
     if (doneRef.current) return;
@@ -71,12 +75,12 @@ export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 20
   useEffect(() => {
     fx.press();
     Animated.timing(enter, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    Animated.timing(progress, { toValue: 1, duration: MIDROLL_MAX_SECONDS * 1000, easing: Easing.linear, useNativeDriver: false }).start();
+    Animated.timing(progress, { toValue: 1, duration: maxSeconds * 1000, easing: Easing.linear, useNativeDriver: false }).start();
     const start = Date.now();
     const t = setInterval(() => {
       const sec = (Date.now() - start) / 1000;
       setElapsed(sec);
-      if (sec >= MIDROLL_MAX_SECONDS) { clearInterval(t); finish('finished'); }
+      if (sec >= maxSeconds) { clearInterval(t); finish('finished'); }
     }, 200);
     return () => clearInterval(t);
   }, []);
@@ -114,7 +118,7 @@ export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 20
     });
   };
 
-  const remaining = Math.max(0, Math.ceil(MIDROLL_MAX_SECONDS - elapsed));
+  const remaining = Math.max(0, Math.ceil(maxSeconds - elapsed));
   const skipIn = Math.max(0, Math.ceil(MIDROLL_SKIP_AFTER - elapsed));
   const canSkip = !forced && skipIn === 0;
 
@@ -138,8 +142,10 @@ export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 20
       {/* Top-left: Ad badge + status */}
       <View style={[styles.topLeft, { top: insets.top + 12 }]}>
         <View style={styles.adBadge}><Text style={styles.adBadgeText}>AD</Text></View>
-        {forced ? (
+        {kind === 'timed' ? (
           <View style={styles.pill}><Text style={styles.pillText}>Reel continues in {remaining}s</Text></View>
+        ) : kind === 'full' ? (
+          <View style={styles.pill}><Text style={styles.pillText}>Reel continues after ad</Text></View>
         ) : canSkip ? (
           <Tap feedback="press" onPress={() => finish('skipped')} style={styles.skipBtn} accessibilityRole="button" accessibilityLabel="Skip ad">
             <Text style={styles.skipText}>Skip Ad</Text>
@@ -164,7 +170,7 @@ export const ReelMidRollAd: React.FC<Props> = ({ ad, forced, muted, dwellMs = 20
           )}
           <View style={{ flex: 1 }}>
             <Text style={styles.advName} numberOfLines={1}>{advertiser}</Text>
-            <Text style={styles.sponsored}>Sponsored · your reel continues after this ad</Text>
+            <Text style={styles.sponsored}>{kind === 'full' ? 'Sponsored · your reel will continue after this ad' : 'Sponsored'}</Text>
           </View>
         </View>
         {ad.headline && ad.format !== 'text' ? <Text style={styles.headline} numberOfLines={2}>{ad.headline}</Text> : null}
