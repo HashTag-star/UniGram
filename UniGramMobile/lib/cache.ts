@@ -46,6 +46,16 @@ export const Cache = {
     return !e || Date.now() - e.ts >= ttlMs;
   },
 
+  /** Wipe everything (memory + persisted). Call on sign-out so accounts never share cached data. */
+  async clearAll(): Promise<void> {
+    mem.clear();
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const mine = keys.filter(k => k.startsWith(PREFIX));
+      if (mine.length) await AsyncStorage.multiRemove(mine);
+    } catch {}
+  },
+
   invalidate(key: string): void {
     mem.delete(key);
     AsyncStorage.removeItem(PREFIX + key).catch(() => {});

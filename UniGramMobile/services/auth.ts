@@ -1,6 +1,8 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { supabase } from '../lib/supabase';
+import { Cache } from '../lib/cache';
+import { resetAdDeliveryState } from './adDelivery';
 
 // Dynamic require to prevent crashes in Expo Go (Non-native environments)
 // [Ama Mensah - Lead Dev] webClientId now sourced from env; fall back to the
@@ -129,6 +131,9 @@ export async function sendPasswordReset(email: string) {
 }
 
 export async function signOut() {
+  // Never let the next account on this device see this account's cached data.
+  try { await Cache.clearAll(); } catch {}
+  try { resetAdDeliveryState(); } catch {}
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }

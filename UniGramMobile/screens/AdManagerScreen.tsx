@@ -126,7 +126,8 @@ function uid(): string {
   return Array.from({ length: 10 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
-function fmtReach([lo, hi]: [number, number]): string {
+function fmtReach([lo, hi]: [number, number], divisor = 1): string {
+  lo = Math.round(lo / divisor); hi = Math.round(hi / divisor);
   const f = (n: number) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K' : String(n);
   return `~${f(lo)}–${f(hi)}`;
 }
@@ -370,6 +371,13 @@ const CreateCampaignSheet: React.FC<{
     return () => { alive = false; clearTimeout(t); };
   }, [campusQuery, audienceMode]);
   const [budget, setBudget]         = useState<number | null>(null);
+  // Wider reach costs more — mirrors ad_reach_factor() in migration 063.
+  const campusCount = audienceMode === 'selected'
+    ? new Set([...(profile?.university ? [profile.university] : []), ...extraCampuses]).size || 1
+    : 1;
+  const reachFactor = audienceMode === 'all' ? 3 : Math.min(3, 1 + 0.4 * (campusCount - 1));
+  const minBudget = Math.ceil(5 * reachFactor);
+  useEffect(() => { if (budget !== null && budget < minBudget) setBudget(null); }, [minBudget]); // eslint-disable-line react-hooks/exhaustive-deps
   const [duration, setDuration]     = useState<number | null>(null);
   // Advanced options
   const [advancedOptions, setAdvancedOptions] = useState(false);
@@ -853,6 +861,14 @@ const CreateCampaignSheet: React.FC<{
               <Text style={[styles.fieldHint, { color: colors.textMuted }]}>
                 Ads are shown only to verified students at the campuses you choose.
               </Text>
+              {reachFactor > 1 && (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: '#6366f112', borderWidth: StyleSheet.hairlineWidth, borderColor: '#6366f155' }}>
+                  <Ionicons name="trending-up" size={16} color="#6366f1" style={{ marginTop: 1 }} />
+                  <Text style={{ flex: 1, color: colors.textSub, fontSize: 12.5, lineHeight: 18 }}>
+                    {audienceMode === 'all' ? 'All campuses' : `${campusCount} campuses`} costs ×{reachFactor.toFixed(1)} per impression or click, so the same budget reaches proportionally fewer people per campus. Minimum budget: GHS {minBudget}.
+                  </Text>
+                </View>
+              )}
 
               {/* Budget */}
               <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 24 }]}>BUDGET (GHS)</Text>
@@ -864,10 +880,11 @@ const CreateCampaignSheet: React.FC<{
                       key={tier.amount}
                       style={[
                         styles.budgetCard,
-                        { backgroundColor: colors.card, borderColor: active ? '#6366f1' : colors.border },
+                        { backgroundColor: colors.card, borderColor: active ? '#6366f1' : colors.border, opacity: tier.amount < minBudget ? 0.4 : 1 },
                         active && { backgroundColor: '#6366f110', borderWidth: 2 },
                       ]}
-                      onPress={() => setBudget(tier.amount)}
+                      onPress={() => tier.amount >= minBudget && setBudget(tier.amount)}
+                      disabled={tier.amount < minBudget}
                       activeOpacity={0.8}
                     >
                       {tier.popular && (
@@ -878,7 +895,7 @@ const CreateCampaignSheet: React.FC<{
                       <Text style={[styles.budgetLabel, { color: active ? '#6366f1' : colors.textMuted }]}>{tier.label}</Text>
                       <Text style={[styles.budgetAmount, { color: colors.text }]}>GHS {tier.amount}</Text>
                       <Text style={[styles.budgetReach, { color: active ? '#6366f1' : colors.textSub }]}>
-                        {fmtReach(tier.reach)} impressions
+                        {fmtReach(tier.reach, reachFactor)} impressions
                       </Text>
                       <Text style={[styles.budgetTag, { color: colors.textMuted }]}>{tier.tag}</Text>
                       {active && (

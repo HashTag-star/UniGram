@@ -101,7 +101,7 @@ const ReelVideo: React.FC<{
     const id = setInterval(() => {
       const dur = player.duration;
       if (dur > 0) onProgressRef.current(player.currentTime / dur);
-    }, 100);
+    }, 250);
     return () => clearInterval(id);
   }, [isActive, isPaused, player]);
 
@@ -287,6 +287,8 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
+  /** Only the playing reel and its immediate neighbours hold a video decoder. */
+  preload?: boolean;
   /** Mid-roll ad scheduled for THIS reel (null = none). */
   midRollAd?: any | null;
   midRollDwellMs?: number;
@@ -294,7 +296,7 @@ const ReelItem: React.FC<{
   onMidRollEnd?: (ad: any) => void;
   onAdImpression?: (adId: string) => void;
   onAdHide?: (adId: string) => void;
-}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, midRollAd = null, midRollDwellMs = 2000, onMidRollStart, onMidRollEnd, onAdImpression, onAdHide }) => {
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, preload = true, midRollAd = null, midRollDwellMs = 2000, onMidRollStart, onMidRollEnd, onAdImpression, onAdHide }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const { colors } = useTheme();
   const [captionOpen, setCaptionOpen] = useState(false);
@@ -757,7 +759,7 @@ const ReelItem: React.FC<{
           </View>
         )}
         {/* Always mount ReelVideo so it buffers in the background, but it returns null if inactive */}
-        {reel.video_url && (
+        {reel.video_url && (isActive || preload) && (
           <ReelVideo
             videoUrl={reel.video_url}
             isActive={isActive}
@@ -1466,6 +1468,7 @@ export const ReelsScreen: React.FC<{
         isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
         isFollowingUser={followingIds.has(item.profiles?.id)}
         isActive={index === activeIndex && isAppActive}
+        preload={Math.abs(index - activeIndex) <= 1}
         muted={isMuted}
         onMuteToggle={handleToggleMute}
         itemHeight={containerHeight}
@@ -1538,8 +1541,8 @@ export const ReelsScreen: React.FC<{
           renderItem={renderItem}
           pagingEnabled
           showsVerticalScrollIndicator={false}
-          windowSize={5}
-          maxToRenderPerBatch={3}
+          windowSize={3}
+          maxToRenderPerBatch={2}
           initialNumToRender={2}
           removeClippedSubviews={true}
           getItemLayout={getItemLayout}

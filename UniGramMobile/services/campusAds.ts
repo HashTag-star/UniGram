@@ -90,9 +90,14 @@ async function callEdgeFunction(name: string, body: object) {
 }
 
 export async function getCampaigns(): Promise<CampusAd[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+  // RLS also exposes OTHER people's live ads for serving — always scope to the owner here,
+  // otherwise every account sees (and shares) the same campaigns.
   const { data, error } = await supabase
     .from('campus_ads')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data ?? []) as CampusAd[];

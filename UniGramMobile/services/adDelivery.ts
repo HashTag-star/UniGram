@@ -73,14 +73,27 @@ export function scaleIntervalForCampaign(baseInterval: number, campaignInterval:
 }
 
 // ─── Per-day frequency caps + hidden ads (device-local) ───────────────────────
-const FREQ_KEY = 'ug_ad_freq:v1';
-const HIDDEN_KEY = 'ug_ad_hidden:v1';
+const FREQ_BASE = 'ug_ad_freq:v2';
+const HIDDEN_BASE = 'ug_ad_hidden:v2';
+let uidCache: string | null = null;
 
 let freq: { day: string; counts: Record<string, number> } | null = null;
 let hidden: Set<string> | null = null;
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Frequency caps and hidden ads belong to the account, not the device. */
+async function scopeKeys() {
+  let uid = 'anon';
+  try { const { data: { user } } = await supabase.auth.getUser(); uid = user?.id ?? 'anon'; } catch {}
+  if (uid !== uidCache) { uidCache = uid; freq = null; hidden = null; }
+  return { FREQ_KEY: `${FREQ_BASE}:${uid}`, HIDDEN_KEY: `${HIDDEN_BASE}:${uid}` };
+}
+
+/** Forget in-memory per-account ad state (call on sign-out / account switch). */
+export function resetAdDeliveryState() { uidCache = null; freq = null; hidden = null; }
+
 async function loadFreq() {
+  const { FREQ_KEY } = await scopeKeys();
   if (freq && freq.day === today()) return freq;
   try {
     const raw = await AsyncStorage.getItem(FREQ_KEY);
@@ -91,6 +104,7 @@ async function loadFreq() {
 }
 
 async function loadHidden() {
+  const { HIDDEN_KEY } = await scopeKeys();
   if (hidden) return hidden;
   try {
     const raw = await AsyncStorage.getItem(HIDDEN_KEY);
@@ -119,12 +133,14 @@ export async function filterEligibleAds<T extends { id: string }>(ads: T[], poli
 export async function noteAdShown(adId: string): Promise<void> {
   const f = await loadFreq();
   f.counts[adId] = (f.counts[adId] ?? 0) + 1;
+  const { FREQ_KEY } = await scopeKeys();
   AsyncStorage.setItem(FREQ_KEY, JSON.stringify(f)).catch(() => {});
 }
 
 export async function hideAd(adId: string, feedback: 'hide' | 'report' = 'hide'): Promise<void> {
   const h = await loadHidden();
   h.add(adId);
+  const { HIDDEN_KEY } = await scopeKeys();
   AsyncStorage.setItem(HIDDEN_KEY, JSON.stringify([...h].slice(-300))).catch(() => {});
   // Feeds the advertiser's relevance score (migration 055). Best effort.
   try {

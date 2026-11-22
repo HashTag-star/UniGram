@@ -75,6 +75,20 @@ export async function initBoostPayment(itemId: string, boostType: BoostType) {
   }) as Promise<{ authorization_url: string; reference: string }>;
 }
 
+/** Test-mode boost: applies the boost directly (owner-only via RLS), no money moves. */
+export async function applySimulatedBoost(itemId: string, boostType: BoostType): Promise<void> {
+  const days = boostType === 'spotlight' ? 3 : boostType === 'featured' ? 7 : null;
+  const boost_expires_at = days ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
+  await new Promise<void>(r => setTimeout(r, 900));
+  const { data, error } = await supabase
+    .from('market_items')
+    .update({ boost_type: boostType, boost_expires_at })
+    .eq('id', itemId)
+    .select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not boost this listing.');
+}
+
 export async function verifyPayment(reference: string) {
   return callEdgeFunction('paystack-verify', { reference }) as Promise<{
     status: string;

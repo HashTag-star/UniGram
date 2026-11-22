@@ -7,9 +7,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import {
-  BOOST_TIERS, initBoostPayment, openPaystackCheckout,
+  BOOST_TIERS, initBoostPayment, openPaystackCheckout, applySimulatedBoost,
   type BoostType,
 } from '../services/payments';
+import { getBillingProvider } from '../services/billing';
+import { fx } from '../lib/feedback';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -55,6 +57,14 @@ export const BoostSheet: React.FC<BoostSheetProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
+      if (getBillingProvider().isSimulated) {
+        // Test mode: no real money — same simulated flow as the Pro paywall.
+        await applySimulatedBoost(itemId, selected);
+        fx.success();
+        onSuccess(selected);
+        onClose();
+        return;
+      }
       const { authorization_url, reference } = await initBoostPayment(itemId, selected);
       const { success, boostType } = await openPaystackCheckout(authorization_url, reference);
       if (success && boostType) {
@@ -180,14 +190,16 @@ export const BoostSheet: React.FC<BoostSheetProps> = ({
             <>
               <Ionicons name="card-outline" size={18} color="#fff" />
               <Text style={bs.payBtnText}>
-                Pay GHS {selectedTier.price_ghs} · {selectedTier.label}
+                {getBillingProvider().isSimulated ? 'Boost now' : `Pay GHS ${selectedTier.price_ghs}`} · {selectedTier.label}
               </Text>
             </>
           )}
         </TouchableOpacity>
 
         <Text style={[bs.footNote, { color: colors.textMuted }]}>
-          Secured by Paystack · MoMo, Visa, Mastercard &amp; more
+          {getBillingProvider().isSimulated
+            ? 'Test mode · no real payment is taken'
+            : 'Secured by Paystack · MoMo, Visa, Mastercard & more'}
         </Text>
       </Animated.View>
     </Modal>
