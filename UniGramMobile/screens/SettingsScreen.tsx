@@ -232,41 +232,6 @@ const PrivacyModal: React.FC<{
 }> = ({ visible, profile, onClose, onProfileUpdated }) => {
   const { colors } = useTheme();
   const dataSaver = useDataSaver();
-
-  const runNetworkCheck = async () => {
-    const lines: string[] = [];
-    const time = async <T,>(label: string, f: () => Promise<T>) => {
-      const s = Date.now();
-      try { const r = await f(); lines.push(`${label}: ${Date.now() - s} ms`); return r; }
-      catch (e: any) { lines.push(`${label}: FAILED after ${Date.now() - s} ms (${String(e?.message ?? e).slice(0, 60)})`); return null; }
-    };
-    await time('Data request', async () => { const { error } = await supabase.from('profiles').select('id').limit(1); if (error) throw error; });
-    // A real picture from this app (own avatar, else the newest post image).
-    let url: string | null = null;
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: me } = await supabase.from('profiles').select('avatar_url').eq('id', user.id).maybeSingle();
-        if (me?.avatar_url) url = me.avatar_url;
-      }
-      if (!url) {
-        const { data: p } = await supabase.from('posts').select('media_url').not('media_url', 'is', null).order('created_at', { ascending: false }).limit(1);
-        url = p?.[0]?.media_url ?? null;
-      }
-    } catch {}
-    if (!url) {
-      lines.push('Picture: no picture found to test');
-    } else {
-      const host = (() => { try { return new URL(url!).host; } catch { return '?'; } })();
-      await time(`Picture (${host})`, async () => {
-        const res = await fetch(url!, { cache: 'no-store' as any });
-        const buf = await res.arrayBuffer();
-        lines.push(`  status ${res.status}, ${Math.round(buf.byteLength / 1024)} KB`);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-      });
-    }
-    Alert.alert('Network check', lines.join('\n') + '\n\nIf the picture is slow or fails here, the connection is the problem. If it is fast here but pictures are blank in the app, tell Claude.');
-  };
   const insets = useSafeAreaInsets();
   const { showPopup } = usePopup();
 
@@ -371,21 +336,6 @@ const PrivacyModal: React.FC<{
             </View>
             <Switch accessibilityLabel="Data saver" value={dataSaver.dataSaver} onValueChange={(v) => dataSaver.setDataSaver(v)} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#fff" />
           </View>
-
-          {/* Network check: tells us whether slow/blank images are the connection or the app */}
-          <TouchableOpacity
-            onPress={runNetworkCheck}
-            style={[styles.privacyRow, { borderBottomWidth: 0, marginTop: 4 }]}
-            accessibilityRole="button" accessibilityLabel="Run network check"
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.privacyRowLabel, { color: colors.text }]}>Network check</Text>
-              <Text style={[styles.privacyRowSub, { color: colors.textMuted }]}>
-                Tests how fast data and pictures load on this phone
-              </Text>
-            </View>
-            <Ionicons name="speedometer-outline" size={20} color={colors.accent} />
-          </TouchableOpacity>
 
           {/* Messaging */}
           <Text style={[styles.privacyGroupLabel, { color: colors.textMuted }]}>Messages</Text>
