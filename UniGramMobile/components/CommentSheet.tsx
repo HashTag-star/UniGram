@@ -89,6 +89,28 @@ interface CommentRowProps {
 
 // ─── CommentRow ──────────────────────────────────────────────────────────────
 
+// Thread geometry (X / Facebook style): ONE vertical line down the parent's avatar,
+// with a rounded elbow branching into every reply. Replies never indent further —
+// deeper replies are flattened into the same column and show "↪ @user".
+const TOP_AVATAR = 36;
+const REPLY_AVATAR = 28;
+const AVATAR_GAP = 12;
+const REPLY_GAP = 8;
+const ELBOW_Y = REPLY_AVATAR / 2; // elbow meets the reply avatar's centre
+const LINE_W = 2;
+
+function flattenReplies(rootId: string, childrenMap: Record<string, any[]>): any[] {
+  const out: any[] = [];
+  const walk = (id: string, parentName: string | null, level: number) => {
+    for (const r of childrenMap[id] || []) {
+      out.push(level >= 1 && parentName ? { ...r, _replyToName: parentName } : r);
+      walk(r.id, r.profiles?.username ?? null, level + 1);
+    }
+  };
+  walk(rootId, null, 0);
+  return out;
+}
+
 const CommentRow = React.memo(function CommentRow({
   item, depth, currentUserId, authorId, colors,
   expandedParents, childrenMap,
@@ -96,11 +118,16 @@ const CommentRow = React.memo(function CommentRow({
 }: CommentRowProps) {
   const profile = item.profiles;
   const isAuthor = item.user_id === authorId;
-  const replies = childrenMap[item.id] || [];
-  const isExpanded = expandedParents.has(item.id);
-  const avatarSize = depth > 0 ? 28 : 36;
+  const isTop = depth === 0;
+  const replies = useMemo(() => (isTop ? flattenReplies(item.id, childrenMap) : []), [isTop, item.id, childrenMap]);
+  const flaggedIds = isTop ? [item.id, ...replies.map((r: any) => r.id)].filter(id => expandedParents.has(id)) : [];
+  const isExpanded = flaggedIds.length > 0;
+  const avatarSize = isTop ? TOP_AVATAR : REPLY_AVATAR;
   const isHighlighted = item.id === highlightedId;
   const highlightBg = useRef(new Animated.Value(isHighlighted ? 1 : 0)).current;
+  const [repliesY, setRepliesY] = useState(0);
+  const [lastY, setLastY] = useState(0);
+  const isAi = profile?.username === 'hashtag';
 
   useEffect(() => {
     if (!isHighlighted) return;
@@ -109,11 +136,26 @@ const CommentRow = React.memo(function CommentRow({
   }, [isHighlighted]);
 
   const bgColor = highlightBg.interpolate({ inputRange: [0, 1], outputRange: ['transparent', 'rgba(99,102,241,0.18)'] });
+  const lineColor = colors.border;
+  // Trunk runs from just under the parent avatar to the last reply's elbow.
+  const trunkHeight = isTop && isExpanded && replies.length
+    ? Math.max(0, repliesY + lastY + ELBOW_Y - (TOP_AVATAR + 4))
+    : 0;
 
   return (
-    <Animated.View style={[styles.commentGroup, depth > 0 && { marginLeft: depth * 24, marginBottom: 12 }, { backgroundColor: bgColor, borderRadius: 10 }]}>
+    <Animated.View style={[styles.commentGroup, depth > 0 && { marginBottom: 12 }, { backgroundColor: bgColor, borderRadius: 10 }]}>
       <TouchableWithoutFeedback onLongPress={() => onLongPress(item)}>
         <View style={styles.commentRow}>
+          {trunkHeight > 0 && (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute', left: TOP_AVATAR / 2 - LINE_W / 2, top: TOP_AVATAR + 4,
+                width: LINE_W, height: trunkHeight, borderRadius: LINE_W / 2, backgroundColor: lineColor,
+              }}
+            />
+          )}
+
           {profile?.avatar_url ? (
             <CachedImage
               uri={profile.avatar_url}
@@ -123,21 +165,26 @@ const CommentRow = React.memo(function CommentRow({
             <View style={[
               styles.commentAvatar,
               { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2,
-                backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' },
+                backgroundColor: isAi ? colors.accent : colors.bg2, alignItems: 'center', justifyContent: 'center' },
             ]}>
-              <Ionicons name="person" size={depth > 0 ? 12 : 16} color={colors.textMuted} />
+              <Ionicons name={isAi ? 'sparkles' : 'person'} size={isTop ? 16 : 12} color={isAi ? '#fff' : colors.textMuted} />
             </View>
           )}
 
-          <View style={{ flex: 1, marginLeft: depth > 0 ? 8 : 12 }}>
+          <View style={{ flex: 1, marginLeft: isTop ? AVATAR_GAP : REPLY_GAP }}>
             <View style={styles.commentHeader}>
-              <Text style={[styles.commentUser, { color: item.isDeleted ? colors.textMuted : colors.text, fontSize: depth > 0 ? 13 : 14 }]}>
+              <Text style={[styles.commentUser, { color: item.isDeleted ? colors.textMuted : colors.text, fontSize: isTop ? 14 : 13 }]}>
                 {item.isDeleted ? 'Deleted Comment' : (profile?.username ?? 'user')}
               </Text>
               {profile?.is_verified && (
                 <VerifiedBadge type={profile.verification_type} size="sm" />
               )}
-              {isAuthor && depth === 0 && (
+              {isAi && (
+                <View style={[styles.authorBadge, { backgroundColor: colors.accent + '22' }]}>
+                  <Text style={[styles.authorBadgeText, { color: colors.accent }]}>AI</Text>
+                </View>
+              )}
+              {isAuthor && isTop && (
                 <View style={styles.authorBadge}>
                   <Text style={styles.authorBadgeText}>Author</Text>
                 </View>
@@ -147,6 +194,10 @@ const CommentRow = React.memo(function CommentRow({
               </Text>
             </View>
 
+            {item._replyToName ? (
+              <Text style={{ color: colors.textMuted, fontSize: 11.5, marginBottom: 2 }}>↪ replying to @{item._replyToName}</Text>
+            ) : null}
+
             {item.isDeleted ? (
               <View style={[styles.deletedCommentBox, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
                 <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
@@ -154,7 +205,7 @@ const CommentRow = React.memo(function CommentRow({
               </View>
             ) : (
               <>
-                <Text style={[styles.commentText, { color: colors.textSub, fontSize: depth > 0 ? 13 : 14 }]}>
+                <Text style={[styles.commentText, { color: colors.textSub, fontSize: isTop ? 14 : 13 }]}>
                   {renderMentions(item.text, colors)}
                 </Text>
 
@@ -168,7 +219,7 @@ const CommentRow = React.memo(function CommentRow({
               >
                 <Ionicons
                   name={item.isLiked ? 'heart' : 'heart-outline'}
-                  size={depth > 0 ? 13 : 16}
+                  size={isTop ? 16 : 13}
                   color={item.isLiked ? '#ef4444' : colors.textMuted}
                 />
                 {item.likes_count > 0 && (
@@ -201,9 +252,10 @@ const CommentRow = React.memo(function CommentRow({
               </>
             )}
 
-            {replies.length > 0 && (
-              <TouchableOpacity style={styles.repliesToggle} onPress={() => onToggleExpand(item.id)}>
-                <View style={[styles.repliesLine, { backgroundColor: colors.border }]} />
+            {isTop && replies.length > 0 && (
+              <TouchableOpacity style={styles.repliesToggle} onPress={() => { if (isExpanded) flaggedIds.forEach(id => onToggleExpand(id)); else onToggleExpand(item.id); }}>
+                {/* a short elbow that leads into the toggle, so a collapsed thread still reads as a thread */}
+                <View style={{ width: 22, height: 10, marginRight: 8, borderLeftWidth: LINE_W, borderBottomWidth: LINE_W, borderBottomLeftRadius: 8, borderColor: lineColor, opacity: isExpanded ? 0 : 1 }} />
                 <Text style={[styles.repliesToggleText, { color: colors.textMuted }]}>
                   {isExpanded
                     ? 'Hide replies'
@@ -212,23 +264,44 @@ const CommentRow = React.memo(function CommentRow({
               </TouchableOpacity>
             )}
 
-            {isExpanded && replies.map(reply => (
-              <CommentRow
-                key={reply.id}
-                item={reply}
-                depth={depth + 1}
-                currentUserId={currentUserId}
-                authorId={authorId}
-                colors={colors}
-                expandedParents={expandedParents}
-                childrenMap={childrenMap}
-                onLike={onLike}
-                onReply={onReply}
-                onLongPress={onLongPress}
-                onToggleExpand={onToggleExpand}
-                highlightedId={highlightedId}
-              />
-            ))}
+            {isTop && isExpanded && replies.length > 0 && (
+              <View style={{ marginTop: 12 }} onLayout={(e) => setRepliesY(e.nativeEvent.layout.y)}>
+                {replies.map((reply, i) => (
+                  <View
+                    key={reply.id}
+                    onLayout={i === replies.length - 1 ? (e) => setLastY(e.nativeEvent.layout.y) : undefined}
+                  >
+                    {/* curved elbow from the trunk into this reply's avatar */}
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: TOP_AVATAR / 2 - LINE_W / 2 - (TOP_AVATAR + AVATAR_GAP),
+                        top: ELBOW_Y - 12,
+                        width: TOP_AVATAR + AVATAR_GAP - (TOP_AVATAR / 2 - LINE_W / 2) - 4,
+                        height: 12,
+                        borderLeftWidth: LINE_W, borderBottomWidth: LINE_W,
+                        borderBottomLeftRadius: 12, borderColor: lineColor,
+                      }}
+                    />
+                    <CommentRow
+                      item={reply}
+                      depth={1}
+                      currentUserId={currentUserId}
+                      authorId={authorId}
+                      colors={colors}
+                      expandedParents={expandedParents}
+                      childrenMap={childrenMap}
+                      onLike={onLike}
+                      onReply={onReply}
+                      onLongPress={onLongPress}
+                      onToggleExpand={onToggleExpand}
+                      highlightedId={highlightedId}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         </View>
       </TouchableWithoutFeedback>
