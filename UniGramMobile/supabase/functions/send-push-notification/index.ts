@@ -1,6 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
 import admin from "npm:firebase-admin@12.2.0";
+import { isAllowedMediaUrl } from "../_shared/guard.ts";
+
+const DATA_KEY_ALLOWLIST = new Set([
+  'type', 'channelId', 'post_id', 'reel_id', 'conversation_id', 'user_id', 'live_id', 'comment_id',
+  'postId', 'reelId', 'conversationId', 'userId', 'liveId', 'commentId',
+]);
+const MAX_PUSH_PER_MINUTE = 30; // per authenticated sender
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': 'unigram://',
@@ -55,23 +62,59 @@ Deno.serve(async (req) => {
     );
 
     const token = authHeader.slice(7);
-    const { data: { user }, error: authErr } = await supabaseClient.auth.getUser(token);
-    if (authErr || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // DB-triggered pushes (send_push_via_db) authenticate with the service-role key: trusted, not rate limited.
+    const isService = token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    let senderId: string | null = null;
+    if (!isService) {
+      const { data: { user }, error: authErr } = await supabaseClient.auth.getUser(token);
+      if (authErr || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      senderId = user.id;
     }
 
     const bodyJson = await req.json();
-    const { userId, title, body, data, imageUrl, senderAvatarUrl, categoryId, groupId } = bodyJson;
+    const { userId, data: rawData, categoryId: rawCategory, groupId: rawGroup } = bodyJson;
+    let { title, body, imageUrl, senderAvatarUrl } = bodyJson;
 
-    if (!userId || !title || !body) {
+    if (typeof userId !== 'string' || typeof title !== 'string' || typeof body !== 'string' || !title || !body) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Per-sender rate limit (migration 065: check_push_rate)
+    if (senderId) {
+      const { data: okRate, error: rateErr } = await supabaseClient.rpc('check_push_rate', {
+        p_sender: senderId, p_limit: MAX_PUSH_PER_MINUTE,
+      });
+      if (rateErr || okRate !== true) {
+        return new Response(JSON.stringify({ error: 'Too many notifications' }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // Length caps, host allowlists, data-key allowlist (clients can't inject arbitrary payload keys)
+    title = title.slice(0, 80);
+    body = body.slice(0, 240);
+    imageUrl = isAllowedMediaUrl(imageUrl) ? imageUrl : undefined;
+    senderAvatarUrl = isAllowedMediaUrl(senderAvatarUrl) ? senderAvatarUrl : undefined;
+    const data: Record<string, string> = {};
+    if (rawData && typeof rawData === 'object') {
+      for (const [k, v] of Object.entries(rawData)) {
+        if (DATA_KEY_ALLOWLIST.has(k) && (typeof v === 'string' || typeof v === 'number')) {
+          data[k] = String(v).slice(0, 200);
+        }
+      }
+    }
+    const categoryId: string | undefined = typeof rawCategory === 'string' ? rawCategory.slice(0, 60) : undefined;
+    const groupId: string | undefined = typeof rawGroup === 'string' ? rawGroup.slice(0, 100) : undefined;
 
     if (!admin.apps.length) {
       const firebaseConfig = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
@@ -107,8 +150,8 @@ Deno.serve(async (req) => {
 
     const hasImage = !!imageUrl;
     const hasAvatar = !!senderAvatarUrl;
-    const channelId: string = (data as any)?.channelId ?? 'default';
-    const notifType: string = (data as any)?.type ?? '';
+    const channelId: string = data.channelId ?? 'default';
+    const notifType: string = data.type ?? '';
 
     // For follow-type notifications, composite recipient (back) + sender (front) into one image
     const cloudinaryCloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME");

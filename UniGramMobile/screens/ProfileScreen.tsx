@@ -35,6 +35,12 @@ import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
 import { UsersListSheet } from '../components/UsersListSheet';
 import { ProfilePicViewer } from '../components/ProfilePicViewer';
+import { EmptyState } from '../components/EmptyState';
+import { ReportSheet } from '../components/ReportSheet';
+import { BlockSheet } from '../components/BlockSheet';
+import { FollowRequestsSheet } from '../components/FollowRequestsSheet';
+import { sendRequest, cancelRequest, hasPendingRequest, countIncoming } from '../services/followRequests';
+import { fx } from '../lib/feedback';
 
 import { friendlyError } from '../lib/friendlyError';
 const { width, height } = Dimensions.get('window');
@@ -112,6 +118,15 @@ export const ProfileScreen = React.memo<Props>(({
   const [aiInsightsError, setAiInsightsError] = useState<string | null>(null);
   const aiLoadedRef = React.useRef(false);
 
+  // Safety / privacy
+  const [showMenu, setShowMenu] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [showBlock, setShowBlock] = useState(false);
+  const [showMute, setShowMute] = useState(false);
+  const [followRequested, setFollowRequested] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const [showRequests, setShowRequests] = useState(false);
+
   const isPro = isProActive(profile);
 
   const load = useCallback(async () => {
@@ -152,9 +167,12 @@ export const ProfileScreen = React.memo<Props>(({
       setIsSuspended(!!(prof as any)?.is_suspended);
       setLoading(false);
 
-      if (!own) {
+      if (own) {
+        if ((prof as any)?.is_private) countIncoming().then(setPendingRequests);
+      } else {
         const following = await isFollowing(user.id, targetId);
         setIsFollowingUser(following);
+        if (!following && (prof as any)?.is_private) hasPendingRequest(targetId).then(setFollowRequested);
         recordProfileView(user.id, targetId).catch((e) => console.warn('[ProfileScreen] recordView:', e?.message));
         recordProfileViewAnalytics(targetId, user.id).catch((e) => console.warn('[ProfileScreen] viewAnalytics:', e?.message));
       }
@@ -232,6 +250,20 @@ export const ProfileScreen = React.memo<Props>(({
 
   const toggleFollow = async () => {
     if (!profile) return;
+    // Private account: follow becomes a request (or cancelling one).
+    if (profile.is_private && !isFollowingUser) {
+      const wasRequested = followRequested;
+      setFollowRequested(!wasRequested);
+      fx.select();
+      try {
+        if (wasRequested) await cancelRequest(profile.id);
+        else { await sendRequest(profile.id); showToast('Follow request sent', 'success'); }
+      } catch (e: any) {
+        setFollowRequested(wasRequested);
+        showToast(friendlyError(e, 'Could not send the follow request.'), 'error');
+      }
+      return;
+    }
     const next = !isFollowingUser;
     setIsFollowingUser(next);
     SocialSync.emit('FOLLOW_CHANGE', { targetId: profile.id, isActive: next });
@@ -334,8 +366,8 @@ export const ProfileScreen = React.memo<Props>(({
           {item.thumbnail_url ? (
             <CachedImage uri={item.thumbnail_url} style={styles.gridImg} resizeMode="cover" />
           ) : (
-            <View style={[styles.gridImg, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="film-outline" size={32} color="#333" />
+            <View style={[styles.gridImg, { backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="film-outline" size={32} color={colors.textMuted} />
             </View>
           )}
           <View style={styles.gridOverlay}>
@@ -354,7 +386,7 @@ export const ProfileScreen = React.memo<Props>(({
         {item.type === 'video' && <View style={styles.mediaBadge}><Ionicons name="play" size={12} color="#fff" /></View>}
       </TouchableOpacity>
     );
-  }, [activeTab, currentUserId, likedIds]);
+  }, [activeTab, currentUserId, likedIds, colors]);
 
   const listData = useMemo(() => {
     switch (activeTab) {
@@ -377,15 +409,21 @@ export const ProfileScreen = React.memo<Props>(({
     </FadeIn>
   );
 
-  const Header = () => (
+  // A stable ELEMENT (not a component defined per render) so the header never remounts,
+  // which used to make the cover/avatar flicker on every state change.
+  const headerElement = (
     <>
       {/* Cover & Header Section */}
       <View style={styles.coverSection}>
-        <CachedImage uri={profile?.cover_url || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1000'} style={styles.cover} />
+        {profile?.cover_url ? (
+          <CachedImage uri={profile.cover_url} style={styles.cover} />
+        ) : (
+          <LinearGradient colors={['#4f46e5', '#7c3aed', '#db2777']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cover} />
+        )}
         <View style={styles.coverOverlay} />
         <View style={[styles.headerTop, { top: insets.top + 10 }]}>
           {onBack && (
-            <TouchableOpacity onPress={onBack} style={styles.navBtn} accessibilityLabel="Go back" accessibilityRole="button">
+            <TouchableOpacity onPress={onBack} style={styles.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Go back" accessibilityRole="button">
               <Ionicons name="chevron-back" size={24} color="#fff" />
             </TouchableOpacity>
           )}
@@ -402,8 +440,13 @@ export const ProfileScreen = React.memo<Props>(({
           )}
           <View style={{ flex: 1 }} />
           {isOwn && (
-            <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn} accessibilityLabel="Settings" accessibilityRole="button">
+            <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Settings" accessibilityRole="button">
               <Ionicons name="settings-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
+          {!isOwn && !!profile && (
+            <TouchableOpacity onPress={() => { fx.tap(); setShowMenu(true); }} style={styles.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="More options" accessibilityRole="button">
+              <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
             </TouchableOpacity>
           )}
         </View>
@@ -413,7 +456,7 @@ export const ProfileScreen = React.memo<Props>(({
       <View style={styles.infoSection}>
         <View style={styles.avatarRow}>
           <View style={styles.avatarContainer}>
-            <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: '#818cf8' }]}>
+            <View style={[styles.avatarRing, { borderColor: colors.bg, backgroundColor: colors.bg2 }, profile?.is_verified && { borderColor: colors.accent }]}>
               <TouchableOpacity
                 onPress={() => profile?.avatar_url && setShowPicViewer(true)}
                 activeOpacity={0.88}
@@ -462,7 +505,7 @@ export const ProfileScreen = React.memo<Props>(({
           <View style={styles.metaRow}>
             {profile?.major && (
               <View style={styles.majorTag}>
-                <Text style={styles.majorTagText}>{profile.major}</Text>
+                <Text style={[styles.majorTagText, { color: colors.accent }]}>{profile.major}</Text>
               </View>
             )}
             {profile?.university && <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{profile.university}</Text>}
@@ -478,7 +521,13 @@ export const ProfileScreen = React.memo<Props>(({
                   {!profile?.is_verified && (
                     <TouchableOpacity style={styles.verifyBtn} onPress={() => setShowVerification(true)} accessibilityLabel="Get verified" accessibilityRole="button">
                       <Ionicons name="shield-checkmark" size={16} color="#fff" />
-                      <Text style={styles.verifyText}>Get Verified</Text>
+                      <Text style={[styles.verifyText, { color: colors.accent }]}>Get Verified</Text>
+                    </TouchableOpacity>
+                  )}
+                  {pendingRequests > 0 && (
+                    <TouchableOpacity style={[styles.verifyBtn, { minHeight: 40 }]} onPress={() => { fx.tap(); setShowRequests(true); }} accessibilityLabel={`Follow requests, ${pendingRequests} pending`} accessibilityRole="button">
+                      <Ionicons name="person-add" size={15} color={colors.accent} />
+                      <Text style={[styles.verifyText, { color: colors.accent }]}>Requests ({pendingRequests})</Text>
                     </TouchableOpacity>
                   )}
                   {!isPro && (
@@ -493,14 +542,14 @@ export const ProfileScreen = React.memo<Props>(({
                   <TouchableOpacity 
                     style={[
                       styles.followBtn, 
-                      isFollowingUser ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: '#6366f1' }
-                    ]} 
+                      (isFollowingUser || followRequested) ? [styles.followingBtn, { backgroundColor: colors.bg2, borderColor: colors.border }] : { backgroundColor: colors.accent }
+                    ]}
                     onPress={toggleFollow}
-                    accessibilityLabel={isFollowingUser ? 'Unfollow' : 'Follow'}
+                    accessibilityLabel={isFollowingUser ? 'Unfollow' : followRequested ? 'Cancel follow request' : profile?.is_private ? 'Request to follow' : 'Follow'}
                     accessibilityRole="button"
                   >
-                    <Text style={[styles.followBtnText, isFollowingUser && { color: colors.text }]}>
-                      {isFollowingUser ? 'Following' : 'Follow'}
+                    <Text style={[styles.followBtnText, (isFollowingUser || followRequested) && { color: colors.text }]}>
+                      {isFollowingUser ? 'Following' : followRequested ? 'Requested' : profile?.is_private ? 'Request to follow' : 'Follow'}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.msgBtn, { backgroundColor: colors.bg2, borderColor: colors.border }]} onPress={openMessage} accessibilityLabel="Send message" accessibilityRole="button">
@@ -569,58 +618,57 @@ export const ProfileScreen = React.memo<Props>(({
         renderItem={renderItem}
         keyExtractor={(item: any) => item.id}
         numColumns={activeTab === 'threads' || activeTab === 'analytics' ? 1 : 3}
-        ListHeaderComponent={Header}
+        ListHeaderComponent={headerElement}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
         removeClippedSubviews={Platform.OS === 'android'}
         maxToRenderPerBatch={activeTab === 'threads' ? 5 : 12}
         windowSize={activeTab === 'threads' ? 5 : 11}
-        ListEmptyComponent={!loading ? (
-          activeTab === 'analytics' ? (
-            <AnalyticsDashboard
-              pa={proAnalytics}
-              posts={postAnalytics}
-              loading={analyticsLoading}
-              error={analyticsError}
-              colors={colors}
-              onRetry={() => { setProAnalytics(null); setAnalyticsError(null); setActiveTab('posts'); setTimeout(() => setActiveTab('analytics'), 50); }}
-              aiInsights={aiInsights}
-              aiOutlook={aiOutlook}
-              aiLoading={aiInsightsLoading}
-              aiError={aiInsightsError}
-              onLoadAI={loadAIInsights}
+        ListEmptyComponent={!loading && activeTab !== 'analytics' ? (
+          loadError ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Couldn't load profile"
+              subtitle="Check your connection and try again."
+              actionLabel="Try again"
+              onAction={() => { setLoadError(false); setLoading(true); load(); }}
             />
-          ) : loadError ? (
-            <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 }}>
-              <Ionicons name="cloud-offline-outline" size={52} color={colors.textMuted} />
-              <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Couldn't load profile</Text>
-              <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-                Check your connection and try again.
-              </Text>
-              <TouchableOpacity
-                onPress={() => { setLoadError(false); setLoading(true); load(); }}
-                style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
-                activeOpacity={0.85}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
-              </TouchableOpacity>
-            </View>
           ) : (
-            <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 }}>
-              <Ionicons name="images-outline" size={52} color={colors.textMuted} />
-              <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No {activeTab} yet</Text>
-              <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-                {activeTab === 'posts' && 'Share something with your followers!'}
-                {activeTab === 'reels' && 'Create a reel to see it here.'}
-                {activeTab === 'tagged' && 'Posts you\'re tagged in will appear here.'}
-                {activeTab === 'saved' && 'Save posts to revisit them later.'}
-                {activeTab === 'threads' && 'Start a conversation with a thread.'}
-              </Text>
-            </View>
+            <EmptyState
+              icon="images-outline"
+              title={`No ${activeTab} yet`}
+              subtitle={
+                activeTab === 'posts' ? 'Share something with your followers!'
+                : activeTab === 'reels' ? 'Create a reel to see it here.'
+                : activeTab === 'tagged' ? "Posts you're tagged in will appear here."
+                : activeTab === 'saved' ? 'Save posts to revisit them later.'
+                : 'Start a conversation with a thread.'
+              }
+            />
           )
         ) : undefined}
-        ListFooterComponent={isSuspended ? (
+        ListFooterComponent={activeTab === 'analytics' ? (
+          <AnalyticsDashboard
+            pa={proAnalytics}
+            posts={postAnalytics}
+            loading={analyticsLoading}
+            error={analyticsError}
+            colors={colors}
+            onRetry={() => {
+              setProAnalytics(null); setAnalyticsError(null); setAnalyticsLoading(true);
+              Promise.all([getProfileAnalytics(currentUserId), getPostAnalytics(currentUserId, 30)])
+                .then(([pa, pa2]) => { setProAnalytics(pa); setPostAnalytics(pa2); })
+                .catch((e: any) => setAnalyticsError(friendlyError(e, 'Could not load analytics.')))
+                .finally(() => setAnalyticsLoading(false));
+            }}
+            aiInsights={aiInsights}
+            aiOutlook={aiOutlook}
+            aiLoading={aiInsightsLoading}
+            aiError={aiInsightsError}
+            onLoadAI={loadAIInsights}
+          />
+        ) : isSuspended ? (
           <View style={styles.suspendedOverlay}>
             <View style={styles.suspendedCard}>
               <Ionicons name="ban" size={48} color="#f59e0b" />
@@ -718,9 +766,41 @@ export const ProfileScreen = React.memo<Props>(({
         onAddAccount={async () => {
           setShowAccountSwitcher(false);
           // Standard login flow for new account
-          await supabase.auth.signOut();
+          // Central sign-out (clears caches / ad state / queued interactions).
+          try { await (await import('../services/auth')).signOut(); }
+          catch { await supabase.auth.signOut().catch(() => {}); }
         }}
       />
+
+      {/* Other-user overflow menu */}
+      <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
+        <TouchableOpacity style={styles.switcherOverlay} activeOpacity={1} onPress={() => setShowMenu(false)} accessibilityLabel="Close menu">
+          <View style={[styles.switcherContent, { backgroundColor: colors.bg2, paddingBottom: insets.bottom + 16 }]}>
+            <View style={[styles.switcherHandle, { backgroundColor: colors.border }]} />
+            {([
+              { key: 'mute', icon: 'volume-mute-outline', label: 'Mute', danger: false, run: () => setShowMute(true) },
+              { key: 'report', icon: 'flag-outline', label: 'Report', danger: true, run: () => setShowReport(true) },
+              { key: 'block', icon: 'ban-outline', label: 'Block', danger: true, run: () => setShowBlock(true) },
+            ] as const).map(a => (
+              <TouchableOpacity
+                key={a.key}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 52 }}
+                onPress={() => { setShowMenu(false); setTimeout(a.run, 250); }}
+                accessibilityRole="button"
+                accessibilityLabel={`${a.label} @${profile?.username ?? ''}`}
+              >
+                <Ionicons name={a.icon} size={22} color={a.danger ? '#ef4444' : colors.text} />
+                <Text style={{ color: a.danger ? '#ef4444' : colors.text, fontSize: 16, fontWeight: '600' }}>{a.label} @{profile?.username}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+      <ReportSheet visible={showReport} onClose={() => setShowReport(false)} targetType="user" targetId={profile?.id} label="user" showToast={showToast} />
+      <BlockSheet visible={showBlock} onClose={() => setShowBlock(false)} userId={profile?.id} username={profile?.username} mode="block" showToast={showToast}
+        onDone={() => { if (onBack) onBack(); }} />
+      <BlockSheet visible={showMute} onClose={() => setShowMute(false)} userId={profile?.id} username={profile?.username} mode="mute" showToast={showToast} />
+      <FollowRequestsSheet visible={showRequests} onClose={() => setShowRequests(false)} onChanged={(n) => { setPendingRequests(n); }} />
 
       <ProfilePicViewer
         visible={showPicViewer}
@@ -828,7 +908,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
   if (loading) {
     return (
       <View style={{ alignItems: 'center', paddingTop: 60, gap: 14 }}>
-        <ActivityIndicator color="#6366f1" size="large" />
+        <ActivityIndicator color={colors.accent} size="large" />
         <Text style={{ color: colors.textMuted, fontSize: 13 }}>Loading analytics…</Text>
       </View>
     );
@@ -836,17 +916,13 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
 
   if (error) {
     return (
-      <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 32, gap: 14 }}>
-        <Ionicons name="alert-circle-outline" size={44} color="#ef4444" />
-        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, textAlign: 'center' }}>Analytics unavailable</Text>
-        <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>{error}</Text>
-        <TouchableOpacity
-          onPress={onRetry}
-          style={{ backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 4 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try Again</Text>
-        </TouchableOpacity>
-      </View>
+      <EmptyState
+        icon="alert-circle-outline"
+        title="Analytics unavailable"
+        subtitle={error}
+        actionLabel="Try again"
+        onAction={onRetry}
+      />
     );
   }
 
@@ -866,7 +942,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <Text style={{ color: colors.text, fontWeight: '800', fontSize: 18, letterSpacing: -0.3 }}>Your Analytics</Text>
         <View style={{ backgroundColor: 'rgba(99,102,241,0.12)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
-          <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '700' }}>Last 30 days</Text>
+          <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '700' }}>Last 30 days</Text>
         </View>
       </View>
 
@@ -877,7 +953,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
           sub="last 7 days"
           value={pa.profile_views_7d ?? 0}
           prev={pa.profile_views_prev_7d ?? 0}
-          accentColor="#818cf8"
+          accentColor={colors.accent}
         />
         <HeroCard
           label="Post Impressions"
@@ -891,7 +967,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
       {/* ── Secondary metrics */}
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
         <MiniCard label="Followers" value={fmtNum(pa.followers ?? 0)} />
-        <MiniCard label="Engagement" value={`${engRate}%`} accent="#818cf8" sub="likes + comments / views" />
+        <MiniCard label="Engagement" value={`${engRate}%`} accent={colors.accent} sub="likes + comments / views" />
         <MiniCard label="Total Likes" value={fmtNum(pa.total_likes ?? 0)} />
       </View>
 
@@ -939,7 +1015,7 @@ const AnalyticsDashboard = ({ pa, posts, loading, error, colors, onRetry, aiInsi
               {aiInsights.map((insight, i) => (
                 <View key={i} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
                   <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(99,102,241,0.15)', alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 }}>
-                    <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '800' }}>{i + 1}</Text>
+                    <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '800' }}>{i + 1}</Text>
                   </View>
                   <Text style={{ color: colors.textSub, fontSize: 13, lineHeight: 20, flex: 1 }}>{insight}</Text>
                 </View>
@@ -1088,7 +1164,7 @@ const styles = StyleSheet.create({
   cover: { width: '100%', height: '100%' },
   coverOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.3)' },
   headerTop: { position: 'absolute', top: 10, left: 16, right: 16, flexDirection: 'row', alignItems: 'center' },
-  navBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  navBtn: { width: 44, height: 44, borderRadius: 22, marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   
   infoSection: { marginTop: -40, paddingHorizontal: 16 },
   avatarRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
@@ -1096,7 +1172,6 @@ const styles = StyleSheet.create({
   avatarRing: { 
     width: 86, height: 86, borderRadius: 43, 
     borderWidth: 3, overflow: 'hidden',
-    backgroundColor: '#1a1a1a',
   },
   avatar: { width: '100%', height: '100%' },
   avatarEditOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },

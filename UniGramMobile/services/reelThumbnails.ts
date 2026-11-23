@@ -5,6 +5,7 @@
  * parallel decoders.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 
 let VideoThumbnails: any = null;
 try { VideoThumbnails = require('expo-video-thumbnails'); } catch {}
@@ -15,12 +16,23 @@ const inflight = new Map<string, Promise<string | null>>();
 let diskLoaded = false;
 let chain: Promise<unknown> = Promise.resolve();
 
+/** file:// thumbnails live in the OS cache dir and can be purged — never trust a persisted path blindly. */
+async function fileStillExists(uri: string): Promise<boolean> {
+  if (!uri.startsWith('file://')) return true;
+  try { return !!(await FileSystem.getInfoAsync(uri)).exists; } catch { return false; }
+}
+
 async function loadDisk() {
   if (diskLoaded) return;
   diskLoaded = true;
   try {
     const raw = await AsyncStorage.getItem(KEY);
-    if (raw) Object.entries(JSON.parse(raw) as Record<string, string>).forEach(([k, v]) => mem.set(k, v));
+    if (raw) {
+      const entries = Object.entries(JSON.parse(raw) as Record<string, string>);
+      // Verify each persisted file:// still exists before exposing it (sync getter included).
+      const ok = await Promise.all(entries.map(([, v]) => fileStillExists(v)));
+      entries.forEach(([k, v], i) => { if (ok[i]) mem.set(k, v); });
+    }
   } catch {}
 }
 
@@ -38,7 +50,11 @@ export async function getReelThumbnail(videoUrl?: string | null): Promise<string
   if (!videoUrl || !VideoThumbnails) return null;
   await loadDisk();
   const hit = mem.get(videoUrl);
-  if (hit) return hit;
+  if (hit) {
+    if (await fileStillExists(hit)) return hit;
+    mem.delete(videoUrl); // stale path → regenerate below
+    persist();
+  }
   const pending = inflight.get(videoUrl);
   if (pending) return pending;
 

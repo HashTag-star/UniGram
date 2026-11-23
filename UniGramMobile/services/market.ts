@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
 import { Cache, TTL } from '../lib/cache';
+import { sanitizeFilterTerm } from './profiles';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,8 +80,12 @@ export async function getMarketItems(
   }
 
   if (search && search.trim()) {
-    const term = `%${search.trim()}%`;
-    query = query.or(`title.ilike.${term},description.ilike.${term}`);
+    // Strip `,()%_` etc. — they have meaning inside PostgREST or() filter strings
+    const clean = sanitizeFilterTerm(search, 60);
+    if (clean) {
+      const term = `%${clean}%`;
+      query = query.or(`title.ilike.${term},description.ilike.${term}`);
+    }
   }
 
   const { data, error } = await query;
@@ -133,7 +138,8 @@ export async function getSavedItemIds(userId: string): Promise<string[]> {
   const { data, error } = await supabase
     .from('market_saves')
     .select('item_id')
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .limit(1000);
   if (error) throw error;
   return (data ?? []).map((r: any) => r.item_id as string);
 }
@@ -306,17 +312,19 @@ export async function toggleSaveItem(
 }
 
 /**
- * Increment view count for an item. Uses a read-then-write fallback directly
- * to avoid throwing 404 errors on a non-existent database RPC function.
+ * Increment view count for an item. Prefers the atomic RPC `increment_market_views`
+ * (no read-modify-write race); falls back to read-then-write when the RPC is missing.
  */
 export async function incrementViewCount(itemId: string): Promise<void> {
   try {
-    const { data } = await supabase
+    const rpc = await supabase.rpc('increment_market_views', { p_item_id: itemId });
+    if (!rpc.error) return;
+    const { data, error: readErr } = await supabase
       .from('market_items')
       .select('views_count')
       .eq('id', itemId)
-      .single();
-    if (!data) return;
+      .maybeSingle();
+    if (readErr || !data) return;
     await supabase
       .from('market_items')
       .update({ views_count: (data.views_count ?? 0) + 1 })

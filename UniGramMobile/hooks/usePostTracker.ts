@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 interface InteractionPayload {
@@ -41,11 +42,23 @@ let skipSupported = true;
 const BATCH_SIZE      = 10;
 const FLUSH_INTERVAL  = 30_000; // 30 seconds
 const MIN_DWELL_MS    = 1_000;  // ignore sub-1s glances
+const MAX_DWELL_MS    = 120_000; // a post left open on screen (or app left running) must not log 40 minutes
+const MAX_QUEUE       = 200;    // bound memory while offline — oldest signals are dropped first
 
 async function flushBatch() {
   if (flushInFlight) return flushInFlight;
   if (!queue.length) return;
-  const payload = queue.splice(0, queue.length);
+  // Only ever send rows for the account that is signed in NOW (account switch / sign-out
+  // must never leak the previous user's signals under the new session).
+  let currentUserId: string | null = null;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    currentUserId = user?.id ?? null;
+  } catch { /* offline: keep the queue */ }
+  if (!currentUserId) return;
+  const all = queue.splice(0, queue.length);
+  const payload = all.filter(p => p.user_id === currentUserId);
+  if (!payload.length) return;
   flushInFlight = (async () => {
     try {
       const { error } = await supabase.from('interactions').insert(payload);
@@ -59,6 +72,7 @@ async function flushBatch() {
       // Keep preference signals when the device is offline. The next enqueue or
       // foreground flush will retry this small batch instead of losing it.
       queue.unshift(...keep);
+      if (queue.length > MAX_QUEUE) queue.splice(0, queue.length - MAX_QUEUE);
     } finally {
       flushInFlight = null;
     }
@@ -68,7 +82,11 @@ async function flushBatch() {
 
 function enqueue(item: InteractionPayload) {
   if (item.type === 'skip' && !skipSupported) return;
+  if (item.type === 'dwell' && item.duration_ms !== undefined) {
+    item = { ...item, duration_ms: Math.min(item.duration_ms, MAX_DWELL_MS) };
+  }
   queue.push(item);
+  if (queue.length > MAX_QUEUE) queue.splice(0, queue.length - MAX_QUEUE);
 
   if (queue.length >= BATCH_SIZE) {
     if (flushTimer !== null) {
@@ -95,6 +113,8 @@ export function usePostTracker(
   isVisible: boolean,
 ) {
   const entryTimeRef = useRef<number | null>(null);
+  const visibleRef = useRef(isVisible);
+  visibleRef.current = isVisible;
 
   // Track enter / exit viewport
   useEffect(() => {
@@ -108,6 +128,26 @@ export function usePostTracker(
       }
     }
   }, [isVisible, postId, userId]);
+
+  // App backgrounded: close the open dwell (no counting time while the phone is in a pocket),
+  // flush what we have, and restart the timer when the app comes back with the post still visible.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') {
+        if (entryTimeRef.current !== null) {
+          const duration_ms = Date.now() - entryTimeRef.current;
+          entryTimeRef.current = null;
+          if (duration_ms >= MIN_DWELL_MS) {
+            enqueue({ user_id: userId, post_id: postId, type: 'dwell', duration_ms });
+          }
+        }
+        flushBatch().catch(() => {});
+      } else if (state === 'active' && visibleRef.current && entryTimeRef.current === null) {
+        entryTimeRef.current = Date.now();
+      }
+    });
+    return () => sub.remove();
+  }, [postId, userId]);
 
   // Flush on unmount (user navigated away mid-view)
   useEffect(() => {
@@ -128,6 +168,15 @@ export function usePostTracker(
 /** Manually enqueue an interaction (e.g. share — not captured by DB triggers). */
 export function enqueueInteraction(payload: InteractionPayload) {
   enqueue(payload);
+}
+
+/** Drop all queued interactions without sending (sign-out / account switch). */
+export function clearInteractionQueue() {
+  queue.length = 0;
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
 }
 
 /** Force-flush remaining interactions (call on app background / screen unmount). */

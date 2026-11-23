@@ -16,6 +16,7 @@ import {
 import {
   answerCall, declineCall, endCall,
   sendIceCandidate, subscribeToCall, subscribeToIceCandidates,
+  getExistingIceCandidates, updateCallOffer, getCall,
   CallRecord, CallType,
 } from '../services/calls';
 
@@ -96,6 +97,21 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     }
   };
 
+  // While ringing, dismiss if the caller hangs up / the call times out.
+  useEffect(() => {
+    if (!isIncoming || callState !== 'ringing') return;
+    const ch = subscribeToCall(call.id, (updated) => {
+      if (updated.status === 'ended' || updated.status === 'missed' || updated.status === 'declined') {
+        Vibration.cancel();
+        setCallState('ended');
+        setTimeout(onCallEnd, 800);
+      }
+    });
+    // Auto-miss after the ring window so a stale screen never lingers.
+    const t = setTimeout(() => { Vibration.cancel(); setCallState('ended'); onCallEnd(); }, 60_000);
+    return () => { clearTimeout(t); try { ch.unsubscribe(); } catch {} };
+  }, [isIncoming, callState, call.id]);
+
   // Vibrate on incoming ring
   useEffect(() => {
     if (isIncoming && callState === 'ringing') {
@@ -148,42 +164,72 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     return pc;
   }, [call.id, currentUserId, isVideo, cameraFront]);
 
-  // Outgoing call: create offer
+  // ── ICE candidate buffering ────────────────────────────────────────────────
+  // Candidates can arrive before the remote description is set (they race the
+  // offer/answer). Adding them early throws and drops them, so queue until ready.
+  const pendingIceRef = useRef<any[]>([]);
+
+  const addRemoteCandidate = useCallback(async (pc: any, candidate: any) => {
+    if (!candidate) return;
+    if (!pc.remoteDescription) { pendingIceRef.current.push(candidate); return; }
+    try { await pc.addIceCandidate(new (RTCIceCandidate as any)(candidate)); } catch {}
+  }, []);
+
+  const flushPendingIce = useCallback(async (pc: any) => {
+    const queued = pendingIceRef.current;
+    pendingIceRef.current = [];
+    for (const c of queued) {
+      try { await pc.addIceCandidate(new (RTCIceCandidate as any)(c)); } catch {}
+    }
+  }, []);
+
+  /** Live ICE subscription + catch-up on candidates the peer sent before we subscribed. */
+  const startIce = useCallback(async (pc: any) => {
+    iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, (candidate) => {
+      addRemoteCandidate(pc, candidate);
+    });
+    try {
+      const existing = await getExistingIceCandidates(call.id, currentUserId);
+      for (const c of existing) await addRemoteCandidate(pc, c);
+    } catch {}
+  }, [call.id, currentUserId, addRemoteCandidate]);
+
+  // Outgoing call: create the real offer, publish it, wait for the answer
   useEffect(() => {
     if (isIncoming) return;
 
     let cancelled = false;
     (async () => {
-      const pc = await setupPeerConnection();
-      if (cancelled) return;
-
-      // Offer already created before initiating — set it locally
-      if (call.offer) {
-        await pc.setRemoteDescription(new (RTCSessionDescription as any)(call.offer as any));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-      }
-
-      // Subscribe to answer + ICE
-      callChannelRef.current = subscribeToCall(call.id, async (updated) => {
+      try {
+        const pc = await setupPeerConnection();
         if (cancelled) return;
-        if (updated.status === 'declined' || updated.status === 'ended' || updated.status === 'missed') {
-          setCallState('ended');
-          setTimeout(onCallEnd, 1200);
-          return;
-        }
-        if (updated.status === 'active' && updated.answer && pc.signalingState !== 'stable') {
-          try {
-            await pc.setRemoteDescription(new (RTCSessionDescription as any)(updated.answer as any));
-          } catch (e) { console.error('setRemoteDescription failed:', e); }
-        }
-      });
 
-      iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, async (candidate) => {
-        if (pc.remoteDescription) {
-          try { await pc.addIceCandidate(new (RTCIceCandidate as any)(candidate)); } catch {}
-        }
-      });
+        const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: isVideo });
+        await pc.setLocalDescription(offer);
+        // The call row was inserted with a placeholder offer; replace it with the real SDP.
+        await updateCallOffer(call.id, { type: offer.type, sdp: offer.sdp });
+        if (cancelled) return;
+
+        // Subscribe to answer + ICE
+        callChannelRef.current = subscribeToCall(call.id, async (updated) => {
+          if (cancelled) return;
+          if (updated.status === 'declined' || updated.status === 'ended' || updated.status === 'missed') {
+            setCallState('ended');
+            setTimeout(onCallEnd, 1200);
+            return;
+          }
+          if (updated.status === 'active' && updated.answer && !pc.remoteDescription) {
+            try {
+              await pc.setRemoteDescription(new (RTCSessionDescription as any)(updated.answer as any));
+              await flushPendingIce(pc);
+            } catch (e) { console.error('setRemoteDescription failed:', e); }
+          }
+        });
+
+        await startIce(pc);
+      } catch (e) {
+        console.error('Outgoing call setup failed:', e);
+      }
     })();
 
     return () => { cancelled = true; };
@@ -195,23 +241,41 @@ export const CallScreen: React.FC<Props> = ({ call, currentUserId, isIncoming, o
     Vibration.cancel();
     setCallState('connecting');
 
-    const pc = await setupPeerConnection();
-    await pc.setRemoteDescription(new (RTCSessionDescription as any)(call.offer as any));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await answerCall(call.id, answer);
+    try {
+      const pc = await setupPeerConnection();
 
-    iceChannelRef.current = subscribeToIceCandidates(call.id, currentUserId, async (candidate) => {
-      try { await pc.addIceCandidate(new (RTCIceCandidate as any)(candidate)); } catch {}
-    });
-
-    callChannelRef.current = subscribeToCall(call.id, (updated) => {
-      if (updated.status === 'ended' || updated.status === 'declined') {
-        setCallState('ended');
-        setTimeout(onCallEnd, 1200);
+      // The INSERT the ringing screen came from may predate the caller's real offer; read the latest.
+      let offer: any = call.offer;
+      for (let i = 0; i < 8 && !offer?.sdp; i++) {
+        const fresh = await getCall(call.id);
+        if (fresh?.status && fresh.status !== 'ringing') throw new Error('Call is no longer ringing');
+        offer = fresh?.offer;
+        if (!offer?.sdp) await new Promise(r => setTimeout(r, 500));
       }
-    });
-  }, [call, currentUserId, setupPeerConnection, onCallEnd, hapticSuccess]);
+      if (!offer?.sdp) throw new Error('Call offer unavailable');
+
+      await pc.setRemoteDescription(new (RTCSessionDescription as any)(offer));
+      await flushPendingIce(pc);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await answerCall(call.id, answer);
+
+      await startIce(pc);
+
+      callChannelRef.current = subscribeToCall(call.id, (updated) => {
+        if (updated.status === 'ended' || updated.status === 'declined') {
+          setCallState('ended');
+          setTimeout(onCallEnd, 1200);
+        }
+      });
+    } catch (e) {
+      console.error('Accept call failed:', e);
+      localStreamRef.current?.getTracks().forEach((t: any) => t.stop());
+      pcRef.current?.close();
+      setCallState('ended');
+      setTimeout(onCallEnd, 800);
+    }
+  }, [call, currentUserId, setupPeerConnection, onCallEnd, hapticSuccess, flushPendingIce, startIce]);
 
   const handleDecline = useCallback(async () => {
     hapticHeavy();

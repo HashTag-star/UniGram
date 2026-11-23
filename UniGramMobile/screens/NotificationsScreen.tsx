@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity,
+  View, Text, SectionList, TouchableOpacity,
   StyleSheet, RefreshControl,
 } from 'react-native';
 import { CachedImage } from '../components/CachedImage';
@@ -12,7 +12,10 @@ import {
   getNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  resolveNotificationConversation,
 } from '../services/notifications';
+import { fx } from '../lib/feedback';
+import { onSessionReset } from '../lib/sessionCleanup';
 import { NotificationSkeleton } from '../components/Skeleton';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -204,6 +207,9 @@ const NotifItem: React.FC<{
       style={[styles.item, !item.is_read && { backgroundColor: `${colors.accent}08` }]}
       onPress={() => onPress(item)}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}${actor?.username ? ` from ${actor.username}` : ''}. ${item.text}. ${timeAgo(item.created_at)}${item.is_read ? '' : '. Unread'}`}
+      accessibilityHint="Opens this notification"
     >
       {!item.is_read && (
         <View style={[styles.unreadBar, { backgroundColor: colors.accent }]} />
@@ -236,6 +242,9 @@ let _cacheUserId = '';
 let _cacheAt = 0;
 const NOTIFS_TTL = 30_000;
 
+// A different account must never see this one's notifications.
+onSessionReset(() => { _cachedNotifs = []; _cacheUserId = ''; _cacheAt = 0; });
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export interface NotificationsScreenProps {
@@ -247,20 +256,32 @@ export interface NotificationsScreenProps {
   onPostPress?: (pid: string, uid: string, notifType: string, commentId?: string) => void;
   onMessagePress?: (convId: string, otherProfile: any) => void;
   onDiscoverPress?: () => void;
+  /** Reel notifications (reel_like / reel_comment). Falls back to onPostPress when absent. */
+  onReelPress?: (reelId: string) => void;
+  /** live_started: open the live stream as a viewer. */
+  onLivePress?: (sessionId: string, hostId?: string | null) => void;
 }
+
+type SectionData = { title: string; data: Notif[] };
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   userId, myAvatarUrl, onBadgeClear, onBack,
-  onUserPress, onPostPress, onMessagePress, onDiscoverPress,
+  onUserPress, onPostPress, onMessagePress, onDiscoverPress, onReelPress, onLivePress,
 }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const hasFreshCache = _cacheUserId === userId && _cachedNotifs.length > 0;
   const [notifs, setNotifs] = useState<Notif[]>(hasFreshCache ? _cachedNotifs : []);
   const [loading, setLoading] = useState(!hasFreshCache);
+  const [loadError, setLoadError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const channelRef = useRef<any>(null);
+  const openingMsgRef = useRef(false);
+
+  // Latest values for the unmount cleanup (which runs with a stale closure otherwise).
+  const latest = useRef({ userId, onBadgeClear });
+  latest.current = { userId, onBadgeClear };
 
   const load = useCallback(async (forceRefresh = false) => {
     const cacheValid =
@@ -291,8 +312,10 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       _cacheAt = Date.now();
 
       setNotifs(formatted);
+      setLoadError(false);
     } catch {
-      // silent fail — keep whatever is already shown
+      // Keep whatever is already shown; only surface an error when there is nothing to show.
+      if (!_cachedNotifs.length || _cacheUserId !== userId) setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -307,14 +330,21 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 
     if (cacheStale) {
       load();
-    } else {
-      const timer = setTimeout(() => load(), NOTIFS_TTL - (Date.now() - _cacheAt));
-      markAllNotificationsRead(userId).then(() => onBadgeClear?.()).catch(() => {});
-      return () => clearTimeout(timer);
+      return;
     }
-
-    markAllNotificationsRead(userId).then(() => onBadgeClear?.()).catch(() => {});
+    const timer = setTimeout(() => load(), NOTIFS_TTL - (Date.now() - _cacheAt));
+    return () => clearTimeout(timer);
   }, [userId]);
+
+  // Unread rows stay highlighted while the screen is open; everything is marked read
+  // (and the badge cleared) only when the user leaves.
+  useEffect(() => {
+    return () => {
+      const { userId: uid, onBadgeClear: clear } = latest.current;
+      if (_cacheUserId === uid) _cachedNotifs = _cachedNotifs.map(n => (n.is_read ? n : { ...n, is_read: true }));
+      markAllNotificationsRead(uid).then(() => clear?.()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     const channel = supabase
@@ -332,11 +362,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             .then(({ data: profile }) => {
               const newNotif: Notif = {
                 ...n,
-                is_read: true,
+                is_read: false,
                 profiles: profile,
                 posts: null,
               };
               setNotifs(prev => {
+                if (prev.some(p => p.id === newNotif.id)) return prev;
                 const updated = [newNotif, ...prev];
                 if (_cacheUserId === userId) {
                   _cachedNotifs = updated;
@@ -353,46 +384,79 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   }, [userId]);
 
   const handlePress = useCallback((item: Notif) => {
+    fx.tap();
     if (!item.is_read) {
       markNotificationRead(item.id).catch(() => {});
       setNotifs(prev => prev.map(n => n.id === item.id ? { ...n, is_read: true } : n));
     }
 
-    const navigationTypes = ['follow', 'like', 'comment', 'mention', 'reel_like', 'reel_comment', 'message', 'verification_approved', 'follow_suggestion'];
+    const navigationTypes = [
+      'follow', 'like', 'comment', 'mention', 'reel_like', 'reel_comment', 'message',
+      'verification_approved', 'follow_suggestion', 'repost', 'quote', 'story_view',
+      'new_post', 'new_story', 'live_started',
+    ];
 
     if (!navigationTypes.includes(item.type) || item.type === 'announcement') {
       setExpandedId(prev => (prev === item.id ? null : item.id));
       if (item.type === 'announcement') return;
     }
 
+    const meta = item.metadata ?? {};
+    const openPost = () => {
+      if (item.post_id) onPostPress?.(item.post_id, item.actor_id ?? '', item.type, item.comment_id ?? undefined);
+      else if (item.actor_id) onUserPress?.(item.actor_id);
+    };
+
     switch (item.type) {
       case 'follow':
       case 'verification_approved':
+      case 'story_view':
+      case 'new_story':
         if (item.actor_id) onUserPress?.(item.actor_id);
         break;
       case 'like':
       case 'comment':
       case 'mention':
-      case 'reel_like':
-      case 'reel_comment':
-        if (item.post_id && item.actor_id) {
-          onPostPress?.(item.post_id, item.actor_id, item.type, item.comment_id ?? undefined);
-        }
+      case 'repost':
+      case 'quote':
+      case 'new_post':
+        openPost();
         break;
+      case 'reel_like':
+      case 'reel_comment': {
+        const reelId = item.post_id ?? meta.reel_id ?? meta.reelId;
+        if (reelId && onReelPress) onReelPress(reelId);
+        else openPost();
+        break;
+      }
+      case 'live_started': {
+        const sid = meta.session_id ?? meta.live_session_id ?? meta.sessionId ?? meta.live_id;
+        if (sid && onLivePress) onLivePress(sid, item.actor_id);
+        else if (item.actor_id) onUserPress?.(item.actor_id);
+        break;
+      }
       case 'follow_suggestion':
         onDiscoverPress?.();
         break;
-      case 'message':
-        if (item.actor_id && item.profiles) {
-          onMessagePress?.('', item.profiles);
-        }
+      case 'message': {
+        if (!item.actor_id || !item.profiles || openingMsgRef.current) break;
+        openingMsgRef.current = true;
+        resolveNotificationConversation(
+          userId,
+          item.actor_id,
+          meta.conversation_id ?? meta.conversationId ?? null,
+        )
+          .then(convId => { if (convId) onMessagePress?.(convId, item.profiles); })
+          .catch(() => {})
+          .finally(() => { openingMsgRef.current = false; });
         break;
+      }
       default:
         break;
     }
-  }, [onUserPress, onPostPress, onMessagePress, onDiscoverPress]);
+  }, [userId, onUserPress, onPostPress, onMessagePress, onDiscoverPress, onReelPress, onLivePress]);
 
-  const sections = React.useMemo(() => {
+  const sections = React.useMemo<SectionData[]>(() => {
     const today: Notif[] = [];
     const thisWeek: Notif[] = [];
     const earlier: Notif[] = [];
@@ -403,47 +467,64 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       else if (age < 604800) thisWeek.push(n);
       else earlier.push(n);
     });
-    return { today, thisWeek, earlier };
+    return [
+      { title: 'Today', data: today },
+      { title: 'This Week', data: thisWeek },
+      { title: 'Earlier', data: earlier },
+    ].filter(s => s.data.length > 0);
   }, [notifs]);
 
-  const renderSection = (title: string, data: Notif[]) => {
-    if (!data.length) return null;
-    return (
-      <View key={title}>
-        <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>{title}</Text>
-        {data.map(item => (
-          <NotifItem
-            key={item.id}
-            item={item}
-            onPress={handlePress}
-            isExpanded={expandedId === item.id}
-            myAvatarUrl={myAvatarUrl}
-          />
-        ))}
-      </View>
-    );
-  };
+  const renderItem = useCallback(({ item }: { item: Notif }) => (
+    <NotifItem
+      item={item}
+      onPress={handlePress}
+      isExpanded={expandedId === item.id}
+      myAvatarUrl={myAvatarUrl}
+    />
+  ), [handlePress, expandedId, myAvatarUrl]);
+
+  const renderSectionHeader = useCallback(({ section }: { section: SectionData }) => (
+    <Text
+      accessibilityRole="header"
+      style={[styles.sectionLabel, { color: colors.textMuted, backgroundColor: colors.bg }]}
+    >
+      {section.title}
+    </Text>
+  ), [colors.textMuted, colors.bg]);
 
   const unreadCount = notifs.filter(n => !n.is_read).length;
+
+  const handleMarkAll = () => {
+    fx.tap();
+    markAllNotificationsRead(userId).catch(() => {});
+    setNotifs(prev => prev.map(n => ({ ...n, is_read: true })));
+    if (_cacheUserId === userId) _cachedNotifs = _cachedNotifs.map(n => ({ ...n, is_read: true }));
+    onBadgeClear?.();
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         {onBack ? (
-          <TouchableOpacity style={styles.backBtn} onPress={onBack}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => { fx.tap(); onBack(); }}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
         ) : (
           <View style={styles.backBtn} />
         )}
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+        <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
         {unreadCount > 0 ? (
           <TouchableOpacity
-            onPress={() => {
-              markAllNotificationsRead(userId).catch(() => {});
-              setNotifs(prev => prev.map(n => ({ ...n, is_read: true })));
-              onBadgeClear?.();
-            }}
+            onPress={handleMarkAll}
+            accessibilityRole="button"
+            accessibilityLabel={`Mark all ${unreadCount} notifications as read`}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
             <Text style={styles.markAllText}>Mark all read</Text>
           </TouchableOpacity>
@@ -454,37 +535,49 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 
       {loading ? (
         <NotificationSkeleton />
+      ) : loadError && notifs.length === 0 ? (
+        <View style={styles.empty}>
+          <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Couldn't load notifications</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+            Check your connection and try again.
+          </Text>
+          <TouchableOpacity
+            onPress={() => { fx.tap(); setLoadError(false); load(true); }}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading notifications"
+            style={[styles.retryBtn, { backgroundColor: colors.accent }]}
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
-        <FlatList
-          data={[1]}
-          keyExtractor={() => 'sections'}
+        <SectionList
+          sections={sections}
+          keyExtractor={(n) => n.id}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
+          stickySectionHeadersEnabled={false}
+          initialNumToRender={12}
+          windowSize={7}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); load(true); }}
+              onRefresh={() => { fx.refresh(); setRefreshing(true); load(true); }}
               tintColor="#6366f1"
             />
           }
-          renderItem={() => (
-            <View>
-              {notifs.length === 0 ? (
-                <View style={styles.empty}>
-                  <Ionicons name="notifications-off-outline" size={48} color={colors.textMuted} />
-                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
-                  <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                    When people like, comment, or follow you, you'll see it here.
-                  </Text>
-                </View>
-              ) : (
-                <>
-                  {renderSection('Today', sections.today)}
-                  {renderSection('This Week', sections.thisWeek)}
-                  {renderSection('Earlier', sections.earlier)}
-                  <View style={{ height: 100 }} />
-                </>
-              )}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="notifications-off-outline" size={48} color={colors.textMuted} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                When people like, comment, or follow you, you'll see it here.
+              </Text>
             </View>
-          )}
+          }
+          ListFooterComponent={<View style={{ height: 100 }} />}
         />
       )}
     </View>
@@ -634,6 +727,8 @@ const styles = StyleSheet.create({
   },
   // [Abena Owusu - Frontend] Moved colors to theme tokens applied inline; keeping base styles here
   emptyTitle: { fontSize: 17, fontWeight: '600' },
+  retryBtn: { marginTop: 8, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22 },
+  retryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   emptySubtitle: {
     fontSize: 14,
     textAlign: 'center',

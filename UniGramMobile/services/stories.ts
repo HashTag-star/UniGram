@@ -1,28 +1,76 @@
 import { supabase } from '../lib/supabase';
 import { uploadFile } from './upload';
-import { sendPushToUser } from './pushNotifications';
 import { Cache, TTL } from '../lib/cache';
+import { notifyFollowers } from './posts';
+import { PROFILE_MINI_COLUMNS } from './profiles';
+
+const STORY_WITH_PROFILE = `*, profiles!stories_user_id_fkey(${PROFILE_MINI_COLUMNS})`;
+const STORIES_FOLLOWED_LIMIT = 150;
+const STORIES_CAMPUS_LIMIT = 100;
 
 export async function getActiveStories() {
-  const key = `stories:active`;
-  return await Cache.getOrFetch<any[]>(key, TTL.stories, async () => {
-    const { data, error } = await supabase
-      .from('stories')
-      .select(`*, profiles!stories_user_id_fkey(*)`)
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+  // Per-user key: story visibility (followed users / own campus / blocks) differs per account.
+  const { data: { user } } = await supabase.auth.getUser();
+  const uid = user?.id ?? 'anon';
+  const key = `stories:active:${uid}`;
+  const rows = await Cache.getOrFetch<any[]>(key, TTL.stories, async () => {
+    const nowISO = new Date().toISOString();
+
+    // 1. Followed users + me first (what the tray is really for)…
+    let followedIds: string[] = [];
+    let university: string | null = null;
+    if (user) {
+      const [f, prof] = await Promise.all([
+        supabase.from('follows').select('following_id').eq('follower_id', user.id).limit(500),
+        require('./profiles').getProfile(user.id).catch(() => null),
+      ]);
+      followedIds = (f.data ?? []).map((r: any) => r.following_id);
+      followedIds.push(user.id);
+      university = prof?.university ?? null;
+    }
+
+    const followedQ = followedIds.length
+      ? supabase.from('stories').select(STORY_WITH_PROFILE)
+          .in('user_id', followedIds)
+          .gt('expires_at', nowISO)
+          .order('created_at', { ascending: false })
+          .limit(STORIES_FOLLOWED_LIMIT)
+      : Promise.resolve({ data: [] as any[], error: null as any });
+
+    // 2. …topped up with stories from my campus (server-side filtered, capped).
+    const campusQ = university
+      ? supabase.from('stories')
+          .select(`*, profiles!stories_user_id_fkey!inner(${PROFILE_MINI_COLUMNS})`)
+          .eq('profiles.university', university)
+          .gt('expires_at', nowISO)
+          .order('created_at', { ascending: false })
+          .limit(STORIES_CAMPUS_LIMIT)
+      : supabase.from('stories').select(STORY_WITH_PROFILE)
+          .gt('expires_at', nowISO)
+          .order('created_at', { ascending: false })
+          .limit(60);
+
+    const [followedRes, campusRes] = await Promise.all([followedQ, campusQ]);
+    if (followedRes.error && campusRes.error) throw followedRes.error;
+
+    const seen = new Set<string>();
+    const merged: any[] = [];
+    for (const s of [...(followedRes.data ?? []), ...(campusRes.data ?? [])]) {
+      if (!seen.has(s.id)) { seen.add(s.id); merged.push(s); }
+    }
+    merged.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
 
     // Group by user
     const grouped: Record<string, { profile: any; stories: any[] }> = {};
-    for (const story of data ?? []) {
-      const uid = story.user_id;
+    for (const story of merged) {
+      const uid2 = story.user_id;
       if (!story.profiles?.id) continue; // skip orphaned stories from deleted users
-      if (!grouped[uid]) grouped[uid] = { profile: story.profiles, stories: [] };
-      grouped[uid].stories.push(story);
+      if (!grouped[uid2]) grouped[uid2] = { profile: story.profiles, stories: [] };
+      grouped[uid2].stories.push(story);
     }
     return Object.values(grouped);
-  }) ?? [];
+  });
+  return rows ?? [];
 }
 
 export async function getUserStories(userId: string) {
@@ -30,7 +78,8 @@ export async function getUserStories(userId: string) {
     .from('stories')
     .select(`*`)
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(50);
   if (error) throw error;
   return data ?? [];
 }
@@ -39,66 +88,37 @@ export async function createStory(userId: string, mediaUri: string, caption?: st
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
-  const ext = mediaUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const ext = mediaUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${userId}/${Date.now()}.${ext}`;
   const media_url = await uploadFile('post-media', path, mediaUri);
 
   const { data, error } = await supabase
     .from('stories')
     .insert({ user_id: userId, media_url, caption, link_url: linkUrl ?? null })
-    .select(`*, profiles!stories_user_id_fkey(*)`)
+    .select(STORY_WITH_PROFILE)
     .single();
   if (error) throw error;
 
-  // Notify followers that someone they follow posted a story (fire-and-forget, capped at 500)
-  (async () => {
-    try {
-      const { data: followers } = await supabase
-        .from('follows')
-        .select('follower_id')
-        .eq('following_id', userId)
-        .limit(500);
-
-      if (!followers?.length) return;
-
-      const actor = data.profiles;
-      const username = actor?.username || 'Someone';
-      const pushBody = '✨ added a new story';
-
-      const notifRows = followers.map((f: any) => ({
-        user_id: f.follower_id,
-        actor_id: userId,
-        type: 'new_story',
-        text: pushBody,
-        is_read: false,
-      }));
-
-      for (let i = 0; i < notifRows.length; i += 500) {
-        await supabase.from('notifications').insert(notifRows.slice(i, i + 500));
-      }
-
-      followers.forEach((f: any) => {
-        sendPushToUser(
-          f.follower_id,
-          'New story',
-          pushBody,
-          { type: 'new_story', storyId: data.id, userId, channelId: 'stories' },
-          media_url,
-          actor?.avatar_url ?? undefined,
-        ).catch(() => {});
-      });
-    } catch (_) {}
-  })();
+  // Followers fan-out happens server-side (RPC) or as a small batched fallback — never awaited.
+  notifyFollowers({
+    actorId: userId,
+    type: 'new_story',
+    storyId: data.id,
+    title: 'New story',
+    body: '✨ added a new story',
+    imageUrl: media_url,
+    avatarUrl: data.profiles?.avatar_url ?? undefined,
+  }).catch(() => {});
 
   // Bust active stories cache so followers see the new story quickly
-  try { Cache.invalidate(`stories:active`); } catch (e) {}
+  try { Cache.invalidatePattern(`stories:active`); } catch (e) {}
 
   return data;
 }
 
 // Bust stories cache when stories are created elsewhere
 export function invalidateStoriesCache() {
-  Cache.invalidate(`stories:active`);
+  Cache.invalidatePattern(`stories:active`);
 }
 
 export async function createStoryFromPost(userId: string, post: any): Promise<any> {
@@ -117,71 +137,66 @@ export async function createStoryFromPost(userId: string, post: any): Promise<an
   const { data, error } = await supabase
     .from('stories')
     .insert({ user_id: userId, media_url: mediaUrl, caption })
-    .select(`*, profiles!stories_user_id_fkey(*)`)
+    .select(STORY_WITH_PROFILE)
     .single();
   if (error) throw error;
-  try { Cache.invalidate(`stories:active`); } catch (e) {}
+  try { Cache.invalidatePattern(`stories:active`); } catch (e) {}
   return data;
 }
 
 export async function markStoryViewed(storyId: string, userId: string) {
-  await supabase.from('story_views').upsert({ story_id: storyId, user_id: userId });
+  const { error } = await supabase.from('story_views').upsert({ story_id: storyId, user_id: userId });
+  if (error) throw error;
 }
 
 export async function getViewedStoryIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from('story_views').select('story_id').eq('user_id', userId);
+  // Only the most recent views matter: stories expire after 24h.
+  const { data } = await supabase
+    .from('story_views')
+    .select('story_id')
+    .eq('user_id', userId)
+    .order('viewed_at', { ascending: false })
+    .limit(500);
   return data?.map((r: any) => r.story_id) ?? [];
 }
 
 export async function getStoryStats(storyId: string) {
-  const [views, likes] = await Promise.all([
-    supabase.from('story_views').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId),
-    supabase.from('story_likes').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId)
-  ]);
-  
   const { data: { user } } = await supabase.auth.getUser();
-  const { data: isLiked } = await supabase
-    .from('story_likes')
-    .select('user_id')
-    .eq('story_id', storyId)
-    .eq('user_id', user?.id)
-    .single();
+  const [views, likes, likedRes] = await Promise.all([
+    supabase.from('story_views').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId),
+    supabase.from('story_likes').select('user_id', { count: 'exact', head: true }).eq('story_id', storyId),
+    user
+      ? supabase.from('story_likes').select('user_id').eq('story_id', storyId).eq('user_id', user.id).maybeSingle()
+      : Promise.resolve({ data: null as any }),
+  ]);
 
   return {
     views: views.count ?? 0,
     likes: likes.count ?? 0,
-    isLiked: !!isLiked
+    isLiked: !!likedRes.data
   };
 }
 
 export async function getStoryViewers(storyId: string) {
-  const { data, error } = await supabase
-    .from('story_views')
-    .select(`
-      *, 
-      profiles!story_views_user_id_fkey(*),
-      story_likes:story_likes!inner(reaction)
-    `)
-    .eq('story_id', storyId)
-    .order('viewed_at', { ascending: false });
-    
-  // If no likes, story_likes join might return empty or null.
-  // We should actually use a left join (default) but select it properly.
-  // Re-fetching with a better join approach:
-  const { data: views } = await supabase
-    .from('story_views')
-    .select(`*, profiles:profiles!story_views_user_id_fkey(*)`)
-    .eq('story_id', storyId);
-  
-  const { data: likes } = await supabase
-    .from('story_likes')
-    .select(`user_id, reaction`)
-    .eq('story_id', storyId);
+  const [viewsRes, likesRes] = await Promise.all([
+    supabase
+      .from('story_views')
+      .select(`*, profiles:profiles!story_views_user_id_fkey(${PROFILE_MINI_COLUMNS})`)
+      .eq('story_id', storyId)
+      .order('viewed_at', { ascending: false })
+      .limit(200),
+    supabase
+      .from('story_likes')
+      .select(`user_id, reaction`)
+      .eq('story_id', storyId)
+      .limit(500),
+  ]);
+  if (viewsRes.error) throw viewsRes.error;
 
-  const likesMap = new Map((likes ?? []).map(l => [l.user_id, l.reaction]));
+  const likesMap = new Map((likesRes.data ?? []).map((l: any) => [l.user_id, l.reaction]));
 
-  return (views ?? []).map(v => ({ 
-    ...v.profiles, 
+  return (viewsRes.data ?? []).map((v: any) => ({
+    ...v.profiles,
     viewed_at: v.viewed_at,
     reaction: likesMap.get(v.user_id) || null
   }));
@@ -227,5 +242,5 @@ export async function deleteStory(storyId: string, userId: string) {
   // 3. Delete from DB
   const { error } = await supabase.from('stories').delete().eq('id', storyId).eq('user_id', userId);
   if (error) throw error;
-  try { Cache.invalidate(`stories:active`); } catch (e) {}
+  try { Cache.invalidatePattern(`stories:active`); } catch (e) {}
 }

@@ -2,12 +2,67 @@ import { supabase } from '../lib/supabase';
 import { INTERESTS } from '../data/interests';
 
 export async function saveUserInterests(userId: string, interests: string[]) {
-  // Delete old interests
-  await supabase.from('user_interests').delete().eq('user_id', userId);
-  if (interests.length === 0) return;
-  const rows = interests.map(interest => ({ user_id: userId, interest }));
-  const { error } = await supabase.from('user_interests').insert(rows);
-  if (error) throw error;
+  const unique = Array.from(new Set(interests));
+  if (unique.length === 0) {
+    const { error } = await supabase.from('user_interests').delete().eq('user_id', userId);
+    if (error) throw error;
+    return;
+  }
+  // Insert/upsert FIRST so a failure can never leave the user with zero interests,
+  // then prune whatever is no longer selected.
+  const rows = unique.map(interest => ({ user_id: userId, interest }));
+  const up = await supabase.from('user_interests').upsert(rows, { onConflict: 'user_id,interest' });
+  if (up.error) {
+    // No unique constraint (or older schema): insert only the rows that are missing.
+    const existing = await supabase.from('user_interests').select('interest').eq('user_id', userId);
+    if (existing.error) throw existing.error;
+    const have = new Set((existing.data ?? []).map((r: any) => r.interest));
+    const missing = rows.filter(r => !have.has(r.interest));
+    if (missing.length) {
+      const ins = await supabase.from('user_interests').insert(missing);
+      if (ins.error) throw ins.error;
+    }
+  }
+  const quoted = unique.map(i => `"${String(i).replace(/"/g, '')}"`).join(',');
+  const del = await supabase
+    .from('user_interests')
+    .delete()
+    .eq('user_id', userId)
+    .not('interest', 'in', `(${quoted})`);
+  if (del.error) throw del.error;
+}
+
+/**
+ * SHA-256 of a normalised email (hex). Needs expo-crypto; returns null when it isn't installed.
+ */
+async function sha256Hex(input: string): Promise<string | null> {
+  try {
+    const Crypto = require('expo-crypto');
+    return await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, input);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Match device-contact emails against UniGram users.
+ * Privacy: raw contact emails are only sent when the hashed RPC is unavailable. Prefers
+ * RPC `match_contacts_hashed(p_hashes text[])` (SHA-256 hex of lower-cased emails); falls back to
+ * `match_contacts(p_emails text[])`. Capped at 200 entries either way.
+ */
+export async function matchContactEmails(emails: string[]): Promise<any[] | null> {
+  const clean = Array.from(new Set(emails.map(e => e.toLowerCase().trim()).filter(Boolean))).slice(0, 200);
+  if (!clean.length) return [];
+  try {
+    const hashes = (await Promise.all(clean.map(sha256Hex))).filter(Boolean) as string[];
+    if (hashes.length === clean.length) {
+      const r = await supabase.rpc('match_contacts_hashed', { p_hashes: hashes });
+      if (!r.error) return (r.data as any[]) ?? [];
+    }
+  } catch { /* fall back */ }
+  const r = await supabase.rpc('match_contacts', { p_emails: clean });
+  if (r.error) return null;
+  return (r.data as any[]) ?? [];
 }
 
 export async function getUserInterests(userId: string): Promise<string[]> {
@@ -76,7 +131,7 @@ export async function getSuggestedUsers(userId: string, limit = 15): Promise<any
   // Fetch own interests + already-following list in parallel
   const [myInterestsData, followingData] = await Promise.all([
     supabase.from('user_interests').select('interest').eq('user_id', userId),
-    supabase.from('follows').select('following_id').eq('follower_id', userId),
+    supabase.from('follows').select('following_id').eq('follower_id', userId).limit(1000),
   ]);
 
   const myInterestSet = new Set<string>((myInterestsData.data ?? []).map((r: any) => r.interest));
@@ -111,8 +166,8 @@ export async function getSuggestedUsers(userId: string, limit = 15): Promise<any
         //                 WHERE u.email = ANY(p_emails) AND p.id != current_user_id
         let matched: any[] | null = null;
         try {
-          const r = await supabase.rpc('match_contacts', { p_emails: emails.slice(0, 500) });
-          matched = (r.data as any[]) ?? null;
+          // hashed + capped at 200 (see matchContactEmails)
+          matched = await matchContactEmails(emails);
         } catch { matched = null; }
 
         if (matched?.length) {

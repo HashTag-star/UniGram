@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { signIn, signInWithGoogle, sendPasswordReset } from '../../services/auth';
+import { signIn, signInWithGoogle, sendPasswordReset, signOut } from '../../services/auth';
 import { supabase } from '../../lib/supabase';
 import { usePopup } from '../../context/PopupContext';
 import { useHaptics } from '../../hooks/useHaptics';
@@ -67,7 +67,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
         const { data: profile } = await supabase
           .from('profiles').select('is_banned').eq('id', session.user.id).single();
         if (profile?.is_banned) {
-          await supabase.auth.signOut();
+          try { await signOut(); } catch { await supabase.auth.signOut().catch(() => {}); }
           showPopup({
             title: 'Account banned',
             message: 'Your account has been permanently banned from UniGram for violating campus community guidelines.\n\nIf you believe this is a mistake, contact campus support.',

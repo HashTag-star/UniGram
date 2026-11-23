@@ -182,6 +182,8 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
         }}>This may take a moment while we prepare your media for editing.</Text>
         <TouchableOpacity
           onPress={onCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
           style={{
             marginTop: 20,
             paddingVertical: 10,
@@ -270,28 +272,30 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
         colors={['rgba(0,0,0,0.6)', 'transparent']}
         style={[styles.topBar, { paddingTop: insets.top + 10 }]}
       >
-        <TouchableOpacity onPress={onCancel} style={styles.iconBtn}>
+        <TouchableOpacity onPress={onCancel} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={28} color="#fff" />
         </TouchableOpacity>
 
         <View style={styles.toolRow}>
-          <TouchableOpacity onPress={() => setIsAddingText(true)} style={styles.iconBtn}>
+          <TouchableOpacity onPress={() => setIsAddingText(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Add text">
             <Ionicons name="text" size={26} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Add sticker">
             <Ionicons name="happy-outline" size={26} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, showFilters && styles.activeTool]}>
+          <TouchableOpacity onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, showFilters && styles.activeTool]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Filters">
             <Ionicons name="color-filter" size={26} color="#fff" />
           </TouchableOpacity>
           {currentItem.type === 'image' && (
-            <TouchableOpacity onPress={() => setShowCrop(true)} style={styles.iconBtn}>
+            <TouchableOpacity onPress={() => setShowCrop(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Crop">
               <Ionicons name="crop" size={26} color="#fff" />
             </TouchableOpacity>
           )}
           <TouchableOpacity 
             style={[styles.iconBtn, currentItem.music && { backgroundColor: colors.accent + '30' }]} 
             onPress={() => setShowMusicPicker(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button" accessibilityLabel="Add music"
           >
             <Ionicons name="musical-notes" size={26} color={currentItem.music ? colors.accent : "#fff"} />
           </TouchableOpacity>
@@ -312,12 +316,13 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
         colors={['transparent', 'rgba(0,0,0,0.8)']}
         style={[styles.bottomBar, { paddingBottom: insets.bottom + 20 }]}
       >
-        <TouchableOpacity style={styles.saveBtn}>
+        <TouchableOpacity style={styles.saveBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Save to device">
           <Ionicons name="download-outline" size={24} color="#fff" />
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.nextBtn}
+          accessibilityRole="button" accessibilityLabel="Continue"
           onPress={() => onNext(itemsState.map(it => ({
             uri: it.uri,
             type: it.type,
@@ -341,6 +346,8 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
                 key={f.id}
                 onPress={() => { updateCurrentItem({ activeFilter: f }); haptics.selection(); }}
                 style={styles.filterItem}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter ${f.id}`}
               >
                 <View style={[styles.filterPreview, { backgroundColor: f.color }]}>
                    <Image source={{ uri: currentItem.uri }} style={styles.filterPreviewImg} resizeMode="contain" />
@@ -376,7 +383,7 @@ export const MediaEditScreen: React.FC<MediaEditScreenProps> = ({ items, mode, o
             multiline
             textAlign="center"
           />
-          <TouchableOpacity onPress={handleAddText} style={styles.doneBtn}>
+          <TouchableOpacity onPress={handleAddText} style={styles.doneBtn} accessibilityRole="button" accessibilityLabel="Done">
             <Text style={styles.doneBtnText}>Done</Text>
           </TouchableOpacity>
         </KeyboardAvoidingView>
@@ -693,11 +700,11 @@ const CropModal = ({ uri, onClose, onCrop }: { uri: string; onClose: () => void;
         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
         
         <View style={cropStyles.header}>
-          <TouchableOpacity onPress={onClose}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Cancel crop">
             <Text style={cropStyles.btnText}>Cancel</Text>
           </TouchableOpacity>
           <Text style={cropStyles.title}>Crop Image</Text>
-          <TouchableOpacity onPress={handleApply}>
+          <TouchableOpacity onPress={handleApply} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Apply crop">
             <Text style={[cropStyles.btnText, { color: '#6366f1' }]}>Apply</Text>
           </TouchableOpacity>
         </View>

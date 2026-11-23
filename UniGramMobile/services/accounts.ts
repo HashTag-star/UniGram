@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { supabase } from '../lib/supabase';
 import { DeviceEventEmitter } from 'react-native';
+import { resetSessionState } from '../lib/sessionCleanup';
 
 const REGISTRY_INDEX_KEY = 'unigram_accounts_index_v3';
 const SESSION_KEY_PREFIX = 'unigram_session_v3_';
@@ -23,10 +24,14 @@ const safeStore = {
       return;
     }
     const total = Math.ceil(value.length / CHUNK_SIZE);
-    await SecureStore.setItemAsync(`${key}_chunks`, total.toString());
+    // Write every chunk BEFORE publishing the count (see lib/supabase.ts): a failed
+    // chunk must never leave a count that points at a partial token.
     for (let i = 0; i < total; i++) {
       await SecureStore.setItemAsync(`${key}_${i}`, value.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE));
     }
+    await SecureStore.setItemAsync(`${key}_chunks`, total.toString());
+    // The plain (unchunked) slot would otherwise hold a stale smaller value.
+    await SecureStore.deleteItemAsync(key).catch(() => {});
   },
   async getItem(key: string): Promise<string | null> {
     const chunkCountStr = await SecureStore.getItemAsync(`${key}_chunks`);
@@ -108,18 +113,59 @@ export const AccountService = {
     }
   },
 
+  /**
+   * Refreshes only the stored tokens of an already-registered account (no profile
+   * needed). Supabase rotates refresh tokens, so stored copies go stale quickly
+   * unless they are rewritten on every TOKEN_REFRESHED / SIGNED_IN.
+   */
+  async updateTokens(session: any) {
+    const uid = session?.user?.id;
+    if (!uid || !session?.access_token || !session?.refresh_token) return;
+    try {
+      const accounts = await this.getAccounts();
+      if (!accounts.some(a => a.userId === uid)) return;
+      await safeStore.setItem(
+        `${SESSION_KEY_PREFIX}${uid}`,
+        JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token }),
+      );
+    } catch (e) {
+      console.error('[AccountService] Failed to update tokens', e);
+    }
+  },
+
   async switchAccount(userId: string) {
     const tokens = await this.getSession(userId);
-    if (!tokens) throw new Error(`Auth session missing for UID: ${userId}`);
+    if (!tokens) throw new Error('Please sign in again to switch to this account.');
+
+    // Persist the CURRENT account's latest (rotated) tokens before we replace the
+    // live session, otherwise switching back later would use a stale refresh token.
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session && data.session.user.id !== userId) await this.updateTokens(data.session);
+    } catch {}
 
     const { error } = await supabase.auth.setSession(tokens);
     if (error) {
-      if (error.message.includes('expired')) {
-         await this.removeAccount(userId);
-         throw new Error('Session expired. Please log in again.');
+      const any = error as any;
+      const msg = String(any.message ?? '');
+      const code = String(any.code ?? '');
+      const status = Number(any.status ?? 0);
+      const isNetwork = /fetch|network|timed? ?out|retryable/i.test(msg) || any.name === 'AuthRetryableFetchError' || status >= 500;
+      const isDead =
+        /refresh_token_not_found|refresh_token_already_used|invalid_grant|session_not_found/i.test(code) ||
+        /invalid refresh token|refresh token (not found|is not valid|already used)|session.*(expired|not found)/i.test(msg) ||
+        (status === 400 || status === 401) && /refresh|expired|invalid/i.test(msg);
+      if (isNetwork) throw new Error("Can't reach UniGram right now. Check your connection and try again.");
+      if (isDead) {
+        await this.removeAccount(userId);
+        throw new Error('Session expired. Please log in again.');
       }
-      throw error;
+      // Unknown failure: keep the saved account and ask the user to sign in.
+      throw new Error('Please sign in again to switch to this account.');
     }
+
+    // New user is live: wipe everything cached for the previous one.
+    await resetSessionState();
 
     const accounts = await this.getAccounts();
     const idx = accounts.findIndex(a => a.userId === userId);

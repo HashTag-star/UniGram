@@ -238,6 +238,8 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
   const [loadError, setLoadError] = useState(false);
   const [currentUserId, setCurrentUserId] = useState('');
   const [peopleYouMayKnow, setPeopleYouMayKnow] = useState<any[]>([]);
+  const [showAllInterests, setShowAllInterests] = useState(false);
+  const [showAllPymk, setShowAllPymk] = useState(false);
   const [sharedInterests, setSharedInterests] = useState<any[]>([]);
   const [campusTrending, setCampusTrending] = useState<any[]>([]);
   const [contactUsers, setContactUsers] = useState<any[]>([]);
@@ -385,15 +387,16 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                   <Text style={[styles.sectionHeading, { color: colors.textMuted, marginBottom: 2 }]}>SHARED INTERESTS</Text>
                   <Text style={[styles.sectionSub, { color: colors.textMuted }]}>People who share your vibe</Text>
                 </View>
-                {/* [Abena Owusu - Frontend] TODO(product): wire "See all" to a full interests browse screen */}
-                {/* <TouchableOpacity>
-                  <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 13 }}>See all</Text>
-                </TouchableOpacity> */}
+                {sharedInterests.length > 3 && (
+                  <TouchableOpacity onPress={() => setShowAllInterests(v => !v)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={showAllInterests ? 'Show fewer people' : 'See all people with shared interests'}>
+                    <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 13 }}>{showAllInterests ? 'Show less' : 'See all'}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
               <ScrollView 
-                horizontal 
+                horizontal={!showAllInterests}
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 12, paddingRight: 20 }}
+                contentContainerStyle={showAllInterests ? { gap: 12, flexDirection: 'row', flexWrap: 'wrap' } : { gap: 12, paddingRight: 20 }}
               >
                 {sharedInterests.map((user, i) => (
                   <InterestUserCard 
@@ -416,11 +419,17 @@ export const DiscoverPeopleScreen: React.FC<Props> = ({ onClose, onUserPress }) 
                 </View>
               </View>
               <View style={[styles.listCard, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                {peopleYouMayKnow.map((u, i) => <UserRow key={u.id || `pymk-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
-                {/* [Abena Owusu - Frontend] TODO(product): implement pagination or full suggestions screen */}
-                {/* <TouchableOpacity style={[styles.viewAllBtn, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
-                  <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>View More Suggestions</Text>
-                </TouchableOpacity> */}
+                {(showAllPymk ? peopleYouMayKnow : peopleYouMayKnow.slice(0, 6)).map((u, i) => <UserRow key={u.id || `pymk-${i}`} user={u} currentUserId={currentUserId} onUserPress={onUserPress} />)}
+                {peopleYouMayKnow.length > 6 && (
+                  <TouchableOpacity
+                    style={[styles.viewAllBtn, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, minHeight: 44, justifyContent: 'center', alignItems: 'center' }]}
+                    onPress={() => setShowAllPymk(v => !v)}
+                    accessibilityRole="button"
+                    accessibilityLabel={showAllPymk ? 'Show fewer suggestions' : 'View more suggestions'}
+                  >
+                    <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>{showAllPymk ? 'Show fewer' : 'View more suggestions'}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
           </View>
 

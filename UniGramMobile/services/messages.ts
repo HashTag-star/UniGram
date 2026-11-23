@@ -3,6 +3,11 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 import { uploadFile } from './upload';
 import { sendPushToUser } from './pushNotifications';
 import { cleanUserText } from '../lib/contentSafety';
+import { sanitizeFilterTerm } from './profiles';
+
+const MAX_DM_CHARS = 2000;
+const MSG_PROFILE = 'id, username, full_name, avatar_url, is_verified, verification_type';
+const MESSAGE_SELECT = `*, profiles(${MSG_PROFILE}), reactions:message_reactions(id, emoji, user_id, profiles(${MSG_PROFILE})), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`;
 
 // ─── Conversations ────────────────────────────────────────────────────────────
 
@@ -43,7 +48,7 @@ export async function createGroupConversation(
 
 export async function searchConversations(userId: string, query: string) {
   if (!query.trim()) return [];
-  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 50);
+  const safe = query.trim().slice(0, 50);
   // Fetch user's conversation_participants with nested profiles of all participants
   const { data, error } = await supabase
     .from('conversation_participants')
@@ -53,11 +58,12 @@ export async function searchConversations(userId: string, query: string) {
       is_muted,
       conversations(
         id, is_group, group_name, last_message, last_message_at, pinned_message_id,
-        conversation_participants(user_id, profiles(*))
+        conversation_participants(user_id, profiles(id, username, full_name, avatar_url, is_verified, verification_type))
       )
     `)
     .eq('user_id', userId)
-    .eq('is_archived', false);
+    .eq('is_archived', false)
+    .limit(150);
   if (error) throw error;
   if (!data) return [];
 
@@ -104,12 +110,7 @@ export async function getMessages(conversationId: string, limit = 60, before?: s
   
   let query = supabase
     .from('messages')
-    .select(`
-      *,
-      profiles(*),
-      reactions:message_reactions(id, emoji, user_id, profiles(*)),
-      reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))
-    `)
+    .select(MESSAGE_SELECT)
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -140,7 +141,8 @@ export async function sendMessage(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== senderId) throw new Error('Unauthorized');
 
-  const sanitizedText = type === 'text' ? cleanUserText(text, 'comment') : text;
+  // DMs may be longer than a comment (600) — allow up to MAX_DM_CHARS.
+  const sanitizedText = type === 'text' ? cleanUserText(text, 'postCaption').slice(0, MAX_DM_CHARS) : text;
 
   const { data, error } = await supabase
     .from('messages')
@@ -155,40 +157,42 @@ export async function sendMessage(
       is_forwarded: isForwarded,
       view_once: viewOnce,
     })
-    .select(`*, profiles(*), reactions:message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
+    .select(MESSAGE_SELECT)
     .single();
   if (error) throw error;
 
-  // Push notification to other participants
-  try {
-    const sender = data.profiles;
-    const pushBody =
-      type === 'image' ? (viewOnce ? 'Sent a view-once photo 📷' : 'Sent a photo 📷') :
-      type === 'audio' ? 'Sent a voice message 🎤' :
-      type === 'gif'   ? 'Sent a GIF 🎞️' :
-      type === 'video' ? 'Sent a video 📹' :
-      type === 'document' ? 'Sent a document 📄' :
-      text.length > 80 ? text.slice(0, 77) + '…' : text;
+  // Push notification to other participants — fire-and-forget, never delays the send.
+  (async () => {
+    try {
+      const sender = data.profiles;
+      const pushBody =
+        type === 'image' ? (viewOnce ? 'Sent a view-once photo 📷' : 'Sent a photo 📷') :
+        type === 'audio' ? 'Sent a voice message 🎤' :
+        type === 'gif'   ? 'Sent a GIF 🎞️' :
+        type === 'video' ? 'Sent a video 📹' :
+        type === 'document' ? 'Sent a document 📄' :
+        sanitizedText.length > 80 ? sanitizedText.slice(0, 77) + '…' : sanitizedText;
 
-    const { data: participants } = await supabase
-      .from('conversation_participants')
-      .select('user_id, is_muted')
-      .eq('conversation_id', conversationId)
-      .neq('user_id', senderId);
+      const { data: participants } = await supabase
+        .from('conversation_participants')
+        .select('user_id, is_muted')
+        .eq('conversation_id', conversationId)
+        .neq('user_id', senderId);
 
-    participants?.forEach((p: any) => {
-      if (p.is_muted) return; // Skip push for muted users
-      sendPushToUser(
-        p.user_id,
-        'New message',
-        pushBody,
-        { type: 'message', conversationId, channelId: 'messages' },
-        (type === 'image' && !viewOnce) ? (mediaUrl ?? undefined) : undefined,
-        sender?.avatar_url ?? undefined,
-        'chat_message',
-      ).catch(() => {});
-    });
-  } catch { /* non-fatal */ }
+      participants?.forEach((p: any) => {
+        if (p.is_muted) return; // Skip push for muted users
+        sendPushToUser(
+          p.user_id,
+          'New message',
+          pushBody,
+          { type: 'message', conversationId, channelId: 'messages' },
+          (type === 'image' && !viewOnce) ? (mediaUrl ?? undefined) : undefined,
+          sender?.avatar_url ?? undefined,
+          'chat_message',
+        ).catch(() => {});
+      });
+    } catch { /* non-fatal */ }
+  })();
 
   return data;
 }
@@ -280,18 +284,45 @@ export async function sendSharedContent(
   return sendMessage(conversationId, senderId, text, 'share', content.previewUrl);
 }
 
-export async function markMessagesRead(conversationId: string, userId: string) {
-  await supabase
+const _readTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; promise: Promise<boolean>; resolve: (v: boolean) => void }>();
+
+async function doMarkRead(conversationId: string, userId: string): Promise<boolean> {
+  // One round trip when the RPC exists…
+  try {
+    const { error } = await supabase.rpc('mark_messages_read', { p_conversation_id: conversationId });
+    if (!error) return true;
+  } catch { /* RPC missing → fall back */ }
+  // …otherwise the two-statement fallback (errors are checked, not swallowed).
+  const a = await supabase
     .from('messages')
     .update({ is_read: true })
     .eq('conversation_id', conversationId)
     .neq('sender_id', userId)
     .eq('is_read', false);
-  await supabase
+  const b = await supabase
     .from('conversation_participants')
     .update({ unread_count: 0, last_read_at: new Date().toISOString() })
     .eq('conversation_id', conversationId)
     .eq('user_id', userId);
+  return !a.error && !b.error;
+}
+
+/**
+ * Debounced (600ms, per conversation): a burst of incoming messages produces ONE read-receipt
+ * write instead of one per message. Resolves to whether the write succeeded.
+ */
+export function markMessagesRead(conversationId: string, userId: string): Promise<boolean> {
+  const key = `${conversationId}:${userId}`;
+  const existing = _readTimers.get(key);
+  if (existing) return existing.promise;
+  let resolve!: (v: boolean) => void;
+  const promise = new Promise<boolean>(r => { resolve = r; });
+  const timer = setTimeout(async () => {
+    _readTimers.delete(key);
+    try { resolve(await doMarkRead(conversationId, userId)); } catch { resolve(false); }
+  }, 600);
+  _readTimers.set(key, { timer, promise, resolve });
+  return promise;
 }
 
 // ─── Reactions ───────────────────────────────────────────────────────────────
@@ -317,19 +348,32 @@ export async function getReactions(messageIds: string[]) {
   if (!messageIds.length) return [];
   const { data, error } = await supabase
     .from('message_reactions')
-    .select('id, message_id, emoji, user_id, profiles(*)')
-    .in('message_id', messageIds);
+    .select(`id, message_id, emoji, user_id, profiles(${MSG_PROFILE})`)
+    .in('message_id', messageIds.slice(0, 200));
   if (error) throw error;
   return data ?? [];
 }
 
 // ─── Realtime ────────────────────────────────────────────────────────────────
 
+// Sender profiles seen in realtime payloads (so most INSERTs need no refetch at all).
+const _senderProfiles = new Map<string, any>();
+
 export function subscribeToMessages(
   conversationId: string,
   onMessage: (msg: any) => void,
   onUpdate: (msg: any) => void,
 ): RealtimeChannel {
+  const enrich = async (id: string) => {
+    try {
+      const { data } = await supabase.from('messages').select(MESSAGE_SELECT).eq('id', id).maybeSingle();
+      if (data) {
+        if (data.profiles?.id) _senderProfiles.set(data.profiles.id, data.profiles);
+        onUpdate(data);
+      }
+    } catch { /* the raw row was already delivered */ }
+  };
+
   return supabase
     .channel(`messages:${conversationId}`)
     .on(
@@ -340,19 +384,19 @@ export function subscribeToMessages(
         table: 'messages',
         filter: `conversation_id=eq.${conversationId}`,
       },
-      async (payload) => {
-        const messageId = (payload.new as any)?.id || (payload.old as any)?.id;
-        if (!messageId) return;
-        const { data } = await supabase
-          .from('messages')
-          .select(`*, profiles(*), reactions:message_reactions(id, emoji, user_id, profiles(*)), reply:reply_to_message_id(id, text, type, sender_id, media_url, profiles(id, username, full_name))`)
-          .eq('id', messageId)
-          .single();
-        if (!data) return;
+      (payload) => {
+        const row = payload.new as any;
+        if (payload.eventType === 'DELETE') return; // deletes are soft (is_deleted) → arrive as UPDATE
+        if (!row?.id) return;
         if (payload.eventType === 'INSERT') {
-          onMessage(data);
+          // Deliver the payload IMMEDIATELY (never drop a message because a refetch failed)…
+          const cachedProfile = _senderProfiles.get(row.sender_id);
+          onMessage({ ...row, profiles: cachedProfile ?? null, reactions: [], reply: null });
+          // …and only refetch the joins when something is actually missing.
+          if (!cachedProfile || row.reply_to_message_id) enrich(row.id);
         } else {
-          onUpdate(data);
+          // UPDATE (read receipts, unsend, view-once): the row itself is enough — callers merge it.
+          onUpdate(row);
         }
       },
     )
@@ -363,24 +407,58 @@ export function subscribeToConversationList(
   userId: string,
   onChange: () => void,
 ): RealtimeChannel {
-  // We listen to all message inserts and check server-side if userId is a participant.
-  // Since Supabase filters can't do joins, we listen broadly and let the caller reload.
+  // Debounced: a burst of messages causes ONE list reload.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const fire = () => {
+    if (timer) return;
+    timer = setTimeout(() => { timer = null; onChange(); }, 1200);
+  };
+
+  // The user's conversation ids, so unrelated INSERTs on the (unfilterable-by-join) messages
+  // table are ignored locally without an extra query each.
+  let convIds: Set<string> | null = null;
+  let loadingIds: Promise<void> | null = null;
+  const loadIds = () => {
+    if (!loadingIds) {
+      loadingIds = (async () => {
+        try {
+          const { data } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', userId).limit(1000);
+          convIds = new Set((data ?? []).map((r: any) => r.conversation_id));
+        } catch { /* keep null → fall back to a per-message check */ }
+        setTimeout(() => { loadingIds = null; }, 30_000); // allow a refresh after 30s (new conversations)
+      })();
+    }
+    return loadingIds;
+  };
+  loadIds();
+
   return supabase
     .channel(`conv-list:${userId}`)
+    // Precisely filtered: the user's own participant rows (unread_count / last_read changes)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'conversation_participants', filter: `user_id=eq.${userId}` },
+      () => fire(),
+    )
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'messages' },
       async (payload) => {
-        // Only trigger if the current user is a participant in this conversation
-        const convId = payload.new.conversation_id;
+        const convId = (payload.new as any)?.conversation_id;
         if (!convId) return;
-        const { data } = await supabase
-          .from('conversation_participants')
-          .select('id')
-          .eq('conversation_id', convId)
-          .eq('user_id', userId)
-          .maybeSingle();
-        if (data) onChange();
+        if (convIds?.has(convId)) { fire(); return; }
+        // Unknown conversation: refresh the id set once, then re-check.
+        await loadIds();
+        if (convIds?.has(convId)) { fire(); return; }
+        if (!convIds) {
+          const { data } = await supabase
+            .from('conversation_participants')
+            .select('id')
+            .eq('conversation_id', convId)
+            .eq('user_id', userId)
+            .maybeSingle();
+          if (data) fire();
+        }
       },
     )
     .subscribe();
@@ -389,8 +467,8 @@ export function subscribeToConversationList(
 // ─── User search (keep local — used by NewConvModal) ────────────────────────
 
 export async function searchUsersForDM(query: string, currentUserId: string) {
-  if (!query.trim()) return [];
-  const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 50);
+  const safe = sanitizeFilterTerm(query, 50);
+  if (!safe) return [];
   const { data, error } = await supabase
     .from('profiles')
     .select('id, username, full_name, avatar_url, is_verified, verification_type')
@@ -408,13 +486,15 @@ export async function getFollowConnections(userId: string) {
       .select(
         `following_id, profiles!follows_following_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`,
       )
-      .eq('follower_id', userId),
+      .eq('follower_id', userId)
+      .limit(500),
     supabase
       .from('follows')
       .select(
         `follower_id, profiles!follows_follower_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`,
       )
-      .eq('following_id', userId),
+      .eq('following_id', userId)
+      .limit(500),
   ]);
 
   const uniqueUsers = new Map<string, any>();

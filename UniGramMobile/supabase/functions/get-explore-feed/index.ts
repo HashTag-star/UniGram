@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { withinQuota } from '../_shared/guard.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -27,7 +28,9 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json()
-    const { keywords, match_threshold = 0.5, limit = 24 } = body
+    const keywords: string = typeof body.keywords === 'string' ? body.keywords.slice(0, 300) : ''
+    const match_threshold = Math.min(1, Math.max(0, Number(body.match_threshold) || 0.5))
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(body.limit) || 24)))
 
     const anonClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -42,6 +45,17 @@ Deno.serve(async (req) => {
       })
     }
     const userId = user.id
+
+    const quotaClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+    if (!(await withinQuota(quotaClient, userId, 'get-explore-feed', 300))) {
+      return new Response(JSON.stringify({ error: 'Too many requests' }), {
+        status: 429,
+        headers: { ...CORS, 'Content-Type': 'application/json' },
+      })
+    }
 
     // Default search text if no keywords
     const searchText = keywords && keywords.trim() ? keywords : 'university student life college'

@@ -22,6 +22,8 @@ import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
 import { friendlyError } from '../lib/friendlyError';
+import { signOut } from '../services/auth';
+import { getPushPermissionStatus, registerForPushNotifications, unregisterPushTokens, type PushPermission } from '../services/pushNotifications';
 interface Props {
   visible: boolean;
   profile: any;
@@ -308,7 +310,7 @@ const PrivacyModal: React.FC<{
               </View>
               {saving
                 ? <ActivityIndicator size="small" color={colors.accent} />
-                : <Switch value={isPrivate} onValueChange={handlePrivateToggle} trackColor={{ false: '#333', true: colors.accent }} thumbColor="#fff" />
+                : <Switch accessibilityLabel="Private account" value={isPrivate} onValueChange={handlePrivateToggle} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#fff" />
               }
             </View>
             <View style={[styles.privacyRow, { borderBottomWidth: 0 }]}>
@@ -318,7 +320,7 @@ const PrivacyModal: React.FC<{
                   Let others see when you were last active
                 </Text>
               </View>
-              <Switch value={showActivityStatus} onValueChange={handleActivityToggle} trackColor={{ false: '#333', true: colors.accent }} thumbColor="#fff" />
+              <Switch accessibilityLabel="Show activity status" value={showActivityStatus} onValueChange={handleActivityToggle} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#fff" />
             </View>
           </View>
 
@@ -493,17 +495,42 @@ export const SettingsScreen: React.FC<Props> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const { showPopup } = usePopup();
 
+  // OS-level permission: when it is off, the in-app switch alone can't deliver pushes.
+  const [pushPerm, setPushPerm] = useState<PushPermission>('granted');
+
   useEffect(() => {
     if (visible) {
       AsyncStorage.getItem(NOTIF_STORAGE_KEY).then(val => {
         setNotificationsEnabled(val !== 'false');
       }).catch(() => {});
+      getPushPermissionStatus().then(setPushPerm).catch(() => {});
     }
   }, [visible]);
 
-  const handleNotifToggle = (val: boolean) => {
+  const handleNotifToggle = async (val: boolean) => {
     setNotificationsEnabled(val);
     AsyncStorage.setItem(NOTIF_STORAGE_KEY, String(val)).catch(() => {});
+    const uid = profile?.id;
+    if (!uid) return;
+    if (!val) {
+      unregisterPushTokens(uid).catch(() => {});
+      return;
+    }
+    // Turning on: (re)register this device, asking the OS for permission if needed.
+    const token = await registerForPushNotifications(uid, { prompt: true }).catch(() => null);
+    const perm = await getPushPermissionStatus();
+    setPushPerm(perm);
+    if (!token && perm === 'denied') {
+      showPopup({
+        title: 'Notifications are blocked',
+        message: 'Turn on notifications for UniGram in your phone settings to get likes, comments and messages.',
+        icon: 'notifications-off-outline',
+        buttons: [
+          { text: 'Not now', style: 'cancel', onPress: () => {} },
+          { text: 'Open settings', onPress: () => { Linking.openSettings().catch(() => {}); } },
+        ],
+      });
+    }
   };
 
   const [hapticsOn, setHapticsOn] = useState(feedbackPrefs.isHapticsOn());
@@ -623,7 +650,11 @@ export const SettingsScreen: React.FC<Props> = ({
         {
           text: 'Log Out',
           style: 'destructive',
-          onPress: async () => { await supabase.auth.signOut(); onClose(); },
+          onPress: async () => {
+            // Central sign-out: clears caches, ad state, queued interactions and push tokens.
+            try { await signOut(); } catch { await supabase.auth.signOut().catch(() => {}); }
+            onClose();
+          },
         },
       ]
     });
@@ -802,6 +833,7 @@ export const SettingsScreen: React.FC<Props> = ({
                 })()}
                 right={
                   <Switch
+                    accessibilityLabel="UniGram Pro active"
                     value={isProActive(profile)}
                     onValueChange={(val) => {
                       if (val) {
@@ -819,7 +851,7 @@ export const SettingsScreen: React.FC<Props> = ({
                       }
                     }}
                     disabled={proTogglePending}
-                    trackColor={{ false: '#333', true: colors.accent }}
+                    trackColor={{ false: colors.border, true: colors.accent }}
                     thumbColor="#fff"
                   />
                 }
@@ -831,10 +863,11 @@ export const SettingsScreen: React.FC<Props> = ({
                 sublabel="Automatically renew subscription"
                 right={
                   <Switch
+                    accessibilityLabel="Monthly auto-billing"
                     value={proProfile?.pro_auto_renew !== false}
                     onValueChange={handleProAutoRenewToggle}
                     disabled={proAutoRenewPending}
-                    trackColor={{ false: '#333', true: '#34d399' }}
+                    trackColor={{ false: colors.border, true: '#34d399' }}
                     thumbColor="#fff"
                   />
                 }
@@ -906,9 +939,10 @@ export const SettingsScreen: React.FC<Props> = ({
               sublabel="Subtle vibrations as you tap and swipe"
               right={
                 <Switch
+                  accessibilityLabel="Haptic feedback"
                   value={hapticsOn}
                   onValueChange={(v) => { feedbackPrefs.setHaptics(v); if (v) setTimeout(() => fx.press(), 60); }}
-                  trackColor={{ false: '#333', true: colors.accent }}
+                  trackColor={{ false: colors.border, true: colors.accent }}
                   thumbColor="#fff"
                 />
               }
@@ -920,11 +954,14 @@ export const SettingsScreen: React.FC<Props> = ({
             <Row
               icon="notifications-outline"
               label="Push Notifications"
+              sublabel={pushPerm === 'denied' ? 'Off in phone settings. Tap to enable' : undefined}
+              onPress={pushPerm === 'denied' ? () => { Linking.openSettings().catch(() => {}); } : undefined}
               right={
                 <Switch
+                  accessibilityLabel="Push notifications"
                   value={notificationsEnabled}
                   onValueChange={handleNotifToggle}
-                  trackColor={{ false: '#333', true: colors.accent }}
+                  trackColor={{ false: colors.border, true: colors.accent }}
                   thumbColor="#fff"
                 />
               }
@@ -936,23 +973,13 @@ export const SettingsScreen: React.FC<Props> = ({
               sublabel={isDark ? 'Dark mode' : 'Light mode'}
               right={
                 <Switch
+                  accessibilityLabel="Dark mode"
                   value={isDark}
                   onValueChange={toggleTheme}
-                  trackColor={{ false: '#e5e7eb', true: colors.accent }}
+                  trackColor={{ false: colors.border, true: colors.accent }}
                   thumbColor="#fff"
                 />
               }
-            />
-            <Row
-              icon="language-outline"
-              label="Language"
-              sublabel="English"
-              onPress={() => showPopup({
-                title: 'Coming Soon',
-                message: 'Additional language support is currently in development.',
-                icon: 'language-outline',
-                buttons: [{ text: 'OK', onPress: () => {} }]
-              })}
               noBorder
             />
           </Section>

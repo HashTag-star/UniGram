@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
+import { isActivePro, withinQuota } from "../_shared/guard.ts";
 import { callAiWithFallback, repairJson, sanitizeError, CORS } from "../_shared/groq.ts";
 
 type Outlook = 'positive' | 'neutral' | 'needs_work';
@@ -41,6 +42,10 @@ Deno.serve(async (req) => {
       authHeader.replace('Bearer ', ''),
     );
     if (authErr || !user) throw new Error('Unauthorized');
+
+    // Pro-only feature + per-user daily quota (each call burns AI tokens)
+    if (!(await isActivePro(supabase, user.id))) throw new Error('Pro subscription required');
+    if (!(await withinQuota(supabase, user.id, 'analytics-insights', 20))) throw new Error('Daily AI limit reached');
 
     const [paRes, postsRes] = await Promise.all([
       supabase.rpc('get_profile_analytics', { p_user_id: user.id }),

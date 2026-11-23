@@ -200,13 +200,22 @@ export const ReelPreview: React.FC<{ reel: any; isActive?: boolean }> = React.me
   );
 });
 
-const VideoPost: React.FC<{ 
-  uri: string; 
-  isMuted?: boolean; 
+let useDataSaverHook: () => { reduce: boolean } = () => ({ reduce: false });
+try { const ds = require('../lib/dataSaver'); if (ds?.useDataSaver) useDataSaverHook = ds.useDataSaver; } catch {}
+
+const VideoPost: React.FC<{
+  uri: string;
+  isMuted?: boolean;
   isActive?: boolean;
   aspectRatio?: number;
-}> = React.memo(({ uri, isMuted, isActive, aspectRatio }) => {
+}> = React.memo(({ uri, isMuted, isActive: isActiveProp, aspectRatio }) => {
   const [dynamicRatio, setDynamicRatio] = useState<number | null>(aspectRatio ?? null);
+  // Data saver: videos wait for a tap instead of autoplaying.
+  const { reduce: reduceData } = useDataSaverHook();
+  const [dsStarted, setDsStarted] = useState(false);
+  useEffect(() => { if (!isActiveProp) setDsStarted(false); }, [isActiveProp]);
+  const waitingForTap = !!isActiveProp && reduceData && !dsStarted;
+  const isActive = !!isActiveProp && !waitingForTap;
 
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
@@ -235,10 +244,24 @@ const VideoPost: React.FC<{
 
   return (
     <View style={{ width, height: containerHeight, overflow: 'hidden', backgroundColor: '#000' }}>
-      {!isActive && (
+      {!isActive && !waitingForTap && (
         <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
           <Ionicons name="play" size={48} color="rgba(255,255,255,0.2)" />
         </View>
+      )}
+      {waitingForTap && (
+        <TouchableOpacity
+          style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}
+          onPress={() => setDsStarted(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Data saver is on. Tap to play video"
+          activeOpacity={0.8}
+        >
+          <View style={{ alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 18, paddingHorizontal: 18, paddingVertical: 12 }}>
+            <Ionicons name="play-circle" size={44} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Data saver - tap to play</Text>
+          </View>
+        </TouchableOpacity>
       )}
       {isActive && (
         <VideoView

@@ -16,6 +16,7 @@ import { CachedImage } from '../components/CachedImage';
 import { getIceServers } from '../lib/iceServers';
 
 import { friendlyError } from '../lib/friendlyError';
+import { ReportSheet } from '../components/ReportSheet';
 // Lazy-load WebRTC — static import crashes in Expo Go where native module is absent
 let RTCPeerConnection: any;
 let RTCIceCandidate: any;
@@ -103,6 +104,7 @@ export const LiveScreen: React.FC<{
   const [viewers, setViewers] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [showReportLive, setShowReportLive] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
@@ -753,10 +755,10 @@ export const LiveScreen: React.FC<{
       {!isLive && !isViewer && (
         <View style={StyleSheet.absoluteFill}>
           <View style={[s.preLiveTopRow, { paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity style={s.preLiveIconBtn} onPress={onClose}>
+            <TouchableOpacity style={s.preLiveIconBtn} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Close">
               <Ionicons name="close" size={22} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={s.preLiveIconBtn} onPress={handleFlipCamera}>
+            <TouchableOpacity style={s.preLiveIconBtn} onPress={handleFlipCamera} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Flip camera">
               <Ionicons name="camera-reverse-outline" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -784,6 +786,8 @@ export const LiveScreen: React.FC<{
           </TouchableOpacity>
         </View>
       )}
+
+      <ReportSheet visible={showReportLive} onClose={() => setShowReportLive(false)} targetType="live" targetId={sessionId} label="live" />
 
       {/* ── Live HUD ── */}
       {isLive && (
@@ -825,12 +829,17 @@ export const LiveScreen: React.FC<{
             </View>
 
             <View style={s.topRight}>
+              {isViewer && (
+                <TouchableOpacity style={s.ctrlBtn} onPress={() => setShowReportLive(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel="Report this live">
+                  <Ionicons name="flag-outline" size={19} color="#fff" />
+                </TouchableOpacity>
+              )}
               {!isViewer && (
                 <>
-                  <TouchableOpacity style={s.ctrlBtn} onPress={handleFlipCamera}>
+                  <TouchableOpacity style={s.ctrlBtn} onPress={handleFlipCamera} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel="Flip camera">
                     <Ionicons name="camera-reverse-outline" size={21} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity style={s.ctrlBtn} onPress={handleToggleMute}>
+                  <TouchableOpacity style={s.ctrlBtn} onPress={handleToggleMute} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}>
                     <Ionicons name={isMuted ? 'mic-off' : 'mic-outline'} size={21} color={isMuted ? '#ff3b30' : '#fff'} />
                   </TouchableOpacity>
                 </>
@@ -840,6 +849,9 @@ export const LiveScreen: React.FC<{
                 onPress={handleExit}
                 disabled={isEnding}
                 activeOpacity={0.8}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel={isViewer ? 'Leave live' : 'End live'}
               >
                 {isEnding
                   ? <ActivityIndicator size="small" color="#ff453a" style={{ width: 36 }} />
@@ -918,14 +930,14 @@ export const LiveScreen: React.FC<{
                   blurOnSubmit={false}
                 />
                 {commentText.trim().length > 0 && (
-                  <TouchableOpacity onPress={handleSendComment} style={s.sendBtn}>
+                  <TouchableOpacity onPress={handleSendComment} style={s.sendBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Send comment">
                     <LinearGradient colors={['#9333ea', '#6366f1']} style={s.sendBtnGrad}>
                       <Ionicons name="send" size={14} color="#fff" />
                     </LinearGradient>
                   </TouchableOpacity>
                 )}
               </View>
-              <TouchableOpacity style={s.heartReactBtn} onPress={handleReaction} activeOpacity={0.7}>
+              <TouchableOpacity style={s.heartReactBtn} onPress={handleReaction} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Send a heart">
                 <Ionicons name="heart" size={28} color="#ff3b30" />
               </TouchableOpacity>
             </View>

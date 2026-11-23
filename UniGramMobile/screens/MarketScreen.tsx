@@ -55,6 +55,10 @@ import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
 
 import { friendlyError } from '../lib/friendlyError';
+import { fx } from '../lib/feedback';
+import { EmptyState } from '../components/EmptyState';
+import { ReportSheet } from '../components/ReportSheet';
+import { BlockSheet } from '../components/BlockSheet';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const { width } = Dimensions.get('window');
@@ -264,32 +268,35 @@ const ItemCard = memo<CardProps>(({
           <View style={card.ownerActions}>
             <TouchableOpacity
               style={[card.ownerBtn, { borderColor: colors.border }]}
-              onPress={() => onEdit?.(item)}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+              onPress={() => { fx.tap(); onEdit?.(item); }}
               accessibilityLabel="Edit listing"
               accessibilityRole="button"
             >
-              <Ionicons name="pencil-outline" size={11} color="#818cf8" />
-              <Text style={[card.ownerBtnText, { color: '#818cf8' }]}>Edit</Text>
+              <Ionicons name="pencil-outline" size={13} color={colors.accent} />
+              <Text style={[card.ownerBtnText, { color: colors.accent }]}>Edit</Text>
             </TouchableOpacity>
             {!item.is_sold && (
               <TouchableOpacity
                 style={[card.ownerBtn, { borderColor: '#22c55e30' }]}
-                onPress={() => onMarkSold?.(item.id)}
+                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                onPress={() => { fx.press(); onMarkSold?.(item.id); }}
                 accessibilityLabel="Mark as sold"
                 accessibilityRole="button"
               >
-                <Ionicons name="checkmark-circle-outline" size={11} color="#22c55e" />
+                <Ionicons name="checkmark-circle-outline" size={13} color="#22c55e" />
                 <Text style={[card.ownerBtnText, { color: '#22c55e' }]}>Sold</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={[card.ownerBtn, { borderColor: '#ef444430' }]}
-              onPress={() => onDelete?.(item.id)}
+              style={[card.ownerBtn, { borderColor: '#ef444430', marginLeft: 'auto' }]}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+              onPress={() => { fx.tap(); onDelete?.(item.id); }}
               accessibilityLabel="Delete listing"
               accessibilityRole="button"
             >
-              <Ionicons name="trash-outline" size={11} color="#ef4444" />
-              <Text style={[card.ownerBtnText, { color: '#ef4444' }]}>Del</Text>
+              <Ionicons name="trash-outline" size={13} color="#ef4444" />
+              <Text style={[card.ownerBtnText, { color: '#ef4444' }]}>Delete</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -324,6 +331,9 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
   const [showBoost, setShowBoost] = useState(false);
   const [activeBoost, setActiveBoost] = useState<string>(item.boost_type ?? 'none');
   const { showPopup } = usePopup();
+  const { showToast } = useToast();
+  const [showReport, setShowReport] = useState(false);
+  const [showBlockSeller, setShowBlockSeller] = useState(false);
   const seller = item.profiles;
 
   useEffect(() => { incrementViewCount(item.id); }, [item.id]);
@@ -332,8 +342,11 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
     setMarking(true);
     try {
       await markItemSold(item.id, currentUserId);
+      fx.success();
+      showToast('Marked as sold', 'success');
       onSold(item.id);
     } catch (e: any) {
+      fx.error();
       showPopup({ title: 'Error', message: friendlyError(e, 'Failed to mark as sold.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } finally { setMarking(false); }
   }, [item.id, currentUserId, onSold]);
@@ -353,6 +366,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
             setDeleting(true);
             try {
               await deleteMarketItem(item.id, currentUserId);
+              fx.success();
+              showToast('Listing deleted', 'info');
               onDelete(item.id);
             } catch (e: any) {
               showPopup({ title: 'Error', message: friendlyError(e, 'Failed to delete.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
@@ -400,6 +415,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
           <View style={[dtl.overlayRow, { top: overlayTop }]}>
               <TouchableOpacity
                 style={dtl.overlayBtn}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 onPress={onClose}
                 accessibilityLabel="Close"
                 accessibilityRole="button"
@@ -407,11 +423,11 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
               <Ionicons name="chevron-down" size={20} color="#fff" />
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={dtl.overlayBtn} onPress={handleShare} accessibilityLabel="Share listing" accessibilityRole="button">
+              <TouchableOpacity style={dtl.overlayBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} onPress={handleShare} accessibilityLabel="Share listing" accessibilityRole="button">
                 <Ionicons name="share-outline" size={19} color="#fff" />
               </TouchableOpacity>
               {!isOwn && (
-                <TouchableOpacity style={dtl.overlayBtn} onPress={() => onToggleSave(item.id)} accessibilityLabel={isSaved ? 'Unsave item' : 'Save item'} accessibilityRole="button">
+                <TouchableOpacity style={dtl.overlayBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} onPress={() => { fx.tap(); onToggleSave(item.id); }} accessibilityLabel={isSaved ? 'Unsave item' : 'Save item'} accessibilityRole="button">
                   <Ionicons
                     name={isSaved ? 'bookmark' : 'bookmark-outline'}
                     size={19}
@@ -500,7 +516,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
             {!isOwn && !item.is_sold && (
               <TouchableOpacity
                 style={[dtl.actionBtn, { backgroundColor: '#4f46e5' }]}
-                onPress={() => onMessage(seller?.id ?? item.seller_id)}
+                onPress={() => { fx.press(); onMessage(seller?.id ?? item.seller_id); }}
                 accessibilityLabel="Message seller"
                 accessibilityRole="button"
               >
@@ -517,8 +533,8 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
                   accessibilityLabel="Edit listing"
                   accessibilityRole="button"
                 >
-                  <Ionicons name="pencil-outline" size={17} color="#818cf8" />
-                  <Text style={[dtl.actionBtnText, { color: '#818cf8' }]}>Edit Listing</Text>
+                  <Ionicons name="pencil-outline" size={17} color={colors.accent} />
+                  <Text style={[dtl.actionBtnText, { color: colors.accent }]}>Edit Listing</Text>
                 </TouchableOpacity>
 
                 {!item.is_sold && (
@@ -573,14 +589,37 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
               </>
             )}
           </View>
+
+          {/* Safety */}
+          {!isOwn && (
+            <View style={{ marginTop: 18 }}>
+              <View style={{ flexDirection: 'row', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                <Ionicons name="shield-checkmark-outline" size={18} color="#22c55e" style={{ marginTop: 1 }} />
+                <Text style={{ flex: 1, color: colors.textSub, fontSize: 12, lineHeight: 17 }}>
+                  Meet in a public place on campus; never pay before you see the item.
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 6 }}>
+                <TouchableOpacity onPress={() => { fx.tap(); setShowReport(true); }} style={{ minHeight: 44, justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel="Report listing">
+                  <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600' }}>Report listing</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { fx.tap(); setShowBlockSeller(true); }} style={{ minHeight: 44, justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel="Block seller">
+                  <Text style={{ color: colors.textSub, fontSize: 13, fontWeight: '600' }}>Block seller</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </ScrollView>
+
+        <ReportSheet visible={showReport} onClose={() => setShowReport(false)} targetType="market_item" targetId={item.id} label="listing" showToast={showToast} />
+        <BlockSheet visible={showBlockSeller} onClose={() => setShowBlockSeller(false)} userId={seller?.id ?? item.seller_id} username={seller?.username} mode="block" showToast={showToast} onDone={onClose} />
 
         <BoostSheet
           visible={showBoost}
           onClose={() => setShowBoost(false)}
           itemId={item.id}
           currentBoostType={activeBoost}
-          onSuccess={(bt) => setActiveBoost(bt)}
+          onSuccess={(bt) => { fx.success(); setActiveBoost(bt); }}
         />
       </View>
     </Modal>
@@ -970,7 +1009,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
       setBrowseItems(prev => [...prev, ...data]);
       setBrowseOffset(prev => prev + data.length);
       setBrowseHasMore(data.length === PAGE_SIZE);
-    } catch (e) { /* silent */ }
+    } catch (e) { showToast(friendlyError(e, 'Could not load more listings.'), 'error'); }
     finally { setBrowseLoading(false); }
   }, [currentUserId, browseLoading, browseHasMore, browseOffset, category, debouncedSearch]);
 
@@ -979,7 +1018,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     setSavedLoading(true);
     try {
       setSavedItems(await getSavedItems(currentUserId));
-    } catch { /* silent */ }
+    } catch (e) { showToast(friendlyError(e, 'Could not load saved items.'), 'error'); }
     finally { setSavedLoading(false); setRefreshing(false); }
   }, [currentUserId]);
 
@@ -988,7 +1027,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     setMyLoading(true);
     try {
       setMyItems(await getMyListings(currentUserId));
-    } catch { /* silent */ }
+    } catch (e) { showToast(friendlyError(e, 'Could not load your listings.'), 'error'); }
     finally { setMyLoading(false); setRefreshing(false); }
   }, [currentUserId]);
 
@@ -1020,8 +1059,10 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
     if (wasSaved) setSavedItems(prev => prev.filter(i => i.id !== itemId));
     try {
       await toggleSaveItem(currentUserId, itemId);
+      fx.tap();
       if (!wasSaved) loadSaved();
-    } catch {
+    } catch (e) {
+      showToast(friendlyError(e, 'Could not update saved items.'), 'error');
       setSavedIds(prev => { const n = new Set(prev); wasSaved ? n.add(itemId) : n.delete(itemId); return n; });
     }
   }, [currentUserId, savedIds, loadSaved]);
@@ -1065,6 +1106,8 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
   const handleSoldFromCard = useCallback(async (itemId: string) => {
     try {
       await markItemSold(itemId, currentUserId);
+      fx.success();
+      showToast('Marked as sold', 'success');
       handleSoldFromDetail(itemId);
     } catch (e: any) {
       showPopup({ title: 'Update Failed', message: friendlyError(e, 'Could not mark as sold.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
@@ -1088,6 +1131,8 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
         { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
             await deleteMarketItem(itemId, currentUserId);
+            fx.success();
+            showToast('Listing deleted', 'info');
             handleDeleteFromDetail(itemId);
           } catch (e: any) {
             showPopup({ title: 'Error', message: friendlyError(e, 'Failed.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
@@ -1357,30 +1402,13 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
               : null
           }
           ListEmptyComponent={
-            <View style={scr.empty}>
-              <Ionicons
-                name={activeTab === 'saved' ? 'bookmark-outline' : activeTab === 'mine' ? 'storefront-outline' : 'bag-outline'}
-                size={52} color={colors.textMuted}
-              />
-              <Text style={[scr.emptyTitle, { color: colors.textSub }]}>
-                {activeTab === 'saved' ? 'Nothing saved yet'
-                  : activeTab === 'mine' ? "You haven't listed anything"
-                  : 'No items found'}
-              </Text>
-              <Text style={[scr.emptyHint, { color: colors.textMuted }]}>
-                {activeTab === 'saved' ? 'Bookmark items to find them here'
-                  : activeTab === 'mine' ? 'Start selling to your campus'
-                  : 'Try a different search or category'}
-              </Text>
-              {(activeTab === 'browse' || activeTab === 'mine') && (
-                <TouchableOpacity style={[scr.sellBtn, { marginTop: 20 }]} onPress={openSell}>
-                  <Ionicons name="add" size={16} color="#fff" />
-                  <Text style={scr.sellBtnText}>
-                    {activeTab === 'mine' ? 'Create Listing' : 'Be the first to sell'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            <EmptyState
+              icon={activeTab === 'saved' ? 'bookmark-outline' : activeTab === 'mine' ? 'storefront-outline' : 'bag-outline'}
+              title={activeTab === 'saved' ? 'Nothing saved yet' : activeTab === 'mine' ? "You haven't listed anything" : 'No items found'}
+              subtitle={activeTab === 'saved' ? 'Bookmark items to find them here' : activeTab === 'mine' ? 'Start selling to your campus' : 'Try a different search or category'}
+              actionLabel={activeTab === 'mine' ? 'Create listing' : activeTab === 'browse' ? 'Be the first to sell' : undefined}
+              onAction={activeTab === 'saved' ? undefined : openSell}
+            />
           }
         />
       )}
@@ -1526,13 +1554,13 @@ const card = StyleSheet.create({
   sellerName: { fontSize: 11, fontWeight: '600', flex: 1 },
   dot: { fontSize: 10 },
   age: { fontSize: 10 },
-  ownerActions: { flexDirection: 'row', gap: 5, marginTop: 8, flexWrap: 'wrap' },
+  ownerActions: { flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' },
   ownerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderRadius: 7, borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 7, paddingVertical: 4,
+    paddingHorizontal: 10, paddingVertical: 7, minHeight: 36,
   },
-  ownerBtnText: { fontSize: 10, fontWeight: '600' },
+  ownerBtnText: { fontSize: 12, fontWeight: '600' },
 });
 
 // Detail modal
@@ -1553,7 +1581,7 @@ const dtl = StyleSheet.create({
   },
   overlayBtn: {
     backgroundColor: 'rgba(0,0,0,0.52)',
-    borderRadius: 20, padding: 9,
+    borderRadius: 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
   },
   scrollBody: { padding: 16, paddingBottom: 32 },
   titleRow: {

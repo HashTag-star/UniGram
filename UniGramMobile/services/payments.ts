@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
+import { callEdgeFunction, verifyPaymentWithPolling } from '../lib/edgeFetch';
 
 export type BoostType = 'spotlight' | 'featured' | 'urgent';
 
@@ -42,24 +43,6 @@ export const BOOST_TIERS: BoostTier[] = [
     icon: 'rocket',
   },
 ];
-
-async function callEdgeFunction(name: string, body: object) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated');
-
-  const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${name}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
-  return json;
-}
 
 export async function initBoostPayment(itemId: string, boostType: BoostType) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -113,9 +96,9 @@ export async function openPaystackCheckout(
   // Always verify — payment could have succeeded even if the deep-link
   // redirect didn't fire (e.g. user closes the browser manually).
   try {
-    const data = await verifyPayment(reference);
-    const boostType = data.metadata?.boost_type as BoostType | undefined;
-    return { success: data.status === 'success', boostType };
+    const data = await verifyPaymentWithPolling<any>(reference);
+    const boostType = data?.metadata?.boost_type as BoostType | undefined;
+    return { success: data?.status === 'success', boostType };
   } catch {
     return { success: false };
   }

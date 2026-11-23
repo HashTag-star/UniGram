@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { sendPushToUser } from './pushNotifications';
+import { createDirectConversation } from './messages';
 
 /**
  * Notifies every admin user about an event (e.g. new report, new verification
@@ -95,7 +96,43 @@ export async function markNotificationRead(notificationId: string) {
 }
 
 export async function markAllNotificationsRead(userId: string) {
-  await supabase.from('notifications').update({ is_read: true }).eq('user_id', userId);
+  // Only touch unread rows: avoids rewriting up to thousands of already-read rows.
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', userId)
+    .eq('is_read', false);
+  if (error) throw error;
+}
+
+// Same select / FK hint as services/posts.ts POST_SELECT so opened posts have the same shape.
+const POST_OPEN_SELECT = `
+  id, user_id, type, caption, media_url, media_urls, location, song,
+  likes_count, comments_count, reposts_count, repost_of, quote_of,
+  created_at, tagged_users, aspect_ratio,
+  profiles!posts_user_id_fkey(id, username, avatar_url, is_verified, verification_type, major, university)
+`;
+
+/** Fetches one post (with author) for opening from a notification. Returns null if gone. */
+export async function getPostForNotification(postId: string) {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_OPEN_SELECT)
+    .eq('id', postId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+/** Resolves the conversation for a message notification (data id first, else the DM with the actor). */
+export async function resolveNotificationConversation(
+  myId: string,
+  actorId: string | null | undefined,
+  conversationId?: string | null,
+): Promise<string | null> {
+  if (conversationId) return conversationId;
+  if (!actorId) return null;
+  return createDirectConversation(myId, actorId);
 }
 
 export async function createNotification(notification: {

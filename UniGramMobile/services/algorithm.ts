@@ -1,12 +1,17 @@
+import { onSessionReset } from '../lib/sessionCleanup';
 import { supabase, SupabaseTimeoutError } from '../lib/supabase';
 import { getUserInterests } from './onboarding';
 import { INTERESTS } from '../data/interests';
 import { Cache, TTL } from '../lib/cache';
-import { getBlockedUserIds } from './profiles';
+import { getBlockedUserIds, PROFILE_MINI_COLUMNS } from './profiles';
+import { REEL_COLUMNS } from './reels';
+import { pageSize, shouldPrefetch } from '../lib/dataSaver';
 
 // ─── Module-level caches (lost on app kill, persist across re-renders) ─────────
 const _blockedCache = new Map<string, { ids: string[]; at: number }>();
-const _reportsCache = new Map<string, { counts: Record<string, number>; at: number }>();
+const _reportsCache = new Map<string, { n: number; at: number }>();
+onSessionReset(() => { _blockedCache.clear(); _reportsCache.clear(); });
+const _reelCtxCache = new Map<string, { at: number; following: Set<string>; interests: string[]; notInterested: Set<string>; authorDislike: Record<string, number> }>();
 const BLOCKED_TTL = 5 * 60 * 1000;  // 5 min
 const REPORTS_TTL = 2 * 60 * 1000;  // 2 min
 
@@ -34,26 +39,69 @@ function _scheduleImpressionFlush() {
   _impressionFlushTimer = setTimeout(() => { _flushImpressions().catch(() => {}); }, IMPRESSION_FLUSH_MS);
 }
 
+/**
+ * Drops the cached blocked-user list and every feed-like cache that was filtered with it.
+ * Call after block / unblock so the change is visible immediately.
+ */
+export function clearBlockedCache() {
+  _blockedCache.clear();
+  _reportsCache.clear();
+  _reelCtxCache.clear();
+  for (const p of ['feed:', 'reels:', 'stories:', 'explore', 'follow_suggestions:', 'trending_uni:']) {
+    try { Cache.invalidatePattern(p); } catch {}
+  }
+}
+
 async function getCachedBlockedIds(userId: string): Promise<string[]> {
   const c = _blockedCache.get(userId);
   if (c && Date.now() - c.at < BLOCKED_TTL) return c.ids;
-  const ids = await getBlockedUserIds().catch(() => [] as string[]);
-  _blockedCache.set(userId, { ids, at: Date.now() });
-  return ids;
+  // Fail closed: if the lookup fails we throw (callers must not cache a result built
+  // without the block list) instead of silently treating it as "nobody blocked".
+  try {
+    const ids = await getBlockedUserIds();
+    _blockedCache.set(userId, { ids, at: Date.now() });
+    return ids;
+  } catch (e) {
+    if (c) return c.ids; // last known list beats an unfiltered feed
+    throw e;
+  }
 }
 
+/** Per-id report-count cache (the old key used the first 5 ids and collided across pages). */
+const REPORTS_MAX_ENTRIES = 600;
 async function getCachedReportCounts(postIds: string[]): Promise<Record<string, number>> {
-  const key = postIds.slice(0, 5).join(',');
-  const c = _reportsCache.get(key);
-  if (c && Date.now() - c.at < REPORTS_TTL) return c.counts;
-  const { data } = await supabase
-    .from('reports')
-    .select('target_id')
-    .in('target_id', postIds)
-    .eq('status', 'pending');
+  const now = Date.now();
   const counts: Record<string, number> = {};
-  (data || []).forEach((r: any) => { counts[r.target_id] = (counts[r.target_id] || 0) + 1; });
-  _reportsCache.set(key, { counts, at: Date.now() });
+  const missing: string[] = [];
+  for (const id of postIds) {
+    const c = _reportsCache.get(id);
+    if (c && now - c.at < REPORTS_TTL) counts[id] = c.n;
+    else missing.push(id);
+  }
+  if (missing.length) {
+    const { data, error } = await supabase
+      .from('reports')
+      .select('target_id')
+      .in('target_id', missing)
+      .eq('status', 'pending');
+    if (error) {
+      // Moderation counts are advisory: serve what we have, but don't cache the gap.
+      return counts;
+    }
+    const fresh: Record<string, number> = {};
+    missing.forEach(id => { fresh[id] = 0; });
+    (data || []).forEach((r: any) => { fresh[r.target_id] = (fresh[r.target_id] || 0) + 1; });
+    for (const id of missing) {
+      counts[id] = fresh[id];
+      _reportsCache.delete(id);
+      _reportsCache.set(id, { n: fresh[id], at: now });
+    }
+    while (_reportsCache.size > REPORTS_MAX_ENTRIES) {
+      const first = _reportsCache.keys().next().value;
+      if (first === undefined) break;
+      _reportsCache.delete(first);
+    }
+  }
   return counts;
 }
 
@@ -110,13 +158,18 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
 
     if (feedResult.status === 'rejected' && feedResult.reason instanceof SupabaseTimeoutError) {
       console.warn('Feed RPC timed out — skipping fallback to avoid stacking 20s waits.', feedResult.reason.message);
-      return [];
+      // Throw (never return []) so the failure is not cached; getOrFetch serves stale data if any.
+      throw feedResult.reason;
+    }
+    if (blockedResult.status === 'rejected') {
+      // Fail closed: never build (and cache) a feed without the block list.
+      throw blockedResult.reason ?? new Error('Could not load block list');
     }
 
     const { data, error } = feedResult.status === 'fulfilled'
       ? feedResult.value
       : { data: null, error: { message: 'Feed RPC failed' } as any };
-    blockedIds = blockedResult.status === 'fulfilled' ? blockedResult.value : [];
+    blockedIds = blockedResult.value;
     results = data ?? [];
 
     // Backfill missing refs if needed
@@ -158,7 +211,8 @@ export async function getPersonalizedFeed(userId: string, limit = 20, offset = 0
       } else {
         q = q.range(offset, offset + limit - 1);
       }
-      const { data: fallback } = await q;
+      const { data: fallback, error: fbError } = await q;
+      if (fbError) throw fbError; // never cache a failed fallback as an empty feed
       results = fallback ?? [];
     }
 
@@ -300,6 +354,7 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
         userId, 
         keywords: interestKeywords.join(' '),
         limit,
+        offset, // real pagination: page 2 must not equal page 1
         match_threshold: 0.1 // lenient threshold to ensure we get results
       }
     });
@@ -339,11 +394,11 @@ export async function getPersonalizedExplorePosts(userId: string, limit = 24, of
 
 // Extracted legacy function to keep getPersonalizedExplorePosts clean
 async function _legacyGetExplorePosts(userId: string, limit: number, offset: number, interestKeywords: string[]) {
-  const profileResult = await supabase.from('profiles').select('university').eq('id', userId).single();
+  const profileResult = await supabase.from('profiles').select('university').eq('id', userId).maybeSingle();
   const userUniversity = profileResult.data?.university ?? null;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: posts } = await supabase
+  const { data: posts, error: legacyErr } = await supabase
     .from('posts')
     .select(`
       id, user_id, caption, type, media_url, media_urls,
@@ -354,7 +409,9 @@ async function _legacyGetExplorePosts(userId: string, limit: number, offset: num
     .not('media_url', 'is', null)
     .gte('created_at', sevenDaysAgo)
     .order('saves_count', { ascending: false })
-    .range(offset, offset + limit * 3 - 1);
+    .order('id', { ascending: true }) // stable tiebreaker so pages never overlap
+    .range(offset, offset + limit - 1);
+  if (legacyErr) throw legacyErr;
 
   if (!posts?.length) return [];
 
@@ -392,17 +449,19 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
   if (asyncHit) return asyncHit;
 
   // 1. Get blocked users to hide them from suggestions (cached)
-  const blockedIds = await getCachedBlockedIds(userId);
+  let blockedOk = true;
+  const blockedIds = await getCachedBlockedIds(userId).catch(() => { blockedOk = false; return [] as string[]; });
+  const store = (list: any[]) => { if (blockedOk && list.length) Cache.set(cacheKey, list); return list; };
 
   // 2. Fetch directly from robust RPC written in advanced algorithm migration
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_suggested_users', {
     p_user_id: userId,
     p_limit: limit,
   });
-  
+
   if (!rpcError && rpcData?.length) {
     const blockedSet = new Set(blockedIds);
-    return rpcData
+    return store(rpcData
       .filter((u: any) => !blockedSet.has(u.id))
       .map((u: any) => ({
         ...u,
@@ -414,12 +473,12 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
           same_university: !!(u.university),
           followers_count: u.followers_count ?? 0,
         }),
-      }));
+      })));
   }
 
   // Client-side fallback
   const [profileResult, followingResult] = await Promise.all([
-    supabase.from('profiles').select('university').eq('id', userId).single(),
+    supabase.from('profiles').select('university').eq('id', userId).maybeSingle(),
     supabase.from('follows').select('following_id').eq('follower_id', userId).limit(500),
   ]);
 
@@ -518,10 +577,10 @@ export async function getFollowSuggestions(userId: string, limit = 10) {
     }
   }
 
-  return candidates
+  return store(candidates
     .sort((a, b) => b._score - a._score)
     .slice(0, limit)
-    .map(u => ({ ...u, reason: _buildReason(u) }));
+    .map(u => ({ ...u, reason: _buildReason(u) })));
 }
 
 function _buildReason(u: {
@@ -546,49 +605,64 @@ function _buildReason(u: {
  * and user interests. Replaces the raw chronological getReels query.
  */
 export async function getPersonalizedReels(userId: string, limit = 20, offset = 0) {
-  const [blockedIds, reelsResult, followingResult, interests, feedbackResult] = await Promise.all([
-    getCachedBlockedIds(userId).catch(() => [] as string[]),
-    supabase
-      .from('reels')
-      .select('*, profiles!reels_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type, university)')
-      .order('created_at', { ascending: false })
-      .range(0, limit * 3 - 1),
-    supabase.from('follows').select('following_id').eq('follower_id', userId).limit(500),
-    getUserInterests(userId).catch(() => [] as string[]),
-    supabase
-      .from('user_feedback')
-      .select('target_id, author_id, feedback_type')
-      .eq('user_id', userId)
-      .eq('target_type', 'reel'),
+  // Per-user signals (following / interests / feedback) change rarely — cache 5 min
+  // instead of re-querying (and re-scoring) on every page.
+  let ctx = _reelCtxCache.get(userId);
+  const ctxFresh = ctx && Date.now() - ctx.at < 5 * 60 * 1000;
+
+  const reelsP = supabase
+    .from('reels')
+    .select(`${REEL_COLUMNS}, profiles!reels_user_id_fkey(${PROFILE_MINI_COLUMNS})`)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    // Real pagination: page N is the Nth chronological window; ranking happens inside the page.
+    .range(offset, offset + limit - 1);
+
+  const [blockedIds, reelsResult] = await Promise.all([
+    getCachedBlockedIds(userId), // throws when unknown → never serve an unfiltered page
+    reelsP,
+    ctxFresh ? Promise.resolve() : (async () => {
+      const [followingResult, interests, feedbackResult] = await Promise.all([
+        supabase.from('follows').select('following_id').eq('follower_id', userId).limit(500),
+        getUserInterests(userId).catch(() => [] as string[]),
+        supabase
+          .from('user_feedback')
+          .select('target_id, author_id, feedback_type')
+          .eq('user_id', userId)
+          .eq('target_type', 'reel')
+          .limit(300),
+      ]);
+      const notInterested = new Set<string>();
+      const authorDislike: Record<string, number> = {};
+      (feedbackResult.data ?? []).forEach((f: any) => {
+        if (f.feedback_type === 'not_interested') {
+          notInterested.add(f.target_id);
+          if (f.author_id) authorDislike[f.author_id] = (authorDislike[f.author_id] ?? 0) + 1;
+        }
+      });
+      ctx = {
+        at: Date.now(),
+        following: new Set((followingResult.data ?? []).map((f: any) => f.following_id as string)),
+        interests: interests
+          .map((id: string) => INTERESTS.find(i => i.id === id)?.label?.toLowerCase())
+          .filter(Boolean) as string[],
+        notInterested,
+        authorDislike,
+      };
+      _reelCtxCache.set(userId, ctx);
+    })(),
   ]);
+  if (reelsResult.error) throw reelsResult.error;
   const reels = reelsResult.data ?? [];
   if (!reels.length) return [];
 
-  const followingSet = new Set((followingResult.data ?? []).map((f: any) => f.following_id));
-  const interestKeywords = interests
-    .map((id: string) => INTERESTS.find(i => i.id === id)?.label?.toLowerCase())
-    .filter(Boolean) as string[];
+  const followingSet = ctx?.following ?? new Set<string>();
+  const interestKeywords = ctx?.interests ?? [];
+  const notInterestedIds = ctx?.notInterested ?? new Set<string>();
+  const authorDislikeCount = ctx?.authorDislike ?? {};
 
-  // Build not-interested sets from user feedback
-  const notInterestedIds = new Set<string>();
-  const authorDislikeCount: Record<string, number> = {};
-  (feedbackResult.data ?? []).forEach((f: any) => {
-    if (f.feedback_type === 'not_interested') {
-      notInterestedIds.add(f.target_id);
-      if (f.author_id) authorDislikeCount[f.author_id] = (authorDislikeCount[f.author_id] ?? 0) + 1;
-    }
-  });
-
-  // Batch report check
-  const { data: reportsData } = await supabase
-    .from('reports')
-    .select('target_id')
-    .in('target_id', reels.map(r => r.id))
-    .eq('status', 'pending');
-  const reportCounts: Record<string, number> = {};
-  (reportsData ?? []).forEach((r: any) => {
-    reportCounts[r.target_id] = (reportCounts[r.target_id] ?? 0) + 1;
-  });
+  // Batch report check (per-id cached)
+  const reportCounts = await getCachedReportCounts(reels.map((r: any) => r.id));
 
   const blockedSet = new Set(blockedIds);
   const now = Date.now();
@@ -614,9 +688,21 @@ export async function getPersonalizedReels(userId: string, limit = 20, offset = 
 
   return scored
     .sort((a: any, b: any) => b._score - a._score)
-    .slice(offset, offset + limit)
     .map(({ _score, ...r }: any) => r);
 }
+
+/**
+ * Warm the first explore + reels pages. No-op when data saver / cellular saver is on.
+ * (UI agents: call this instead of prefetching manually.)
+ */
+export async function prefetchDiscoverFeeds(userId: string) {
+  if (!shouldPrefetch()) return;
+  await Promise.allSettled([
+    Cache.getOrFetch(`explore:${userId}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(userId, pageSize(24), 0)),
+    Cache.getOrFetch(`reels:${userId}:20:0`, TTL.reels, () => getPersonalizedReels(userId, pageSize(20), 0)),
+  ]);
+}
+
 
 /**
  * Records user feedback on a piece of content.
@@ -629,10 +715,12 @@ export async function recordContentFeedback(
   feedbackType: 'not_interested' | 'interested',
   authorId?: string,
 ) {
-  await supabase.from('user_feedback').upsert(
+  const { error } = await supabase.from('user_feedback').upsert(
     { user_id: userId, target_id: targetId, target_type: targetType, feedback_type: feedbackType, author_id: authorId ?? null },
     { onConflict: 'user_id,target_id,feedback_type' },
   );
+  if (error) throw error;
+  _reelCtxCache.delete(userId); // next reels page must see the new feedback
 }
 
 // ─── Trending ─────────────────────────────────────────────────────────────────
@@ -792,7 +880,7 @@ export async function getUniversityTrendingFeed(
   limit = 20,
   hoursWindow = 48,
 ): Promise<any[]> {
-  const cacheKey = `trending_uni:${university}:${hoursWindow}`;
+  const cacheKey = `trending_uni:${university}:${hoursWindow}:${limit}`;
 
   const memHit = Cache.getSync<any[]>(cacheKey, TTL.trending);
   if (memHit) return memHit;
@@ -801,19 +889,28 @@ export async function getUniversityTrendingFeed(
 
   const twoDaysAgo = new Date(Date.now() - hoursWindow * 60 * 60 * 1_000).toISOString();
 
-  const { data: posts } = await supabase
-    .from('posts')
-    .select(`
+  // Filter by university SERVER-side (profiles!inner) so the 300-row cap is applied to
+  // this campus's posts, not to the whole platform. Falls back to a client filter if the
+  // embedded filter isn't accepted.
+  const cols = (shares: boolean) => `
       id, user_id, caption, type, media_url, media_urls,
-      likes_count, comments_count, saves_count, created_at,
-      profiles!posts_user_id_fkey(
+      likes_count, comments_count, saves_count, ${shares ? 'shares_count, ' : ''}created_at,
+      profiles!posts_user_id_fkey!inner(
         id, username, full_name, avatar_url,
         is_verified, verification_type, university
       )
-    `)
+    `;
+  const run = (shares: boolean) => supabase
+    .from('posts')
+    .select(cols(shares))
+    .eq('profiles.university', university)
     .gte('created_at', twoDaysAgo)
     .order('created_at', { ascending: false })
     .limit(300);
+  let res: any = await run(true);
+  if (res.error) res = await run(false); // shares_count column may not exist
+  if (res.error) throw res.error;
+  const posts = res.data;
 
   if (!posts?.length) return [];
 

@@ -23,6 +23,8 @@ interface PaywallContextType {
   isPro: (profile: any) => boolean;
   /** Bumps whenever the entitlement changes (use as a re-render key). */
   entitlementVersion: number;
+  /** Signed-in user id (null when signed out). Shared source for pro/ad-policy hooks. */
+  userId: string | null;
 }
 
 const PaywallContext = createContext<PaywallContextType | undefined>(undefined);
@@ -37,16 +39,21 @@ export const PaywallProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Track the signed-in user and load their (simulated) subscription.
   useEffect(() => {
     let alive = true;
+    // Only react to an actual user change; TOKEN_REFRESHED / USER_UPDATED etc. fire
+    // many times per session and must not re-read storage or re-render consumers.
+    let lastId: string | null | undefined = undefined;
+    const apply = (id: string | null) => {
+      if (id === lastId) return;
+      lastId = id;
+      setUserId(id);
+      hydrateSimulatedPro(id).catch(() => {});
+    };
     supabase.auth.getSession().then(({ data }) => {
       if (!alive) return;
-      const id = data.session?.user?.id ?? null;
-      setUserId(id);
-      hydrateSimulatedPro(id).catch(() => {});
+      apply(data.session?.user?.id ?? null);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      const id = session?.user?.id ?? null;
-      setUserId(id);
-      hydrateSimulatedPro(id).catch(() => {});
+      apply(session?.user?.id ?? null);
     });
     return () => { alive = false; sub.subscription.unsubscribe(); };
   }, []);
@@ -68,8 +75,8 @@ export const PaywallProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [openPaywall, entitlementVersion]);
 
   const value = useMemo<PaywallContextType>(
-    () => ({ openPaywall, closePaywall, requirePro, isPro, entitlementVersion }),
-    [openPaywall, closePaywall, requirePro, isPro, entitlementVersion],
+    () => ({ openPaywall, closePaywall, requirePro, isPro, entitlementVersion, userId }),
+    [openPaywall, closePaywall, requirePro, isPro, entitlementVersion, userId],
   );
 
   return (

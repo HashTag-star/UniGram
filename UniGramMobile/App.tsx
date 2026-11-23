@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
-  BackHandler, Platform, ToastAndroid, Easing
+  BackHandler, Platform, ToastAndroid, Easing, AppState
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -38,8 +38,17 @@ import PagerView, { PagerViewRef } from './components/PagerViewWrapper';
 import { isOnboardingComplete } from './services/onboarding';
 import { getPersonalizedExplorePosts, getPersonalizedReels } from './services/algorithm';
 import { Cache, TTL } from './lib/cache';
-import { getUnreadNotificationCount } from './services/notifications';
-import { registerForPushNotifications, onNotificationResponseReceived } from './services/pushNotifications';
+import { getUnreadNotificationCount, getPostForNotification } from './services/notifications';
+import {
+  registerForPushNotifications, onNotificationResponseReceived, onPushTokenChanged,
+  getLastNotificationResponse, clearLastNotificationResponse,
+} from './services/pushNotifications';
+import { resetSessionState } from './lib/sessionCleanup';
+import { parseAuthUrl, isRecoveryPending, clearRecoveryPending } from './services/auth';
+import { friendlyError } from './lib/friendlyError';
+import { subscribeToIncomingCalls, getActiveCallForUser, isFreshRingingCall, type CallRecord } from './services/calls';
+import { CallScreen } from './screens/CallScreen';
+import { followUser } from './services/profiles';
 import { supabase, SupabaseTimeoutError } from './lib/supabase';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { PopupProvider } from './context/PopupContext';
@@ -52,7 +61,7 @@ import { AnimatedSplash } from './components/AnimatedSplash';
 // there is never a white/blank flash between the two.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 import { createStory } from './services/stories';
-import { getConversations } from './services/messages';
+import { createDirectConversation, sendMessage } from './services/messages';
 import { AccountService } from './services/accounts';
 import { useHaptics as useAppHaptics } from './hooks/useHaptics';
 import { fx, warmUpSounds } from './lib/feedback';
@@ -130,21 +139,28 @@ const TabGlyph: React.FC<{ active: boolean; pressed: boolean; children: React.Re
 
 const BottomTabBar = memo(({ 
   activeTabVisual, 
-  onTabChange, 
-  colors 
-}: { 
-  activeTabVisual: Tab; 
-  onTabChange: (tab: Tab) => void; 
-  colors: any 
+  onTabChange,
+  colors,
+  homeBadge,
+}: {
+  activeTabVisual: Tab;
+  onTabChange: (tab: Tab) => void;
+  colors: any;
+  /** Unread notifications + messages (surfaced on the Home tab's label). */
+  homeBadge: number;
 }) => {
   return (
     <SafeAreaView edges={['bottom']} style={[styles.bottomNav, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
-      <View style={styles.bottomNavInner}>
+      <View style={styles.bottomNavInner} accessibilityRole="tablist">
         {TABS.map(tab => {
           const isActive = activeTabVisual === tab.id;
+          const badge = tab.id === 'feed' ? homeBadge : 0;
           return (
             <Pressable
               key={tab.id}
+              accessibilityRole="tab"
+              accessibilityLabel={badge > 0 ? `${tab.label}, ${badge} unread` : tab.label}
+              accessibilityState={{ selected: isActive }}
               onPress={() => onTabChange(tab.id)}
               onPressIn={() => {
                 // Pre-emptive haptic for maximum snappiness
@@ -184,15 +200,15 @@ const BottomTabBar = memo(({
 
 // Screen wrapper for tab virtualization
 const ScreenWrapper = memo(({ isActive, children }: { isActive: boolean; children: React.ReactNode }) => {
-  // Tabs stay mounted (display toggled), so animate on every activation: a short
-  // fade + 10px rise makes switching feel like a page arriving, not a hard swap.
-  const enter = useRef(new Animated.Value(isActive ? 1 : 0)).current;
+  // Tabs stay mounted (display toggled) once visited.
+  // Animate only on the first mount (a tab mounts lazily on its first visit); later
+  // tab switches are instant so repeated switching doesn't replay the fade.
+  const enter = useRef(new Animated.Value(isActive ? 0 : 1)).current;
   useEffect(() => {
     if (isActive) {
-      enter.setValue(0);
       Animated.timing(enter, { toValue: 1, duration: 230, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
     }
-  }, [isActive]);
+  }, []);
   return (
     <Animated.View
       style={[styles.screen, {
@@ -230,6 +246,7 @@ const AppScreens = memo(({
   onVerifyPress,
   onProfileBack,
   onReelsBack,
+  onReelsSearch,
   onShowPrivacy,
   onShowTerms,
   onShowGuidelines,
@@ -298,29 +315,40 @@ const AppScreens = memo(({
 
   return (
     <View style={styles.screensContainer}>
-      <ScreenWrapper isActive={activeTab === 'feed'}>
-        {feedScreen}
-      </ScreenWrapper>
+      {/* Tabs mount lazily on first visit (the first tab immediately) and then stay alive. */}
+      {(activeTab === 'feed' || mountedTabs.has('feed')) && (
+        <ScreenWrapper isActive={activeTab === 'feed'}>
+          {feedScreen}
+        </ScreenWrapper>
+      )}
 
-      <ScreenWrapper isActive={activeTab === 'explore'}>
-        {exploreScreen}
-      </ScreenWrapper>
+      {(activeTab === 'explore' || mountedTabs.has('explore')) && (
+        <ScreenWrapper isActive={activeTab === 'explore'}>
+          {exploreScreen}
+        </ScreenWrapper>
+      )}
 
-      <ScreenWrapper isActive={activeTab === 'market'}>
-        {marketScreen}
-      </ScreenWrapper>
+      {(activeTab === 'market' || mountedTabs.has('market')) && (
+        <ScreenWrapper isActive={activeTab === 'market'}>
+          {marketScreen}
+        </ScreenWrapper>
+      )}
 
-      <ScreenWrapper isActive={activeTab === 'messages'}>
-        {messagesScreen}
-      </ScreenWrapper>
+      {(activeTab === 'messages' || mountedTabs.has('messages')) && (
+        <ScreenWrapper isActive={activeTab === 'messages'}>
+          {messagesScreen}
+        </ScreenWrapper>
+      )}
 
-      <ScreenWrapper isActive={activeTab === 'profile'}>
-        {profileScreen}
-      </ScreenWrapper>
+      {(activeTab === 'profile' || mountedTabs.has('profile')) && (
+        <ScreenWrapper isActive={activeTab === 'profile'}>
+          {profileScreen}
+        </ScreenWrapper>
+      )}
 
       {activeTab === 'reels' && (
         <View style={styles.screen}>
-          <ReelsScreen onBack={onReelsBack} isMuted={globalMuted} setIsMuted={setGlobalMuted} initialReelId={initialReelId} initialReels={initialReels} />
+          <ReelsScreen onBack={onReelsBack} onSearch={onReelsSearch} isMuted={globalMuted} setIsMuted={setGlobalMuted} initialReelId={initialReelId} initialReels={initialReels} />
         </View>
       )}
     </View>
@@ -330,7 +358,10 @@ const AppScreens = memo(({
 function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { setNotifBadge, setMessageBadge, setProfileRefreshKey, setFeedRefreshKey } = useAppState();
+  const {
+    setNotifBadge, setMessageBadge, setProfileRefreshKey, setFeedRefreshKey,
+    notifBadge: notifBadgeValue, messageBadge: messageBadgeValue,
+  } = useAppState();
   const haptics = useAppHaptics();
   const { showToast } = useToast();
   const [session, setSession] = useState<any>(undefined);
@@ -368,8 +399,27 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   const [notifPostComments, setNotifPostComments] = useState(false);
   const [notifCommentId, setNotifCommentId] = useState<string | undefined>(undefined);
   const [showResetPassword, setShowResetPassword] = useState(false);
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false);
+  const [profileRetryKey, setProfileRetryKey] = useState(0);
+  const [incomingCall, setIncomingCall] = useState<CallRecord | null>(null);
 
   useLastSeen(session?.user?.id ?? null);
+
+  // Latest-value refs for async callbacks (notification taps, timers) that outlive renders.
+  const activeTabRef = useRef<Tab>('feed');
+  activeTabRef.current = activeTab;
+  const userProfileRef = useRef<any>(null);
+  userProfileRef.current = userProfile;
+  const sessionRef = useRef<any>(undefined);
+  sessionRef.current = session;
+  const onboardingDoneRef = useRef<boolean | null>(null);
+  onboardingDoneRef.current = onboardingDone;
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A tab mounts on its first visit (whatever caused it) and then stays alive.
+  useEffect(() => {
+    setMountedTabs(prev => prev.has(activeTab) ? prev : new Set([...prev, activeTab]));
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeMedia) {
@@ -438,11 +488,44 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     warmUpSounds();
 
     // Handle deep links for password reset redirection
-    const handleUrl = (url: string) => {
-      if (!url) return;
-      // Supabase sends recovery links like: scheme://auth-callback#access_token=...&type=recovery
-      if (url.includes('type=recovery')) {
-        setShowResetPassword(true);
+    // Supabase recovery links look like:
+    //   implicit: scheme://auth-callback#access_token=...&refresh_token=...&type=recovery
+    //   PKCE:     scheme://auth-callback?code=...
+    // A session MUST exist before ResetPasswordScreen runs updateUser, so we create
+    // it here first and only then show the screen.
+    let lastRecoveryUrl = '';
+    const handleUrl = async (url: string) => {
+      if (!url || url === lastRecoveryUrl) return;
+      const p = parseAuthUrl(url);
+      const linkFailed = () => {
+        try { showToast('This reset link is invalid or has expired. Request a new one.', 'error'); } catch {}
+      };
+      if (p.error || p.error_code) {
+        if (p.type === 'recovery' || p.error_code === 'otp_expired' || (await isRecoveryPending())) linkFailed();
+        return;
+      }
+      const isRecovery = p.type === 'recovery' || (!!p.code && (await isRecoveryPending()));
+      if (!isRecovery) return;
+      lastRecoveryUrl = url;
+      try {
+        if (p.access_token && p.refresh_token) {
+          const { error } = await supabase.auth.setSession({ access_token: p.access_token, refresh_token: p.refresh_token });
+          if (error) throw error;
+        } else if (p.code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(p.code);
+          if (error) throw error;
+        } else {
+          throw new Error('invalid recovery link');
+        }
+        clearRecoveryPending();
+        if (!cancelled) setShowResetPassword(true);
+      } catch (e: any) {
+        console.warn('[App] recovery link failed:', e?.message);
+        // Network problems read differently from a bad/expired link.
+        const msg = friendlyError(e, '');
+        try {
+          showToast(/reach UniGram/i.test(msg) ? msg : 'This reset link is invalid or has expired. Request a new one.', 'error');
+        } catch {}
       }
     };
 
@@ -461,43 +544,61 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
       }
       const newUid = sess?.user?.id ?? null;
       setSession(sess);
+
+      // Keep the stored (switchable) account tokens fresh: Supabase rotates refresh
+      // tokens, so a stale copy would break the next account switch.
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && sess?.user) {
+        const prof = userProfileRef.current;
+        const reg = prof?.id === sess.user.id
+          ? AccountService.registerAccount(prof, sess)
+          : AccountService.updateTokens(sess);
+        Promise.resolve(reg).catch((e: any) => console.warn('[App] register tokens:', e?.message));
+      }
+
       // Only reset onboardingDone when the user actually changes, not on token refresh
       if (newUid !== activeUidRef.current) {
+        const prevUid = activeUidRef.current;
         activeUidRef.current = newUid;
         setOnboardingDone(null);
+        setProfileLoadFailed(false);
+
+        // Switching accounts or signing out: drop everything tied to the old user so the
+        // next one never sees it. (First sign-in after launch has prevUid === null.)
+        if (prevUid) {
+          resetSessionState().catch(() => {});
+          setUserProfile(null);
+          setViewedUserId(null);
+          setActiveTab('feed');
+          setActiveTabVisual('feed');
+          setPrevTab('feed');
+          setInitialConv(null);
+          setInitialReelId(undefined);
+          setInitialReels(undefined);
+          setNotifPost(null);
+          setNotifPostComments(false);
+          setNotifCommentId(undefined);
+          setShowNotifications(false);
+          setShowCreate(false);
+          setShowVerification(false);
+          setShowDiscoverPeople(false);
+          setShowTrending(false);
+          setViewerLiveSession(null);
+          setIncomingCall(null);
+          setHideTabBar(false);
+          setMountedTabs(new Set(['feed'] as Tab[]));
+          setNotifBadge(0);
+          setMessageBadge(0);
+          setProfileRefreshKey(k => k + 1);
+          setFeedRefreshKey(k => k + 1);
+        }
       }
     });
 
     // Splash shows briefly — 50ms to ensure a smooth transition
     const splashTimer = setTimeout(() => setMinSplashDone(true), 50);
 
-    // Pre-mount other tabs after interactions settle but stagger mounts to avoid jank.
-    const timers: Array<any> = [];
-    const idleHandle = setTimeout(() => {
-      startTransition(() => {
-        // Most-visited first. Mounting starts only after the Home feed has had time to
-        // load — mounting five heavy screens at launch competed with it for the JS
-        // thread and the network.
-        const tabsToMount: Tab[] = ['profile', 'explore', 'reels', 'market', 'messages'];
-        tabsToMount.forEach((t, i) => {
-          const id = setTimeout(() => {
-            setMountedTabs(prev => prev.has(t) ? prev : new Set([...prev, t]));
-            // Background-prefetch light data for faster navigation
-            try {
-              const uid = session?.user?.id;
-              if (!uid) return;
-              if (t === 'explore') {
-                Cache.getOrFetch(`explore:${uid}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(uid, 24, 0)).catch((e) => console.warn('[App] prefetch explore:', e?.message));
-              }
-              if (t === 'reels') {
-                Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0)).catch((e) => console.warn('[App] prefetch reels:', e?.message));
-              }
-            } catch {}
-          }, 2500 + i * 500);
-          timers.push(id);
-        });
-      });
-    });
+    // Other tabs now mount lazily on first visit (see AppScreens); prefetching lives in
+    // its own effect keyed on the signed-in user.
 
     const hS = DeviceEventEmitter.addListener('haptic_selection', haptics.selection);
     const hM = DeviceEventEmitter.addListener('haptic_medium', haptics.medium);
@@ -514,8 +615,6 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
       urlSub.remove();
       listener.subscription.unsubscribe();
       clearTimeout(splashTimer);
-      timers.forEach(t => clearTimeout(t));
-      clearTimeout(idleHandle);
       hS.remove();
       hM.remove();
       hSu.remove();
@@ -529,67 +628,145 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   useEffect(() => {
     if (!session?.user?.id) return;
     const uid = session.user.id;
-    const fetchProfile = async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned, is_pro, pro_expires_at, pro_disabled, pro_auto_renew')
-        .eq('id', uid)
-        .single();
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const MAX_ATTEMPTS = 4;
+
+    const fetchProfile = async (attempt: number) => {
+      let data: any = null;
+      let error: any = null;
+      try {
+        const res = await supabase
+          .from('profiles')
+          .select('id, username, full_name, avatar_url, is_verified, verification_type, university, onboarding_completed, is_suspended, is_banned, is_pro, pro_expires_at, pro_disabled, pro_auto_renew')
+          .eq('id', uid)
+          .maybeSingle();
+        data = res.data; error = res.error;
+      } catch (e) { error = e; }
+
+      // The user changed (sign-out / account switch) while we were waiting: drop the result.
+      if (cancelled || activeUidRef.current !== uid) return;
+
       if (data) {
+        setProfileLoadFailed(false);
         setUserProfile(data);
         const done = data.onboarding_completed ?? false;
         setOnboardingDone(done);
         // Cache onboarding status so next launch doesn't need a DB round-trip
         if (done) AsyncStorage.setItem(`ug_onboard:${uid}`, 'true').catch((e) => console.warn('[App] cache onboard:', e?.message));
-        AccountService.registerAccount(data, session).catch((e) => console.warn('[App] registerAccount:', e?.message));
-      } else {
-        // [Ama Mensah - Lead Dev] No profile row found — treat as onboarding complete to avoid
-        // an infinite loading gate, but do NOT leave userProfile as null.
-        // Set a minimal stub so downstream null-checks on userProfile don't crash.
+        const sess = sessionRef.current;
+        if (sess?.user?.id === uid) AccountService.registerAccount(data, sess).catch((e) => console.warn('[App] registerAccount:', e?.message));
+        return;
+      }
+
+      // Only a genuinely missing row (no rows / PGRST116) means "no profile yet" -> onboarding.
+      if (!error || error?.code === 'PGRST116') {
+        setProfileLoadFailed(false);
         setUserProfile({ id: uid });
-        setOnboardingDone(true);
+        setOnboardingDone(false);
+        return;
+      }
+
+      // Any other failure (offline, timeout, 5xx): keep whatever state we have and retry.
+      console.warn('[App] fetchProfile failed:', error?.message);
+      if (attempt + 1 < MAX_ATTEMPTS) {
+        retryTimer = setTimeout(() => fetchProfile(attempt + 1), 1500 * Math.pow(2, attempt));
+      } else {
+        // If we had a cached onboarding flag the main app is already showing; otherwise offer a retry.
+        if (onboardingDoneRef.current === null) setProfileLoadFailed(true);
       }
     };
-    fetchProfile();
-  }, [session?.user?.id]);
+    fetchProfile(0);
+
+    // Re-try when the app returns to the foreground (e.g. connectivity came back).
+    const appSub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && !userProfileRef.current?.username) fetchProfile(0);
+    });
+
+    return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); appSub.remove(); };
+  }, [session?.user?.id, profileRetryKey]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
     const uid = session.user.id;
+    let cancelled = false;
     const initNotifs = async () => {
-      try { const count = await getUnreadNotificationCount(uid); setNotifBadge(count); } catch {}
+      try {
+        const count = await getUnreadNotificationCount(uid);
+        if (!cancelled && activeUidRef.current === uid) setNotifBadge(count);
+      } catch {}
     };
     initNotifs();
     const channel = supabase.channel(`app-notifs-${uid}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` }, () => {
         setNotifBadge(b => b + 1);
         fx.notify();
-      }).subscribe();
-    return () => { supabase.removeChannel(channel); };
+      })
+      .subscribe((status: string) => {
+        // (Re)connected: events may have been missed while offline, so resync.
+        if (status === 'SUBSCRIBED') initNotifs();
+      });
+    // Resync when returning to the foreground.
+    const appSub = AppState.addEventListener('change', (s) => { if (s === 'active') initNotifs(); });
+    return () => { cancelled = true; appSub.remove(); supabase.removeChannel(channel); };
   }, [session?.user?.id]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
     const uid = session.user.id;
-    // [Ama Mensah - Lead Dev] Wrap in try/catch — getConversations can throw if network is down
+    let cancelled = false;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    // Cheap resync: read only this user's unread_count column and sum it, instead of
+    // fetching the whole conversations RPC. Re-reading (rather than applying a
+    // new-old delta) also works without REPLICA IDENTITY FULL.
     const refresh = async () => {
       try {
-        const convs = await getConversations(uid);
-        const total = convs.reduce((sum: number, c: any) => sum + (c.unread_count ?? 0), 0);
+        const { data, error } = await supabase
+          .from('conversation_participants')
+          .select('unread_count')
+          .eq('user_id', uid)
+          .gt('unread_count', 0);
+        if (error) throw error;
+        if (cancelled || activeUidRef.current !== uid) return;
+        const total = (data ?? []).reduce((sum: number, r: any) => sum + (r.unread_count ?? 0), 0);
         setMessageBadge(total);
       } catch {}
     };
+    const scheduleRefresh = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => { debounce = null; refresh(); }, 300);
+    };
     refresh();
-    // Subscribe to conversation_participants (filtered to this user) instead of the
-    // unfiltered messages table — fires only when this user's unread_count changes.
+    // Subscribe to conversation_participants (filtered to this user) — any change
+    // (read receipts, new messages, joining/leaving a chat) triggers a debounced resync.
     const msgChannel = supabase.channel(`app-msg-badge-${uid}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversation_participants', filter: `user_id=eq.${uid}` }, (payload: any) => {
-        const delta = (payload.new.unread_count ?? 0) - (payload.old.unread_count ?? 0);
-        if (delta !== 0) setMessageBadge((b: number) => Math.max(0, b + delta));
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(msgChannel); };
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_participants', filter: `user_id=eq.${uid}` }, scheduleRefresh)
+      .subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') scheduleRefresh(); // initial connect and every reconnect
+      });
+    const appSub = AppState.addEventListener('change', (s) => { if (s === 'active') scheduleRefresh(); });
+    return () => {
+      cancelled = true;
+      if (debounce) clearTimeout(debounce);
+      appSub.remove();
+      supabase.removeChannel(msgChannel);
+    };
   }, [session?.user?.id]);
+
+  // Background-prefetch light data for the tabs the user is most likely to open next.
+  // Keyed on the user id (the old prefetch closed over the initial, undefined session).
+  // Skipped on a data-saver connection when lib/dataSaver exists (not present yet).
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (!uid || !onboardingDone) return;
+    const t = setTimeout(() => {
+      Cache.getOrFetch(`explore:${uid}:24:0`, TTL.explore, () => getPersonalizedExplorePosts(uid, 24, 0))
+        .catch((e) => console.warn('[App] prefetch explore:', e?.message));
+      Cache.getOrFetch(`reels:${uid}:20:0`, TTL.reels, () => getPersonalizedReels(uid, 20, 0))
+        .catch((e) => console.warn('[App] prefetch reels:', e?.message));
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [session?.user?.id, !!onboardingDone]);
 
   const handleTabChange = useCallback((tab: Tab) => {
     haptics.selection(); // Immediate haptic feedback
@@ -601,6 +778,10 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   }, [haptics]);
 
   const navigateToMessages = useCallback((convId: string, otherProfile: any) => {
+    // Messages isn't a tab: remember where we came from so the tab bar keeps that tab
+    // highlighted and Back returns there.
+    const from = activeTabRef.current;
+    if (from !== 'messages' && from !== 'reels') setPrevTab(from);
     setInitialConv({ convId, otherProfile });
     setActiveTabVisual('messages');
     setActiveTab('messages');
@@ -633,12 +814,186 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     setActiveTab(prevTab);
   }, [prevTab]);
 
+  const onReelsSearch = useCallback(() => { handleTabChange('explore' as Tab); }, [handleTabChange]);
+
   const onShowPrivacy = useCallback(() => setActiveLegal('privacy'), []);
   const onShowTerms = useCallback(() => setActiveLegal('terms'), []);
   const onShowGuidelines = useCallback(() => setActiveLegal('guidelines'), []);
   const onDiscoverPress = useCallback(() => setShowDiscoverPeople(true), []);
   const onTrendingPress = useCallback(() => setShowTrending(true), []);
   const onCameraOpen = useCallback(() => pagerRef.current?.setPage(0), []);
+
+  // ─── Notification / push routing ─────────────────────────────────────────
+  const openProfileById = useCallback((id: string) => {
+    setViewedUserId(id);
+    setActiveTabVisual('profile');
+    setActiveTab('profile');
+    setShowNotifications(false);
+  }, []);
+
+  const openPostById = useCallback(async (postId: string, opts?: { comments?: boolean; commentId?: string }) => {
+    try {
+      const data = await getPostForNotification(postId);
+      if (!data) { showToast('That post is no longer available.', 'error'); return; }
+      setNotifPostComments(!!opts?.comments);
+      setNotifCommentId(opts?.commentId);
+      setNotifPost(data);
+    } catch (e) {
+      showToast(friendlyError(e, 'Could not open that post.'), 'error');
+    }
+  }, [showToast]);
+
+  const openConversation = useCallback(async (convId: string | null | undefined, actorId: string | null | undefined) => {
+    const uid = sessionRef.current?.user?.id;
+    if (!uid) return;
+    try {
+      let id = convId ?? null;
+      if (!id && actorId) id = await createDirectConversation(uid, actorId);
+      if (!id) return;
+      let other: any = null;
+      if (actorId) {
+        const { data } = await supabase.from('profiles').select('id, username, full_name, avatar_url').eq('id', actorId).maybeSingle();
+        other = data;
+      }
+      setShowNotifications(false);
+      navigateToMessages(id, other);
+    } catch (e) {
+      showToast(friendlyError(e, 'Could not open that conversation.'), 'error');
+    }
+  }, [navigateToMessages, showToast]);
+
+  const onReelFromNotification = useCallback((reelId: string) => {
+    setShowNotifications(false);
+    onReelPress(reelId, undefined);
+  }, [onReelPress]);
+
+  const onLiveFromNotification = useCallback((sessionId: string, hostId?: string | null) => {
+    setShowNotifications(false);
+    if (sessionId) setViewerLiveSession(sessionId);
+    else if (hostId) openProfileById(hostId);
+  }, [openProfileById]);
+
+  /** Routes a tapped push (or one of its action buttons) by data.type. */
+  const routeNotificationResponse = (response: any) => {
+    const uid = sessionRef.current?.user?.id;
+    if (!uid || !response) return;
+    const d: any = response.notification?.request?.content?.data ?? {};
+    const type: string = d.type ?? '';
+    const actionId: string = response.actionIdentifier ?? '';
+    const userText: string = (response.userText ?? '').trim();
+    const postId = d.postId ?? d.post_id ?? null;
+    const commentId = d.commentId ?? d.comment_id ?? undefined;
+    const actorId = d.actorId ?? d.actor_id ?? d.senderId ?? d.sender_id ?? d.userId ?? d.user_id ?? null;
+    const convId = d.conversation_id ?? d.conversationId ?? null;
+    const reelId = d.reelId ?? d.reel_id ?? postId;
+    const liveId = d.sessionId ?? d.session_id ?? d.liveId ?? d.live_id ?? null;
+
+    // Action buttons first.
+    if (actionId === 'NOT_INTERESTED') return; // dismiss only
+    if (actionId === 'FOLLOW_BACK') {
+      if (actorId) {
+        followUser(uid, actorId)
+          .then(() => showToast('Followed back.', 'success'))
+          .catch((e: any) => showToast(friendlyError(e, 'Could not follow back.'), 'error'));
+        openProfileById(actorId);
+      }
+      return;
+    }
+    if (actionId === 'REPLY') {
+      if (userText && convId) {
+        // Inline reply from the notification shade: send it without opening the app.
+        sendMessage(convId, uid, userText).catch((e: any) => showToast(friendlyError(e, 'Reply failed to send.'), 'error'));
+        return;
+      }
+      openConversation(convId, actorId);
+      return;
+    }
+    if (actionId === 'REPLY_COMMENT' && postId) { openPostById(postId, { comments: true, commentId }); return; }
+
+    switch (type) {
+      case 'post':
+      case 'like':
+      case 'mention':
+      case 'repost':
+      case 'quote':
+      case 'new_post':
+        if (postId) openPostById(postId);
+        else if (actorId) openProfileById(actorId);
+        break;
+      case 'comment':
+        if (postId) openPostById(postId, { comments: true, commentId });
+        break;
+      case 'reel':
+      case 'reel_like':
+      case 'reel_comment':
+        if (reelId) onReelFromNotification(reelId);
+        break;
+      case 'message':
+      case 'chat_message':
+        openConversation(convId, actorId);
+        break;
+      case 'follow':
+      case 'story_view':
+      case 'new_story':
+        if (actorId) openProfileById(actorId);
+        break;
+      case 'follow_suggestion':
+        setShowDiscoverPeople(true);
+        break;
+      case 'live':
+      case 'live_started':
+        if (liveId) setViewerLiveSession(liveId);
+        else if (actorId) openProfileById(actorId);
+        break;
+      default:
+        if (postId) openPostById(postId);
+        break;
+    }
+  };
+  const routeRef = useRef(routeNotificationResponse);
+  routeRef.current = routeNotificationResponse;
+  const coldStartHandledRef = useRef(false);
+
+  // Register this device for push on every launch (silent when already granted; never
+  // re-prompts when denied), and listen for taps + the tap that cold-started the app.
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (!uid || !onboardingDone) return;
+    let dead = false;
+    let sub: any;
+    let offToken: (() => void) | undefined;
+
+    registerForPushNotifications(uid, { prompt: false }).catch((e) => console.warn('[App] push register:', e?.message));
+    onPushTokenChanged(uid).then(off => { if (dead) off(); else offToken = off; }).catch(() => {});
+
+    onNotificationResponseReceived((resp: any) => routeRef.current(resp))
+      .then(s => { if (dead) s?.remove?.(); else sub = s; })
+      .catch(() => {});
+
+    if (!coldStartHandledRef.current) {
+      coldStartHandledRef.current = true;
+      getLastNotificationResponse().then(resp => {
+        if (resp && !dead) { routeRef.current(resp); clearLastNotificationResponse(); }
+      }).catch(() => {});
+    }
+
+    return () => { dead = true; try { sub?.remove?.(); } catch {} offToken?.(); };
+  }, [session?.user?.id, !!onboardingDone]);
+
+  // ─── Global incoming-call listener ───────────────────────────────────────
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (!uid || !onboardingDone) return;
+    const onIncoming = (call: CallRecord) => {
+      if (isFreshRingingCall(call)) setIncomingCall(prev => prev ?? call);
+    };
+    const ch = subscribeToIncomingCalls(uid, onIncoming);
+    // Catch a call that started while we were backgrounded / offline.
+    const check = () => { getActiveCallForUser(uid).then(c => { if (c) onIncoming(c); }).catch(() => {}); };
+    check();
+    const appSub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
+    return () => { appSub.remove(); supabase.removeChannel(ch); };
+  }, [session?.user?.id, !!onboardingDone]);
 
   // ─── Android hardware back button ────────────────────────────────────────
   // Without this, every back press bubbles to the OS and exits the app — a
@@ -656,6 +1011,7 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
 
     const onBack = () => {
       // Priority-ordered pop. First match wins.
+      if (incomingCall) return true; // an incoming call must be answered or declined explicitly
       if (activeLegal) { setActiveLegal(null); return true; }
       if (notifPost)   { setNotifPost(null);   return true; }
       if (showCreate)  { setShowCreate(false); setActiveMedia(null); return true; }
@@ -687,6 +1043,14 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
         return true;
       }
 
+      // Messages isn't a tab: go back to wherever it was opened from.
+      if (activeTab === 'messages') {
+        const dest: Tab = prevTab && prevTab !== 'messages' && prevTab !== 'reels' ? prevTab : 'feed';
+        setActiveTab(dest);
+        setActiveTabVisual(dest);
+        return true;
+      }
+
       // Any non-feed tab → back to feed
       if (activeTab !== 'feed') {
         setActiveTab('feed');
@@ -701,14 +1065,20 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
       }
       backExitArmedRef.current = true;
       ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
-      setTimeout(() => { backExitArmedRef.current = false; }, 2000);
+      if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = setTimeout(() => { backExitArmedRef.current = false; exitTimerRef.current = null; }, 2000);
       return true;
     };
 
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      // Don't let the "press back again" timer outlive the handler / component.
+      if (exitTimerRef.current) { clearTimeout(exitTimerRef.current); exitTimerRef.current = null; }
+      backExitArmedRef.current = false;
+    };
   }, [
-    session, onboardingDone,
+    session, onboardingDone, incomingCall,
     activeLegal, notifPost, showCreate, showVerification, showNotifications,
     showTrending, showDiscoverPeople, viewerLiveSession, isLive, activeMedia,
     pagerPage, activeTab, prevTab, viewedUserId,
@@ -718,9 +1088,29 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     if (minSplashDone && fontsReady && session !== undefined) initialLoadRef.current = true;
   }, [minSplashDone, fontsReady, session]);
 
-  const shouldShowLoading = !minSplashDone || !fontsReady || (!initialLoadRef.current && session === undefined) || (session && onboardingDone === null);
+  const shouldShowLoading = !minSplashDone || !fontsReady || (!initialLoadRef.current && session === undefined) || (session && onboardingDone === null && !profileLoadFailed);
   useEffect(() => { onReady(!shouldShowLoading); }, [shouldShowLoading]);
   if (shouldShowLoading) return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+  // Profile could not be loaded (offline / server error): never mistake it for "no profile".
+  if (session && onboardingDone === null && profileLoadFailed && !showResetPassword) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
+        <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginTop: 14 }}>Can't reach UniGram</Text>
+        <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 6 }}>
+          Check your connection and try again.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading your profile"
+          onPress={() => { setProfileLoadFailed(false); setProfileRetryKey(k => k + 1); }}
+          style={{ marginTop: 18, backgroundColor: colors.accent, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
   if (showResetPassword) return <ResetPasswordScreen onDone={() => { setShowResetPassword(false); setAuthScreen('login'); }} />;
   if (!session) {
     if (authScreen === 'signup') return (
@@ -738,9 +1128,14 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   const isReels = activeTab === 'reels';
   const showTabBar = !hideTabBar && !isReels && pagerPage === 1;
   const isMainVisible = !showNotifications && !showCreate && !showVerification && pagerPage === 1;
+  // Messages isn't a tab: keep the tab it was opened from highlighted.
+  const tabBarHighlight: Tab = activeTabVisual === 'messages'
+    ? (prevTab !== 'messages' && prevTab !== 'reels' ? prevTab : 'feed')
+    : activeTabVisual;
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.bg }]}>
+    // Keyed by user id so every screen remounts (fresh state) when the account changes.
+    <View key={session.user.id} style={[styles.root, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle={colors.statusBar} />
       <PagerView ref={pagerRef} style={{ flex: 1 }} initialPage={1} onPageSelected={(e) => setPagerPage(e.nativeEvent.position)} scrollEnabled={false}>
         <View key="0" style={{ flex: 1 }}>
@@ -769,6 +1164,7 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
             onVerifyPress={onVerifyPress}
             onProfileBack={onProfileBack}
             onReelsBack={onReelsBack}
+            onReelsSearch={onReelsSearch}
             onShowPrivacy={onShowPrivacy}
             onShowTerms={onShowTerms}
             onShowGuidelines={onShowGuidelines}
@@ -780,14 +1176,36 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
             <Tap feedback="press" pressedScale={0.88}
               style={[styles.fab, { backgroundColor: colors.accent, shadowColor: colors.accent }]}
               onPress={() => pagerRef.current?.setPage(0)}
+              accessibilityRole="button"
+              accessibilityLabel="Create new post"
+              accessibilityHint="Opens the camera and creation tools"
             >
               <Ionicons name="add" size={28} color="#fff" />
             </Tap>
           )}
         </View>
       </PagerView>
-      {showTabBar && <BottomTabBar activeTabVisual={activeTabVisual} onTabChange={handleTabChange} colors={colors} />}
-      {showNotifications && <View style={styles.notifOverlay}><NotificationsScreen userId={session.user.id} myAvatarUrl={userProfile?.avatar_url ?? null} onBadgeClear={() => setNotifBadge(0)} onBack={() => setShowNotifications(false)} onUserPress={(uid: string) => { setViewedUserId(uid); setActiveTabVisual('profile'); setActiveTab('profile'); setShowNotifications(false); }} onPostPress={(pid: any) => { supabase.from('posts').select('*, profiles(*)').eq('id', pid).single().then(({data}: any) => { setNotifPost(data); }); }} onMessagePress={navigateToMessages} onDiscoverPress={() => setShowDiscoverPeople(true)} /></View>}
+      {showTabBar && <BottomTabBar activeTabVisual={tabBarHighlight} onTabChange={handleTabChange} colors={colors} homeBadge={notifBadgeValue + messageBadgeValue} />}
+      {showNotifications && (
+        <View style={styles.notifOverlay}>
+          <NotificationsScreen
+            userId={session.user.id}
+            myAvatarUrl={userProfile?.avatar_url ?? null}
+            onBadgeClear={() => setNotifBadge(0)}
+            onBack={() => setShowNotifications(false)}
+            onUserPress={openProfileById}
+            onPostPress={(pid: string, _uid: string, notifType: string, commentId?: string) =>
+              openPostById(pid, {
+                comments: notifType === 'comment' || notifType === 'reel_comment' || !!commentId,
+                commentId,
+              })}
+            onMessagePress={(convId: string, other: any) => { setShowNotifications(false); navigateToMessages(convId, other); }}
+            onDiscoverPress={() => setShowDiscoverPeople(true)}
+            onReelPress={onReelFromNotification}
+            onLivePress={onLiveFromNotification}
+          />
+        </View>
+      )}
       <CreatePostModal visible={showCreate} userId={session.user.id} initialType={createInitialType} onClose={() => { setShowCreate(false); setActiveMedia(null); }} onPosted={() => { setFeedRefreshKey(k => k + 1); setActiveMedia(null); }} preCapturedMedia={activeMedia} />
       <VerificationScreen visible={showVerification} onClose={() => setShowVerification(false)} />
       {showDiscoverPeople && <View style={styles.notifOverlay}><DiscoverPeopleScreen onClose={() => setShowDiscoverPeople(false)} onUserPress={(u: any) => { setViewedUserId(u.id); setActiveTabVisual('profile'); setActiveTab('profile'); setShowDiscoverPeople(false); }} /></View>}
@@ -796,6 +1214,21 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
       {isLive && (
         <Modal visible={true} animationType="slide" onRequestClose={() => setIsLive(false)}>
           <LiveScreen onClose={() => setIsLive(false)} />
+        </Modal>
+      )}
+      {!!viewerLiveSession && (
+        <Modal visible={true} animationType="slide" onRequestClose={() => setViewerLiveSession(null)}>
+          <LiveScreen viewerSessionId={viewerLiveSession} onClose={() => setViewerLiveSession(null)} />
+        </Modal>
+      )}
+      {incomingCall && (
+        <Modal visible={true} animationType="slide" onRequestClose={() => {}}>
+          <CallScreen
+            call={incomingCall}
+            currentUserId={session.user.id}
+            isIncoming
+            onCallEnd={() => setIncomingCall(null)}
+          />
         </Modal>
       )}
     </View>

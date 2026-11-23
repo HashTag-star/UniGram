@@ -1,28 +1,29 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
-import { uploadFile } from './upload';
+import { uploadFile, assertVideoWithinLimits } from './upload';
 import { Cache, TTL } from '../lib/cache';
 
-export async function getReels(limit = 20, offset = 0) {
-  const cacheKey = `reels:feed:${limit}:${offset}`;
-  return await Cache.getOrFetch<any[]>(cacheKey, TTL.reels, async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    const userId = user?.id;
+/** Columns the Reels UI reads (no select('*')). */
+export const REEL_COLUMNS = 'id, user_id, video_url, thumbnail_url, caption, song, likes_count, comments_count, views_count, created_at';
+const REEL_PROFILE = 'id, username, full_name, avatar_url, is_verified, verification_type, university, major, is_pro, pro_disabled, pro_expires_at';
+const REEL_WITH_PROFILE = `${REEL_COLUMNS}, profiles!reels_user_id_fkey(${REEL_PROFILE})`;
 
-    // 1. Get blocked users to hide their content
+export async function getReels(limit = 20, offset = 0) {
+  const { data: { user } } = await supabase.auth.getUser();
+  const userId = user?.id;
+  // User-scoped key: blocked-user filtering differs per account.
+  const cacheKey = `reels:feed:${userId ?? 'anon'}:${limit}:${offset}`;
+  const rows = await Cache.getOrFetch<any[]>(cacheKey, TTL.reels, async () => {
+    // 1. Blocked users (throws on failure → nothing unfiltered is ever cached)
     let blockedIds: string[] = [];
     if (userId) {
-      try {
-        const { getBlockedUserIds } = require('./profiles');
-        blockedIds = await getBlockedUserIds(userId);
-      } catch (err) {
-        console.warn('Failed to fetch blocked IDs for reels filtering', err);
-      }
+      const { getBlockedUserIds } = require('./profiles');
+      blockedIds = await getBlockedUserIds();
     }
 
     const { data, error } = await supabase
       .from('reels')
-      .select(`*, profiles!reels_user_id_fkey(*)`)
+      .select(REEL_WITH_PROFILE)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
     if (error) throw error;
@@ -31,40 +32,40 @@ export async function getReels(limit = 20, offset = 0) {
     if (results.length === 0) return [];
 
     // 2. Batch check for moderated content
-    const reelIds = results.map(r => r.id);
+    const reelIds = results.map((r: any) => r.id);
     const { data: reportsData } = await supabase
       .from('reports')
       .select('target_id')
       .in('target_id', reelIds)
       .eq('status', 'pending');
-    
+
     const reportCounts: Record<string, number> = {};
-    (reportsData || []).forEach(r => {
+    (reportsData || []).forEach((r: any) => {
       reportCounts[r.target_id] = (reportCounts[r.target_id] || 0) + 1;
     });
 
     // 3. Filtering
-    const filtered = results.filter(reel => {
-      // Skip if author is blocked
-      if (blockedIds.includes(reel.user_id)) return false;
-
-      // Skip if content is moderated (threshold met: >= 5 reports)
+    const blockedSet = new Set(blockedIds);
+    return results.filter((reel: any) => {
+      if (blockedSet.has(reel.user_id)) return false;
       if ((reportCounts[reel.id] || 0) >= 5) return false;
-
       return true;
     });
-
-    return filtered;
-  }) ?? [];
+  });
+  return rows ?? [];
 }
 
 
-export async function getUserReels(userId: string) {
+export const USER_REELS_PAGE = 60;
+
+/** Paged: up to `limit` reels from `offset` (newest first). */
+export async function getUserReels(userId: string, limit = USER_REELS_PAGE, offset = 0) {
   const { data, error } = await supabase
     .from('reels')
-    .select(`*, profiles!reels_user_id_fkey(*)`)
+    .select(REEL_WITH_PROFILE)
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
   if (error) throw error;
   return data ?? [];
 }
@@ -78,43 +79,45 @@ export async function createReel(
 ): Promise<any> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
+  await assertVideoWithinLimits(videoUri);
 
-  const ext = videoUri.split('.').pop()?.toLowerCase() ?? 'mp4';
-  const videoPath = `${userId}/${Date.now()}.${ext}`;
-  const tExt = thumbnailUri?.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const thumbPath = `${userId}/${Date.now()}_thumb.${tExt}`;
+  const ext = videoUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'mp4';
+  const stamp = Date.now();
+  const videoPath = `${userId}/${stamp}.${ext}`;
+  const tExt = thumbnailUri?.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
+  const thumbPath = `${userId}/${stamp}_thumb.${tExt}`;
 
-  const [video_url, thumbnail_url] = await Promise.all([
-    uploadFile('videos', videoPath, videoUri, `video/${ext}`),
-    thumbnailUri ? uploadFile('reel-thumbnails', thumbPath, thumbnailUri) : Promise.resolve(undefined)
-  ]);
+  // Sequential: the video is the big one — don't compete with the thumbnail for bandwidth/RAM.
+  const video_url = await uploadFile('videos', videoPath, videoUri, `video/${ext === 'mov' ? 'quicktime' : ext}`);
+  const thumbnail_url = thumbnailUri ? await uploadFile('reel-thumbnails', thumbPath, thumbnailUri) : undefined;
 
   const { data, error } = await supabase
     .from('reels')
     .insert({ user_id: userId, video_url, thumbnail_url, caption, song })
-    .select(`*, profiles!reels_user_id_fkey(*)`)
+    .select(REEL_WITH_PROFILE)
     .single();
   if (error) throw error;
 
-  // Handle mentions in reel caption
+  // Handle mentions in reel caption (single batched lookup, fire-and-forget)
   const mentions = caption.match(/@(\w+)/g);
   if (mentions) {
     const { createNotification } = require('./notifications');
     const { sendPushToUser } = require('./pushNotifications');
-    const uniqueUsernames = Array.from(new Set(mentions.map(m => m.substring(1))));
-    uniqueUsernames.forEach(async (uname) => {
+    const uniqueUsernames = Array.from(new Set(mentions.map(m => m.substring(1)))).slice(0, 10);
+    (async () => {
       try {
-        const { data: target } = await supabase.from('profiles').select('id').eq('username', uname).single();
-        if (target && target.id !== userId) {
+        const { data: targets } = await supabase.from('profiles').select('id').in('username', uniqueUsernames);
+        for (const target of targets ?? []) {
+          if (target.id === userId) continue;
           await createNotification({ user_id: target.id, actor_id: userId, type: 'mention', text: `mentioned you in a reel: "${caption.substring(0, 20)}..."` });
-          sendPushToUser(target.id, 'New mention', `@${data.profiles.username} mentioned you in a reel`).catch(() => {});
+          sendPushToUser(target.id, 'New mention', `@${(data as any).profiles?.username ?? 'someone'} mentioned you in a reel`).catch(() => {});
         }
       } catch {}
-    });
+    })();
   }
 
-    // Bust reels cache so feed/reels consumers see the new reel
-    try { Cache.invalidatePattern('reels:'); } catch (e) {}
+  // Bust reels cache so feed/reels consumers see the new reel
+  try { Cache.invalidatePattern('reels:'); } catch (e) {}
 
   return data;
 }
@@ -159,7 +162,7 @@ export async function getReelComments(
   // 1. Page of root-level comments + total count in one query
   const { data: roots, count, error } = await supabase
     .from('reel_comments')
-    .select(`*, profiles!reel_comments_user_id_fkey(*)`, { count: 'exact' })
+    .select(`*, profiles!reel_comments_user_id_fkey(${REEL_PROFILE})`, { count: 'exact' })
     .eq('reel_id', reelId)
     .is('parent_id', null)
     .order('created_at', { ascending: true })
@@ -177,7 +180,7 @@ export async function getReelComments(
   const [repliesResult, rootLikedResult] = await Promise.all([
     supabase
       .from('reel_comments')
-      .select(`*, profiles!reel_comments_user_id_fkey(*)`)
+      .select(`*, profiles!reel_comments_user_id_fkey(${REEL_PROFILE})`)
       .eq('reel_id', reelId)
       .in('parent_id', rootIds)
       .order('created_at', { ascending: true }),
@@ -225,7 +228,7 @@ export async function addReelComment(reelId: string, userId: string, text: strin
   const { data, error } = await supabase
     .from('reel_comments')
     .insert({ reel_id: reelId, user_id: userId, text: sanitized, parent_id: parentId })
-    .select(`*, profiles!reel_comments_user_id_fkey(*)`)
+    .select(`*, profiles!reel_comments_user_id_fkey(${REEL_PROFILE})`)
     .single();
   
   if (error) {
@@ -236,7 +239,7 @@ export async function addReelComment(reelId: string, userId: string, text: strin
       const { data: d2, error: e2 } = await supabase
         .from('reel_comments')
         .insert({ reel_id: reelId, user_id: userId, text })
-        .select(`*, profiles!reel_comments_user_id_fkey(*)`)
+        .select(`*, profiles!reel_comments_user_id_fkey(${REEL_PROFILE})`)
         .single();
       if (e2) throw e2;
       res = d2;
@@ -285,15 +288,23 @@ export async function unlikeReelComment(commentId: string, userId: string) {
 }
 
 export async function incrementReelView(reelId: string): Promise<void> {
-  const { data } = await supabase
+  // Atomic server-side increment (no read-modify-write race between concurrent viewers).
+  try {
+    const { error } = await supabase.rpc('increment_reel_views', { p_reel_id: reelId });
+    if (!error) return;
+  } catch { /* RPC missing → legacy path */ }
+
+  const { data, error: readErr } = await supabase
     .from('reels')
     .select('views_count')
     .eq('id', reelId)
     .maybeSingle();
-  await supabase
+  if (readErr) throw readErr;
+  const { error } = await supabase
     .from('reels')
     .update({ views_count: (data?.views_count ?? 0) + 1 })
     .eq('id', reelId);
+  if (error) throw error;
 }
 
 export async function deleteReel(reelId: string, userId: string) {

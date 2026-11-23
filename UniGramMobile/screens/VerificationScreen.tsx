@@ -298,7 +298,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
       <View style={styles.container}>
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-          <TouchableOpacity onPress={step === 'form' ? () => setStep('select') : handleClose} style={styles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity onPress={step === 'form' ? () => setStep('select') : handleClose} style={styles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Back or close">
             <Ionicons name={step === 'form' ? 'arrow-back' : 'close'} size={22} color="#fff" />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -316,6 +316,8 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
                 key={tier.type}
                 onPress={() => { setSelected(tier); setStep('form'); }}
                 style={styles.tierCard}
+                accessibilityRole="button"
+                accessibilityLabel={`Apply for ${tier.title} verification`}
               >
                 <View style={[styles.tierIcon, { backgroundColor: tier.color + '20' }]}>
                   <Text style={{ fontSize: 24 }}>{tier.icon}</Text>
@@ -440,7 +442,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
                       color="rgba(255,255,255,0.4)" 
                     />
                     <Text style={styles.docName} numberOfLines={1}>{doc.name}</Text>
-                    <TouchableOpacity onPress={() => setDocuments(prev => prev.filter((_, idx) => idx !== i))}>
+                    <TouchableOpacity onPress={() => setDocuments(prev => prev.filter((_, idx) => idx !== i))} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Remove document">
                       <Ionicons name="close-circle" size={16} color="#ef4444" />
                     </TouchableOpacity>
                   </View>
@@ -450,6 +452,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
             <TouchableOpacity 
               style={[styles.uploadBtn, documents.length > 0 && { borderColor: '#818cf8', backgroundColor: '#818cf810' }]} 
               onPress={pickDocuments}
+              accessibilityRole="button" accessibilityLabel="Upload ID or proof documents"
             >
               <Ionicons 
                 name="cloud-upload-outline" 
@@ -461,7 +464,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.agreeRow} onPress={() => setAgreed(p => !p)}>
+            <TouchableOpacity style={styles.agreeRow} onPress={() => setAgreed(p => !p)} accessibilityRole="checkbox" accessibilityState={{ checked: agreed }} accessibilityLabel="I confirm all information is accurate">
               <View style={[styles.checkbox, agreed && styles.checkboxChecked]}>
                 {agreed && <Ionicons name="checkmark" size={12} color="#fff" />}
               </View>
@@ -472,6 +475,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
               onPress={submit}
               disabled={!canSubmit}
               style={[styles.submitBtn, !canSubmit && styles.submitBtnDisabled]}
+              accessibilityRole="button" accessibilityLabel="Submit verification request"
             >
               <Text style={[styles.submitBtnText, !canSubmit && { color: 'rgba(255,255,255,0.3)' }]}>
                 {loading ? 'Submitting...' : 'Submit Verification Request'}
@@ -487,7 +491,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
             </View>
             <Text style={styles.successTitle}>Application Submitted!</Text>
             <Text style={styles.successSubtitle}>Your {selected?.title} verification request has been submitted. We'll review and notify you within 3–5 business days.</Text>
-            <TouchableOpacity style={styles.doneBtn} onPress={handleClose}>
+            <TouchableOpacity style={styles.doneBtn} onPress={handleClose} accessibilityRole="button" accessibilityLabel="Done">
               <Text style={styles.doneBtnText}>Done</Text>
             </TouchableOpacity>
           </View>

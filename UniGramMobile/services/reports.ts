@@ -6,6 +6,7 @@ export interface AdminReport {
   reporter_id: string;
   target_id: string;
   target_type: 'post' | 'reel' | 'member' | 'comment' | 'market_item';
+  // NOTE: people are stored as 'member' (what the admin UI reads). 'user' is accepted as an alias on write.
   reason: string;
   details: string;
   status: 'pending' | 'resolved' | 'dismissed';
@@ -19,19 +20,20 @@ export interface AdminReport {
   };
 }
 
-export async function getReports() {
+export async function getReports(limit = 200, offset = 0) {
   const { data, error } = await supabase
     .from('reports')
     .select(`
-      *,
+      id, reporter_id, target_id, target_type, reason, details, status, created_at,
       reporter:profiles!reports_reporter_id_fkey(username, avatar_url)
     `)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (error) throw error;
-  
+
   // Flatten reporter data
-  return (data || []).map(r => ({
+  return (data || []).map((r: any) => ({
     ...r,
     reporter: Array.isArray(r.reporter) ? r.reporter[0] : r.reporter
   })) as AdminReport[];
@@ -68,10 +70,11 @@ export async function suspendUser(userId: string, suspended: boolean) {
  */
 export async function createReport(
   targetId: string,
-  targetType: AdminReport['target_type'],
+  targetType: AdminReport['target_type'] | 'user',
   reason: string,
   details: string = ''
 ) {
+  const normalizedType: AdminReport['target_type'] = targetType === 'user' ? 'member' : targetType;
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('You must be signed in to report content.');
   assertUuid(targetId, 'Target ID');
@@ -81,7 +84,7 @@ export async function createReport(
   const { error } = await supabase.from('reports').insert({
     reporter_id: user.id,
     target_id: targetId,
-    target_type: targetType,
+    target_type: normalizedType,
     reason: safeReason,
     details: safeDetails,
     status: 'pending'
@@ -93,9 +96,9 @@ export async function createReport(
   const { notifyAdmins } = require('./notifications');
   notifyAdmins({
     type: 'admin_report',
-    text: `reported ${targetType} content: "${safeReason}"`,
+    text: `reported ${normalizedType} content: "${safeReason}"`,
     actorId: user.id,
-    postId: targetType === 'post' ? targetId : undefined,
+    postId: normalizedType === 'post' ? targetId : undefined,
   }).catch(() => {});
 }
 
@@ -120,11 +123,19 @@ export async function shouldHideContent(targetId: string) {
  */
 export async function deleteReportedContent(targetId: string, targetType: AdminReport['target_type']) {
   assertUuid(targetId, 'Target ID');
+  if (targetType === 'comment') {
+    // There is no generic 'comments' table: a reported comment is a post comment or a reel comment.
+    for (const table of ['post_comments', 'reel_comments']) {
+      const { data, error } = await supabase.from(table).delete().eq('id', targetId).select('id');
+      if (error) throw error;
+      if (data?.length) return;
+    }
+    throw new Error('That comment no longer exists.');
+  }
   let table = '';
   switch (targetType) {
     case 'post': table = 'posts'; break;
     case 'reel': table = 'reels'; break;
-    case 'comment': table = 'comments'; break;
     case 'market_item': table = 'market_items'; break;
     default: throw new Error(`Cannot delete content of type ${targetType}`);
   }
@@ -140,21 +151,21 @@ export async function getAuthorIdForReport(targetId: string, targetType: AdminRe
   assertUuid(targetId, 'Target ID');
   if (targetType === 'member') return targetId;
 
-  let table = '';
-  switch (targetType) {
-    case 'post': table = 'posts'; break;
-    case 'reel': table = 'reels'; break;
-    case 'comment': table = 'comments'; break;
-    case 'market_item': table = 'market_items'; break;
-    default: return null;
+  const tables: string[] =
+    targetType === 'post' ? ['posts'] :
+    targetType === 'reel' ? ['reels'] :
+    targetType === 'comment' ? ['post_comments', 'reel_comments'] :
+    targetType === 'market_item' ? ['market_items'] : [];
+  const col = targetType === 'market_item' ? 'seller_id' : 'user_id';
+
+  for (const table of tables) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(col)
+      .eq('id', targetId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return (data as any)[col] ?? null;
   }
-
-  const { data, error } = await supabase
-    .from(table)
-    .select('user_id')
-    .eq('id', targetId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return data.user_id;
+  return null;
 }

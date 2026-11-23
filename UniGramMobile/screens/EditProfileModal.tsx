@@ -71,7 +71,7 @@ function SearchModal({ visible, title, placeholder, icon, onSearch, onSelect, on
       <SafeAreaView style={modal.container}>
         <View style={modal.header}>
           <Text style={modal.title}>{title}</Text>
-          <TouchableOpacity onPress={onClose} style={modal.closeBtn}>
+          <TouchableOpacity onPress={onClose} style={modal.closeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Close">
             <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
         </View>
@@ -91,7 +91,7 @@ function SearchModal({ visible, title, placeholder, icon, onSearch, onSelect, on
           />
           {loading && <ActivityIndicator size="small" color="#818cf8" />}
           {!loading && query.length > 0 && (
-            <TouchableOpacity onPress={() => handleSearch('')}>
+            <TouchableOpacity onPress={() => handleSearch('')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Clear search">
               <Ionicons name="close-circle" size={18} color="#555" />
             </TouchableOpacity>
           )}
@@ -212,15 +212,15 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
           {/* Header */}
-          <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top + 16 }]}>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: (Platform.OS === 'android' ? insets.top : 0) + 16 }]}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Cancel editing profile">
               <Text style={[styles.cancel, { color: colors.textMuted }]}>Cancel</Text>
             </TouchableOpacity>
             <Text style={[styles.title, { color: colors.text }]}>Edit Profile</Text>
-            <TouchableOpacity onPress={handleSave} disabled={saving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={handleSave} disabled={saving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Save profile">
               {saving
-                ? <ActivityIndicator color="#818cf8" size="small" />
-                : <Text style={styles.save}>Save</Text>}
+                ? <ActivityIndicator color={colors.accent} size="small" />
+                : <Text style={[styles.save, { color: colors.accent }]}>Save</Text>}
             </TouchableOpacity>
           </View>
 
@@ -263,6 +263,8 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
                 style={[styles.pickerBtn, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}
                 onPress={() => setShowMajorModal(true)}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Select major or course"
               >
                 <Ionicons name="book-outline" size={18} color={editMajor ? colors.accent : colors.textMuted} />
                 <Text
@@ -282,6 +284,8 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
                 style={[styles.pickerBtn, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}
                 onPress={() => setShowUniModal(true)}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Select university"
               >
                 <Ionicons name="school-outline" size={18} color={editUniversity ? colors.accent : colors.textMuted} />
                 <Text

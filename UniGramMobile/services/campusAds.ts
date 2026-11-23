@@ -4,6 +4,7 @@ import { randomId } from '../lib/uuid';
 import { AppState } from 'react-native';
 import * as Linking from 'expo-linking';
 import { Cache, TTL } from '../lib/cache';
+import { callEdgeFunction, verifyPaymentWithPolling } from '../lib/edgeFetch';
 
 export interface CampusAd {
   id: string;
@@ -70,23 +71,6 @@ export function planFromBudget(budget: number): { priority: number; reach_multip
   if (budget >= 120) return { priority: 2, reach_multiplier: 1.2 }; // Boosted
   if (budget >= 60)  return { priority: 1, reach_multiplier: 1.0 }; // Standard
   return { priority: 0, reach_multiplier: 1.0 };                    // Starter
-}
-
-async function callEdgeFunction(name: string, body: object) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated');
-  const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${name}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
-  return json;
 }
 
 export async function getCampaigns(): Promise<CampusAd[]> {
@@ -180,20 +164,25 @@ export async function openAdCheckout(
   return new Promise<boolean>((resolve) => {
     let wentBackground = false;
     let settled = false;
+    let sub: { remove: () => void } | null = null;
+    // If the user never comes back to the app, don't leak the AppState listener forever.
+    const giveUp = setTimeout(() => { settle(); }, 10 * 60 * 1000);
 
     const settle = async () => {
       if (settled) return;
       settled = true;
-      sub.remove();
+      clearTimeout(giveUp);
+      try { sub?.remove(); } catch {}
       try {
-        const data = await callEdgeFunction('paystack-verify', { reference });
-        resolve(data.status === 'success');
+        // Webhook may lag behind the redirect — poll verify for up to ~20s.
+        const data = await verifyPaymentWithPolling<{ status: string }>(reference);
+        resolve(data?.status === 'success');
       } catch {
         resolve(false);
       }
     };
 
-    const sub = AppState.addEventListener('change', (nextState) => {
+    sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background' || nextState === 'inactive') {
         wentBackground = true;
       } else if (nextState === 'active' && wentBackground) {
@@ -270,109 +259,118 @@ export function isInAudience(ad: any, viewerUniversity: string | null): boolean 
   return !ad.university || ad.university === viewerUniversity;
 }
 
-/** Generic placement query used by feed, reels, market, stories, explore. */
-export async function getActiveAdsForPlacement(
-  placement: string,
-  university: string | null,
-  userId: string,
-): Promise<any[]> {
-  // Previews and eligibility are viewer-specific; do not share their cache.
-  const cacheKey = `ads:placement:${placement}:uni:${university ?? 'none'}:viewer:${userId}`;
-  const cached = await Cache.getOrFetch<any[]>(cacheKey, TTL.explore, async () => {
-    // NOTE: campus_ads.user_id references auth.users(id), NOT public.profiles(id),
-    // so the PostgREST relationship embed `profiles:user_id(...)` can't be inferred
-    // and the join silently errors out. We fetch the ads and the advertiser
-    // profiles in two steps and stitch them together client-side.
-    const now = new Date();
-    const nowISO = now.toISOString();
-    // Fetch only active, in-window campaigns and prefer higher-priority / higher-budget
-    // Increase limit to get more candidates for auction
-    const [{ data: activeAds, error: activeErr }, { data: previewAds }] = await Promise.all([
+// Columns the UI + auction (computeAuctionScore / pacing / schedule / targeting) actually read.
+// Deliberately excludes payment_ref, audiences, lookalikes etc. — the list is shared by every
+// placement and must not ship advertiser internals to every viewer.
+const AD_SERVE_COLUMNS =
+  'id, user_id, name, objective, format, placements, headline, body, cta, link, media_url, cards, status, ' +
+  'budget, spent, spent_pesewas, start_date, end_date, created_at, university, target_all_campuses, target_universities, ' +
+  'priority, reach_multiplier, preview_live, whatsapp_number, likes_count, comments_count, ' +
+  'bid_amount, bid_type, estimated_action_rate, relevance_score, delivery_type, ad_schedule, skippable';
+
+const RAW_ADS_TTL = 2 * 60 * 1000;
+
+/**
+ * Fetches the active-ad pool ONCE per viewer and shares it across every placement
+ * (feed / reels / stories / market / explore used to run 5 identical 100-row queries).
+ * Throws on failure so a failed query is never cached as "no ads".
+ */
+async function getRawAdPool(userId: string): Promise<{ ads: CampusAd[]; previews: CampusAd[]; profileMap: Map<string, any> }> {
+  const key = `ads:raw:${userId}`;
+  const pool = await Cache.getOrFetch<{ ads: CampusAd[]; previews: CampusAd[]; profiles: [string, any][] }>(key, RAW_ADS_TTL, async () => {
+    const nowISO = new Date().toISOString();
+    const run = (cols: string) => Promise.all([
       supabase
         .from('campus_ads')
-        .select('*')
+        .select(cols)
         .eq('status', 'active')
         .lte('start_date', nowISO)
         .or('end_date.is.null,end_date.gt.' + nowISO)
         .order('priority', { ascending: false })
         .order('budget', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(100),
+        .limit(60),
       // Allow the campaign owner to see preview_live campaigns (preview mode)
       supabase
         .from('campus_ads')
-        .select('*')
+        .select(cols)
         .eq('preview_live', true)
         .eq('user_id', userId)
         .limit(10),
     ]);
+    let [activeRes, previewRes] = await run(AD_SERVE_COLUMNS);
+    // A column in the list may not exist on an older schema — fall back to the old '*'.
+    if (activeRes.error) [activeRes, previewRes] = await run('*');
+    if (activeRes.error) throw activeRes.error;
 
-    if (activeErr) {
-      console.warn('[campusAds] getActiveAdsForPlacement select failed:', activeErr.message);
-      return [];
-    }
-    const ads = (activeAds ?? []) as CampusAd[];
-    const previews = (previewAds ?? []) as CampusAd[];
-    if (ads.length === 0 && previews.length === 0) return [];
+    const ads = ((activeRes.data ?? []) as unknown as CampusAd[]);
+    const previews = ((previewRes.data ?? []) as unknown as CampusAd[]);
 
-    // Owners can inspect explicit previews, but paid delivery never targets them.
-    const allAds = [...previews, ...ads.filter(a => a.user_id !== userId)];
-    const ownerIds = Array.from(new Set(allAds.map(a => a.user_id).filter(Boolean)));
-    let profileMap = new Map<string, any>();
+    // campus_ads.user_id references auth.users(id), NOT public.profiles(id), so the
+    // PostgREST embed can't be inferred — fetch advertiser profiles separately.
+    const ownerIds = Array.from(new Set([...previews, ...ads.filter(a => a.user_id !== userId)].map(a => a.user_id).filter(Boolean)));
+    let profiles: [string, any][] = [];
     if (ownerIds.length > 0) {
       const { data: profs } = await supabase
         .from('profiles')
         .select('id, username, full_name, avatar_url')
         .in('id', ownerIds);
-      if (profs) profileMap = new Map(profs.map((p: any) => [p.id, p]));
+      if (profs) profiles = profs.map((p: any) => [p.id, p]);
     }
-
-    // Merge previews first (they are intentionally shown to the owner),
-    // then active ads. Deduplicate to avoid the owner seeing their own ad twice
-    // in both preview and active states.
-    const combined: any[] = [];
-    const seenIds = new Set<string>();
-
-    for (const p of previews) {
-      if (!seenIds.has(p.id)) {
-        combined.push({ ...p, _isPreview: true, profiles: profileMap.get(p.user_id) });
-        seenIds.add(p.id);
-      }
-    }
-    for (const a of ads) {
-      if (!seenIds.has(a.id)) {
-        combined.push({ ...a, _isPreview: false, profiles: profileMap.get(a.user_id) });
-        seenIds.add(a.id);
-      }
-    }
-
-    // Filter by targeting and compute auction score
-    const scoredAds = combined
-      .filter((ad): ad is any => {
-        if (!ad) return false;
-        // Placement filtering: if placements configured, ad must include this placement
-        if (placement && Array.isArray(ad.placements) && ad.placements.length > 0
-            && !ad.placements.includes(placement)) return false;
-        // University targeting: skip ads targeted to other campuses
-        if (!isInAudience(ad, university)) return false;
-        // TODO: Implement additional targeting (age, gender, etc.) using profileMap
-        // For now, we skip advanced targeting to keep the MVP simple.
-        return true;
-      })
-      .map(ad => {
-        const score = computeAuctionScore(ad, now.getTime());
-        return { ad, score };
-      })
-      .filter(item => item.score >= 0) // filter out any invalid scores (though we don't produce negative)
-      .sort((a, b) => b.score - a.score) // descending by score
-      .map(item => item.ad);
-
-    return scoredAds;
+    return { ads, previews, profiles };
   });
-  if (cached === null) {
+  return { ads: pool?.ads ?? [], previews: pool?.previews ?? [], profileMap: new Map(pool?.profiles ?? []) };
+}
+
+/** Generic placement query used by feed, reels, market, stories, explore. */
+export async function getActiveAdsForPlacement(
+  placement: string,
+  university: string | null,
+  userId: string,
+): Promise<any[]> {
+  let pool;
+  try {
+    pool = await getRawAdPool(userId);
+  } catch (e: any) {
+    // Failure is NOT cached anywhere (the pool fetcher threw) — next call retries.
+    console.warn('[campusAds] getActiveAdsForPlacement failed:', e?.message);
     return [];
   }
-  return cached;
+  const { ads, previews, profileMap } = pool;
+  if (ads.length === 0 && previews.length === 0) return [];
+  const now = Date.now();
+
+  // Owners can inspect explicit previews, but paid delivery never targets them.
+  const combined: any[] = [];
+  const seenIds = new Set<string>();
+  for (const p of previews) {
+    if (!seenIds.has(p.id)) {
+      combined.push({ ...p, _isPreview: true, profiles: profileMap.get(p.user_id) });
+      seenIds.add(p.id);
+    }
+  }
+  for (const a of ads) {
+    if (a.user_id === userId) continue;
+    if (!seenIds.has(a.id)) {
+      combined.push({ ...a, _isPreview: false, profiles: profileMap.get(a.user_id) });
+      seenIds.add(a.id);
+    }
+  }
+
+  return combined
+    .filter((ad): ad is any => {
+      if (!ad) return false;
+      // Placement filtering: if placements configured, ad must include this placement
+      if (placement && Array.isArray(ad.placements) && ad.placements.length > 0
+          && !ad.placements.includes(placement)) return false;
+      // University targeting: skip ads targeted to other campuses
+      if (!isInAudience(ad, university)) return false;
+      return true;
+    })
+    .map(ad => ({ ad, score: computeAuctionScore(ad, now) }))
+    .filter(item => item.score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.ad);
 }
 
 // Helper function to compute auction score for an ad
@@ -504,21 +502,14 @@ export async function deleteCampaign(id: string): Promise<void> {
 }
 
 export async function recordCampusAdImpression(adId: string, placement?: string): Promise<void> {
-  if (placement) {
-    const { error } = await supabase.rpc('record_campus_ad_delivery', { p_ad_id: adId, p_placement: placement });
-    if (!error) return;
-  }
-  const { error: fallbackError } = await supabase.rpc('record_campus_ad_impression', { p_ad_id: adId });
-  if (fallbackError) throw fallbackError;
+  // Billing RPCs are server-only now; delivery events are the supported client path.
+  const { error } = await supabase.rpc('record_campus_ad_delivery', { p_ad_id: adId, p_placement: placement ?? 'feed' });
+  if (error) throw error;
 }
 
 export async function recordCampusAdClick(adId: string, placement?: string): Promise<void> {
-  if (placement) {
-    const { error } = await supabase.rpc('record_campus_ad_click_event', { p_ad_id: adId, p_placement: placement });
-    if (!error) return;
-  }
-  const { error: fallbackError } = await supabase.rpc('record_campus_ad_click', { p_ad_id: adId });
-  if (fallbackError) throw fallbackError;
+  const { error } = await supabase.rpc('record_campus_ad_click_event', { p_ad_id: adId, p_placement: placement ?? 'feed' });
+  if (error) throw error;
 }
 
 /** Build a wa.me deep-link from an ad's `whatsapp_number` field. We strip
@@ -611,7 +602,7 @@ export async function getAdComments(
 
   const { data, count, error } = await supabase
     .from('campus_ad_comments')
-    .select(`*, profiles!campus_ad_comments_user_id_fkey(*)`, { count: 'exact' })
+    .select(`*, profiles!campus_ad_comments_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`, { count: 'exact' })
     .eq('ad_id', adId)
     .order('created_at', { ascending: true })
     .range(from, to);
@@ -635,7 +626,7 @@ export async function addAdComment(
   const { data, error } = await supabase
     .from('campus_ad_comments')
     .insert({ ad_id: adId, user_id: userId, content: sanitized })
-    .select(`*, profiles!campus_ad_comments_user_id_fkey(*)`)
+    .select(`*, profiles!campus_ad_comments_user_id_fkey(id, username, full_name, avatar_url, is_verified, verification_type)`)
     .single();
 
   if (error) throw error;

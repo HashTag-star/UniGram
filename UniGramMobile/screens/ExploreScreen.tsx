@@ -25,6 +25,11 @@ import { SocialSync } from '../services/social_sync';
 import { useTheme } from '../context/ThemeContext';
 import { getActiveAdsForPlacement, recordCampusAdImpression } from '../services/campusAds';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { EmptyState } from '../components/EmptyState';
+import { fx } from '../lib/feedback';
+import EventsScreen from './EventsScreen';
+import ConfessionsScreen from './ConfessionsScreen';
 
 const { width } = Dimensions.get('window');
 const COL = (width - 3) / 3;
@@ -162,7 +167,7 @@ const UserRow: React.FC<UserRowProps> = React.memo(({ user, currentUserId, isFol
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={following ? `Unfollow ${user.username}` : `Follow ${user.username}`}
         >
-          <Text style={[styles.followBtnText, { color: following ? '#818cf8' : colors.text }]}>
+          <Text style={[styles.followBtnText, { color: following ? colors.accentLight : colors.text }]}>
             {following ? 'Following' : 'Follow'}
           </Text>
         </TouchableOpacity>
@@ -173,14 +178,9 @@ const UserRow: React.FC<UserRowProps> = React.memo(({ user, currentUserId, isFol
 
 type SearchTab = 'top' | 'people' | 'posts' | 'tags';
 
-const FALLBACK_TRENDS = [
-  { tag: '#Finals2026', posts: 1842 },
-  { tag: '#CampusLife', posts: 3201 },
-  { tag: '#Internship', posts: 987 },
-  { tag: '#StudyGroup', posts: 762 },
-  { tag: '#Research', posts: 541 },
-  { tag: '#Hackathon', posts: 430 },
-];
+// Real data only: no fabricated trend counts. Empty until the server returns tags.
+type TrendTag = { tag: string; posts?: number };
+const RECENT_MAX = 8;
 
 interface Props {
   onUserPress?: (profile: any) => void;
@@ -203,7 +203,13 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
   // Home state (no query)
   const [gridPosts, setGridPosts] = useState<any[]>([]);
   const [suggested, setSuggested] = useState<any[]>([]);
-  const [trendingTags, setTrendingTags] = useState(FALLBACK_TRENDS);
+  const [trendingTags, setTrendingTags] = useState<TrendTag[]>([]);
+  const [searchError, setSearchError] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [showEvents, setShowEvents] = useState(false);
+  const [showConfessions, setShowConfessions] = useState(false);
+  const [campus, setCampus] = useState<string | null>(null);
+  const searchInputRef = useRef<any>(null);
   const [hashtagPosts, setHashtagPosts] = useState<any[]>([]);
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
 
@@ -226,6 +232,9 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
       if (!data.user) return;
       const uid = data.user.id;
       setCurrentUserId(uid);
+      AsyncStorage.getItem(`ug_recent_searches:${uid}`).then(raw => {
+        if (raw) { try { setRecent(JSON.parse(raw)); } catch {} }
+      }).catch(() => {});
 
       let profData: { university?: string | null } | null = null;
       try {
@@ -243,6 +252,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
           })(),
         ]);
         profData = prof;
+        setCampus(prof?.university ?? null);
         setGridPosts(posts);
         setLikedIds(new Set(liked));
         setSavedIds(new Set(saved));
@@ -255,7 +265,10 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
 
       getTrendingHashtags(8, uid).then(tags => {
         if (tags.length > 0) {
-          setTrendingTags(tags.map((t: any) => ({ tag: t.tag, posts: Number(t.post_count) })));
+          setTrendingTags(tags.map((t: any) => {
+            const n = Number(t.post_count);
+            return { tag: t.tag, posts: Number.isFinite(n) && n > 0 ? n : undefined };
+          }));
         }
       }).catch(() => {});
 
@@ -268,9 +281,10 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
   // ── Search ────────────────────────────────────────────────────────────────
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
-      setUserResults([]); setPostResults([]); return;
+      setUserResults([]); setPostResults([]); setSearchError(false); return;
     }
     setLoading(true);
+    setSearchError(false);
     try {
       const [users, posts] = await Promise.all([
         searchUsers(q),
@@ -290,8 +304,28 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
         users.forEach((u: any, i: number) => { if (checks[i]) ids.add(u.id); });
         setFollowingIds(prev => new Set([...prev, ...ids]));
       }
-    } catch { } finally { setLoading(false); }
+    } catch { setSearchError(true); } finally { setLoading(false); }
   }, [currentUserId]);
+
+  const saveRecent = useCallback((term: string) => {
+    const t = term.trim();
+    if (!t || !currentUserId) return;
+    setRecent(prev => {
+      const next = [t, ...prev.filter(x => x.toLowerCase() !== t.toLowerCase())].slice(0, RECENT_MAX);
+      AsyncStorage.setItem(`ug_recent_searches:${currentUserId}`, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, [currentUserId]);
+
+  const clearRecent = useCallback(() => {
+    setRecent([]);
+    if (currentUserId) AsyncStorage.removeItem(`ug_recent_searches:${currentUserId}`).catch(() => {});
+  }, [currentUserId]);
+
+  const cancelSearch = useCallback(() => {
+    setQuery(''); setActiveTab('top'); setIsSearchFocused(false); setSearchError(false);
+    searchInputRef.current?.blur();
+  }, []);
 
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -412,7 +446,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
     return (
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-          <TouchableOpacity onPress={() => { setActiveHashtag(null); setHashtagPosts([]); }} style={{ padding: 4, marginRight: 8 }}>
+          <TouchableOpacity onPress={() => { setActiveHashtag(null); setHashtagPosts([]); }} style={{ padding: 4, marginRight: 8 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Back">
             <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.topBarTitle, { color: colors.text }]}>{activeHashtag}</Text>
@@ -480,49 +514,98 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
       {/* Header */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Text style={[styles.topBarTitle, { color: colors.text }]}>Explore</Text>
-        <TouchableOpacity 
-          onPress={onDiscoverPress} 
-          style={styles.discoverBtn}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="person-add-outline" size={24} color={colors.text} />
-        </TouchableOpacity>
+        {!isSearching && (
+          <TouchableOpacity
+            onPress={onDiscoverPress}
+            style={styles.discoverBtn}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Discover people"
+          >
+            <Ionicons name="person-add-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Search bar */}
       <View style={[styles.searchBar, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
         <Ionicons name="search" size={16} color={colors.textMuted} />
         <TextInput
+          ref={searchInputRef}
           style={[styles.searchInput, { color: colors.text }]}
           placeholder="Search people, posts, #tags..."
           placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={setQuery}
           onFocus={() => setIsSearchFocused(true)}
-          onBlur={() => setIsSearchFocused(false)}
+          onBlur={() => { if (!query) setIsSearchFocused(false); }}
+          onSubmitEditing={() => saveRecent(query)}
           returnKeyType="search"
           autoCorrect={false}
           autoCapitalize="none"
+          accessibilityLabel="Search people, posts and tags"
         />
         {query.length > 0 && (
-          <TouchableOpacity onPress={() => { setQuery(''); setActiveTab('top'); }}>
+          <TouchableOpacity
+            onPress={() => { setQuery(''); setActiveTab('top'); }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+          >
             <Ionicons name="close-circle" size={16} color={colors.textMuted} />
           </TouchableOpacity>
         )}
       </View>
+      {isSearching && (
+        <TouchableOpacity
+          onPress={cancelSearch}
+          style={{ position: 'absolute', right: 14, top: insets.top + 8, minHeight: 36, justifyContent: 'center' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel search"
+        >
+          <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14 }}>Cancel</Text>
+        </TouchableOpacity>
+      )}
 
       {isSearching ? (
         // ─── Search results ──────────────────────────────────────────────
         <View style={{ flex: 1 }}>
+          {!query.trim() ? (
+            <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ paddingBottom: 80 }}>
+              {recent.length > 0 ? (
+                <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 0 }]}>RECENT</Text>
+                    <TouchableOpacity onPress={() => { fx.tap(); clearRecent(); }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Clear all recent searches">
+                      <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '600' }}>Clear all</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {recent.map(term => (
+                    <TouchableOpacity key={term} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 44 }} onPress={() => { fx.select(); setQuery(term); saveRecent(term); }} accessibilityRole="button" accessibilityLabel={`Search ${term} again`}>
+                      <Ionicons name="time-outline" size={18} color={colors.textMuted} />
+                      <Text style={{ color: colors.text, fontSize: 14, marginLeft: 12, flex: 1 }} numberOfLines={1}>{term}</Text>
+                      <Ionicons name="arrow-up-outline" size={16} color={colors.textMuted} style={{ transform: [{ rotate: '-45deg' }] }} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <EmptyState icon="search-outline" title="Search UniGram" subtitle="Find people, posts and #tags across campus." />
+              )}
+            </ScrollView>
+          ) : (<>
           {/* Tab bar */}
           <View style={[styles.tabRow, { borderBottomColor: colors.border }]}>
             {SEARCH_TABS.map(t => (
               <TouchableOpacity
                 key={t.id}
-                style={[styles.tabBtn, activeTab === t.id && styles.tabBtnActive]}
+                style={[styles.tabBtn, activeTab === t.id && { borderBottomWidth: 2, borderBottomColor: colors.accent }]}
                 onPress={() => setActiveTab(t.id)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeTab === t.id }}
               >
-                <Text style={[styles.tabBtnText, { color: activeTab === t.id ? '#818cf8' : colors.textMuted }]}>
+                <Text style={[styles.tabBtnText, { color: activeTab === t.id ? colors.accent : colors.textMuted }]}>
                   {t.label}
                 </Text>
               </TouchableOpacity>
@@ -531,10 +614,20 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
 
           {loading ? (
             <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <ActivityIndicator color="#4f46e5" />
+              <ActivityIndicator color={colors.accent} />
             </View>
+          ) : searchError ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Search failed"
+              subtitle="We couldn't load results. Check your connection and try again."
+              actionLabel="Try again"
+              onAction={() => runSearch(query)}
+            />
           ) : (
             <FlashList
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               data={
                 activeTab === 'people' ? userResults
                 : activeTab === 'posts' ? postResults.filter(p => p.media_url)
@@ -554,13 +647,13 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
               renderItem={({ item }: { item: any }) => {
                 if (activeTab === 'tags' || (item as any).tag) {
                   return (
-                    <TouchableOpacity style={styles.userRow} onPress={() => openHashtag((item as any).tag)}>
+                    <TouchableOpacity style={styles.userRow} onPress={() => { saveRecent(query); openHashtag((item as any).tag); }}>
                       <View style={[styles.hashIcon, { backgroundColor: colors.accent + '20' }]}>
                         <Ionicons name="pricetag-outline" size={18} color={colors.accent} />
                       </View>
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={[styles.userName, { color: colors.text }]}>{(item as any).tag}</Text>
-                        <Text style={[styles.userMeta, { color: colors.textMuted }]}>{((item as any).posts ?? 0).toLocaleString()} posts</Text>
+                        {!!(item as any).posts && <Text style={[styles.userMeta, { color: colors.textMuted }]}>{((item as any).posts as number).toLocaleString()} posts</Text>}
                       </View>
                       <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                     </TouchableOpacity>
@@ -571,13 +664,13 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
                     user={item}
                     currentUserId={currentUserId}
                     isFollowing={followingIds.has((item as any).id)}
-                    onPress={onUserPress}
+                    onPress={(u: any) => { saveRecent(query); onUserPress?.(u); }}
                     onFollowToggle={handleFollowToggle}
                   />
                 );
                 if ((item as any).media_url) {
                   return (
-                    <TouchableOpacity style={styles.postResultRow} onPress={() => setDetailPost(item)} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.postResultRow} onPress={() => { saveRecent(query); setDetailPost(item); }} activeOpacity={0.8}>
                       <CachedImage uri={(item as any).media_url} style={[styles.postResultThumb, { backgroundColor: colors.bg2 }]} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={[styles.postResultCaption, { color: colors.text }]} numberOfLines={2}>{(item as any).caption}</Text>
@@ -592,6 +685,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
               }}
             />
           )}
+          </>)}
         </View>
       ) : (
         // ─── Discovery home ──────────────────────────────────────────────
@@ -608,8 +702,33 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
           ListHeaderComponent={
             <>
               {/* Trending hashtags */}
+              {/* Campus entry points */}
+              <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 14, marginBottom: 20 }}>
+                {([
+                  { key: 'events', icon: 'calendar', title: 'Campus Events', sub: 'RSVP and organise', onPress: () => setShowEvents(true) },
+                  { key: 'conf', icon: 'chatbubbles', title: 'Confessions', sub: 'Anonymous, campus-wide', onPress: () => setShowConfessions(true) },
+                ] as const).map(c => (
+                  <TouchableOpacity
+                    key={c.key}
+                    style={{ flex: 1, minHeight: 72, borderRadius: 16, padding: 12, backgroundColor: colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+                    onPress={() => { fx.tap(); c.onPress(); }}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={c.title}
+                  >
+                    <Ionicons name={c.icon as any} size={20} color={colors.accent} />
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 14, marginTop: 6 }}>{c.title}</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 1 }}>{c.sub}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Trending hashtags */}
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TRENDING TOPICS</Text>
+                {trendingTags.length === 0 && (
+                  <Text style={{ color: colors.textMuted, fontSize: 13 }}>No trends yet</Text>
+                )}
                 {trendingTags.map(({ tag, posts: count }, i) => (
                   <TouchableOpacity key={tag} style={styles.trendRow} onPress={() => openHashtag(tag)}>
                     <Text style={[styles.trendNum, { color: colors.textMuted }]}>{i + 1}</Text>
@@ -618,7 +737,7 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.trendTag, { color: colors.text }]}>{tag}</Text>
-                      <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{(count ?? 0).toLocaleString()} posts</Text>
+                      {!!count && <Text style={[styles.trendMeta, { color: colors.textMuted }]}>{count.toLocaleString()} posts</Text>}
                     </View>
                     <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
                   </TouchableOpacity>
@@ -725,6 +844,13 @@ export const ExploreScreen = React.memo(({ onUserPress, onDiscoverPress, onTrend
         />
       )}
 
+      <Modal visible={showEvents} animationType="slide" onRequestClose={() => setShowEvents(false)}>
+        <EventsScreen onClose={() => setShowEvents(false)} university={campus} />
+      </Modal>
+      <Modal visible={showConfessions} animationType="slide" onRequestClose={() => setShowConfessions(false)}>
+        <ConfessionsScreen onClose={() => setShowConfessions(false)} university={campus} />
+      </Modal>
+
       {/* Post detail modal */}
       {detailPost && (
         <PostDetailModal
@@ -761,7 +887,7 @@ const PostDetailModal: React.FC<{
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 14, paddingBottom: 14, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Close post">
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={{ color: colors.text, fontWeight: '700', fontSize: 15, marginLeft: 10 }}>
@@ -811,9 +937,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14 },
   tabRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, marginBottom: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 10 },
-  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#818cf8' },
   tabBtnText: { fontSize: 13, fontWeight: '600' },
-  tabBtnTextActive: { color: '#818cf8' },
   section: { marginBottom: 24, paddingHorizontal: 14 },
   sectionTitle: { fontSize: 10, fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 12 },
 

@@ -35,6 +35,9 @@ import { usePopup } from '../context/PopupContext';
 import { useToast } from '../context/ToastContext';
 import { likePost, unlikePost, savePost, unsavePost, getLikedPostIds, getSavedPostIds, getRepostedPostIds, repostPost, unrepostPost, quotePost, enrichWithOriginalPosts, deletePost, reportContent, getPostLikers } from '../services/posts';
 import { UsersListSheet } from '../components/UsersListSheet';
+import { EmptyState } from '../components/EmptyState';
+import { ReportSheet } from '../components/ReportSheet';
+import { BlockSheet } from '../components/BlockSheet';
 import { PostDetailModal } from '../components/PostDetailModal';
 import { PostOptionsSheet } from '../components/PostOptionsSheet';
 import { QuotePostCard } from '../components/QuotePostCard';
@@ -135,7 +138,7 @@ const LiveStoryBubble: React.FC<{ ls: any; onPress: () => void }> = ({ ls, onPre
           <View style={styles.storyAvatarClip}>
             {ls.profiles?.avatar_url
               ? <CachedImage uri={ls.profiles.avatar_url} style={styles.storyAvatar} />
-              : <View style={[styles.storyAvatar, { backgroundColor: '#2a0a0a', alignItems: 'center', justifyContent: 'center' }]}>
+              : <View style={[styles.storyAvatar, { backgroundColor: 'rgba(255,59,48,0.14)', alignItems: 'center', justifyContent: 'center' }]}>
                   <Ionicons name="person" size={22} color="#ff3b30" />
                 </View>
             }
@@ -374,6 +377,8 @@ const StoryViewer: React.FC<{
   const [paused, setPaused] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [reply, setReply] = useState('');
+  const [reportStoryId, setReportStoryId] = useState<string | null>(null);
+  const [muteSheetUser, setMuteSheetUser] = useState<{ id: string; username?: string } | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [stats, setStats] = useState({ views: 0, likes: 0, isLiked: false });
   const progress = useRef(new Animated.Value(0)).current;
@@ -554,7 +559,8 @@ const StoryViewer: React.FC<{
       showPopup({
         title: 'Story Options',
         buttons: [
-          { text: 'Report', onPress: () => { setPaused(false); } },
+          { text: 'Report', style: 'destructive', onPress: () => { setReportStoryId(story.id); } },
+          { text: `Mute @${group.profile.username}`, onPress: () => { setMuteSheetUser({ id: group.profile.id, username: group.profile.username }); } },
           { text: 'Cancel', style: 'cancel', onPress: () => setPaused(false) },
         ]
       });
@@ -574,6 +580,8 @@ const StoryViewer: React.FC<{
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
       <View style={[sv.bg, isReshared && { backgroundColor: '#0f0f0f' }]}>
         <StatusBar hidden />
+        <ReportSheet visible={!!reportStoryId} onClose={() => { setReportStoryId(null); setPaused(false); }} targetType="story" targetId={reportStoryId} label="story" />
+        <BlockSheet visible={!!muteSheetUser} onClose={() => { setMuteSheetUser(null); setPaused(false); }} userId={muteSheetUser?.id} username={muteSheetUser?.username} mode="mute" onDone={() => onClose()} />
         {isAdStory && story.ad?.media_url && (
           <CachedImage uri={story.ad.media_url} style={StyleSheet.absoluteFill} resizeMode="cover" />
         )}
@@ -685,11 +693,11 @@ const StoryViewer: React.FC<{
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             {!isAdStory && (
-              <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={12}>
+              <TouchableOpacity onPress={showStoryOptions} style={sv.iconBtn} hitSlop={12} accessibilityRole="button" accessibilityLabel="Story options">
                 <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={onClose} style={sv.iconBtn} hitSlop={12}>
+            <TouchableOpacity onPress={onClose} style={sv.iconBtn} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close story">
               <Ionicons name="close" size={26} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -862,8 +870,8 @@ const ReelStripRow: React.FC<{ reels: any[]; onSeeAll?: () => void; onReelPress?
     <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
       <View style={feedInjStyles.sectionHeader}>
         <Text style={[feedInjStyles.sectionTitle, { color: colors.text }]}>Reels for you</Text>
-        <TouchableOpacity onPress={onSeeAll}>
-          <Text style={feedInjStyles.seeAll}>See all</Text>
+        <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="See all reels">
+          <Text style={[feedInjStyles.seeAll, { color: colors.accent }]}>See all</Text>
         </TouchableOpacity>
       </View>
       <FlatList
@@ -951,7 +959,7 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
       ) : null}
       <View style={{ height: 32, alignItems: 'center', justifyContent: 'center' }}>
         {user.follows_me && !following ? (
-          <Text style={[feedInjStyles.suggMiniText, { color: '#818cf8', fontWeight: '700' }]}>Follows you</Text>
+          <Text style={[feedInjStyles.suggMiniText, { color: colors.accent, fontWeight: '700' }]}>Follows you</Text>
         ) : user.mutual_friends > 0 ? (
           <Text style={[feedInjStyles.suggMiniText, { color: colors.textSub }]}>{user.mutual_friends} mutual friends</Text>
         ) : user.major ? (
@@ -971,12 +979,12 @@ const SuggestionCard: React.FC<{ user: any; currentUserId: string; onPress?: (u:
   );
 });
 
-const SuggestionRow: React.FC<{ users: any[]; currentUserId: string; onUserPress?: (u: any) => void; colors: any }> = React.memo(({ users, currentUserId, onUserPress, colors }) => (
+const SuggestionRow: React.FC<{ users: any[]; currentUserId: string; onUserPress?: (u: any) => void; onSeeAll?: () => void; colors: any }> = React.memo(({ users, currentUserId, onUserPress, onSeeAll, colors }) => (
   <View style={[feedInjStyles.section, { backgroundColor: colors.bg, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
     <View style={feedInjStyles.sectionHeader}>
       <Text style={[feedInjStyles.sectionTitle, { color: colors.text }]}>Suggested for you</Text>
-      <TouchableOpacity onPress={() => {}}>
-        <Text style={feedInjStyles.seeAll}>See all</Text>
+      <TouchableOpacity onPress={() => { fx.tap(); onSeeAll?.(); }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="See all suggested people">
+        <Text style={[feedInjStyles.seeAll, { color: colors.accent }]}>See all</Text>
       </TouchableOpacity>
     </View>
     <ScrollView 
@@ -1058,6 +1066,24 @@ export const FeedScreen = React.memo(({
   const { showToast } = useToast();
   const { selection } = useHaptics();
   const { openPaywall, entitlementVersion } = usePaywall();
+  const [failedUploads, setFailedUploads] = useState<any[]>([]);
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    try {
+      const uq = require('../services/uploadQueue');
+      const refresh = () => uq.listPendingUploads().then((l: any[]) => setFailedUploads(l.filter(j => j.status === 'failed'))).catch(() => {});
+      refresh();
+      off = uq.subscribeUploadQueue(refresh);
+    } catch {}
+    return () => { off?.(); };
+  }, []);
+  const retryFailedUploads = async () => {
+    fx.press();
+    try {
+      const uq = require('../services/uploadQueue');
+      await uq.retryAllUploads();
+    } catch { showToast('Could not retry the upload. Please try again.', 'error'); }
+  };
   const [proPromoDismissed, setProPromoDismissed] = useState(false);
   const storyLinkUpsellShownRef = useRef(false);
   const adPolicyRef = useRef(getAdPolicy(false));
@@ -1938,10 +1964,11 @@ export const FeedScreen = React.memo(({
           <TouchableOpacity
             onPress={onCameraPress}
             style={{ padding: 4 }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Open camera"
+            accessibilityLabel="Open camera to create a story"
           >
-            <Ionicons name="add-circle-outline" size={28} color={colors.text} />
+            <Ionicons name="camera-outline" size={28} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.topBarLogo, { color: colors.text }]}>UniGram</Text>
         </View>
@@ -1949,6 +1976,7 @@ export const FeedScreen = React.memo(({
           <TouchableOpacity
             onPress={onNotifPress}
             style={{ position: 'relative', padding: 4 }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
             accessibilityLabel="Notifications"
           >
@@ -1962,6 +1990,7 @@ export const FeedScreen = React.memo(({
           <TouchableOpacity
             onPress={onMessagePress}
             style={{ padding: 4, position: 'relative' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
             accessibilityLabel="Messages"
           >
@@ -1987,7 +2016,17 @@ export const FeedScreen = React.memo(({
           }} 
         />
       </Animated.View>
-
+      {failedUploads.length > 0 && (
+        <TouchableOpacity
+          onPress={retryFailedUploads}
+          accessibilityRole="button"
+          accessibilityLabel="Upload failed. Tap to retry"
+          style={{ position: 'absolute', alignSelf: 'center', top: insets.top + 56, zIndex: 50, minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#ef4444' }}
+        >
+          <Ionicons name="refresh" size={14} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Failed - tap to retry{failedUploads.length > 1 ? ` (${failedUploads.length})` : ''}</Text>
+        </TouchableOpacity>
+      )}
 
       {/* ── New Posts Pill ─────────────────────────────────────────────── */}
       {/* Sits just under the header and follows it when the header slides away. */}
@@ -2118,28 +2157,21 @@ export const FeedScreen = React.memo(({
         // eslint-disable-next-line react-hooks/exhaustive-deps
         ), [loading, storyGroupsWithAds, liveSessions, currentProfile, viewedIds, ownGroupIdx, currentUserId, handleYourStory, HEADER_HEIGHT, followCount])}
         ListEmptyComponent={loading ? null : feedError ? (
-          <View style={{ alignItems: 'center', paddingTop: 80, paddingHorizontal: 40 }}>
-            <Ionicons name="cloud-offline-outline" size={56} color={colors.textMuted} />
-            <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Couldn't load feed</Text>
-            <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-              Check your connection and try again.
-            </Text>
-            <TouchableOpacity
-              onPress={() => { setFeedError(false); setLoading(true); load(true); }}
-              style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
-              activeOpacity={0.85}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
-            </TouchableOpacity>
-          </View>
+          <EmptyState
+            icon="cloud-offline-outline"
+            title="Couldn't load feed"
+            subtitle="Check your connection and try again."
+            actionLabel="Try again"
+            onAction={() => { setFeedError(false); setLoading(true); load(true); }}
+            style={{ paddingTop: 80 }}
+          />
         ) : (
-          <View style={{ alignItems: 'center', paddingTop: 80, paddingHorizontal: 40 }}>
-            <Ionicons name="image-outline" size={52} color={colors.textMuted} />
-            <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No posts yet</Text>
-            <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-              Follow people to see their posts here.
-            </Text>
-          </View>
+          <EmptyState
+            icon="image-outline"
+            title="No posts yet"
+            subtitle="Follow people to see their posts here."
+            style={{ paddingTop: 80 }}
+          />
         )}
         renderItem={useCallback(({ item }: any) => {
           if (item._type === 'reels_strip') {
@@ -2158,6 +2190,7 @@ export const FeedScreen = React.memo(({
                 users={item.users}
                 currentUserId={currentUserId}
                 onUserPress={onUserPress}
+                onSeeAll={() => onUserPress?.({ _openDiscover: true })}
                 colors={colors}
               />
             );
@@ -2295,10 +2328,10 @@ export const FeedScreen = React.memo(({
       {/* Story Link Modal (links are Pro-only; free users see a one-time teaser) */}
       <Modal visible={showStoryLinkModal} transparent animationType="slide" onRequestClose={() => setShowStoryLinkModal(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-          <View style={{ backgroundColor: '#161618', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 }}>
-            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', alignSelf: 'center', marginBottom: 16 }} />
+          <View style={{ backgroundColor: colors.bg2, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 16 }} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Add a Link</Text>
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800' }}>Add a Link</Text>
               {!storyIsPro && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#6366f1', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
                   <Ionicons name="lock-closed" size={10} color="#fff" />
@@ -2306,15 +2339,15 @@ export const FeedScreen = React.memo(({
                 </View>
               )}
             </View>
-            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 16 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
               {storyIsPro
                 ? 'Your story will show a "Visit Link" button. Leave empty to skip.'
                 : 'Pro members can add a tappable "Visit Link" button to their stories.'}
             </Text>
             <TextInput
-              style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: '#fff', fontSize: 15, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', opacity: storyIsPro ? 1 : 0.45 }}
+              style={{ backgroundColor: colors.inputBg, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: colors.text, fontSize: 15, marginBottom: 16, borderWidth: 1, borderColor: colors.inputBorder, opacity: storyIsPro ? 1 : 0.45 }}
               placeholder="https://..."
-              placeholderTextColor="rgba(255,255,255,0.3)"
+              placeholderTextColor={colors.textMuted}
               value={storyIsPro ? storyLinkInput : ''}
               onChangeText={setStoryLinkInput}
               editable={storyIsPro}
@@ -2324,10 +2357,10 @@ export const FeedScreen = React.memo(({
             />
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
-                style={{ flex: 1, paddingVertical: 15, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                style={{ flex: 1, paddingVertical: 15, borderRadius: 14, backgroundColor: colors.card, alignItems: 'center' }}
                 onPress={() => { setShowStoryLinkModal(false); if (pendingStoryUri) postStory(pendingStoryUri, undefined); }}
               >
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '600', fontSize: 15 }}>{storyIsPro ? 'Skip' : 'Post story'}</Text>
+                <Text style={{ color: colors.textSub, fontWeight: '600', fontSize: 15 }}>{storyIsPro ? 'Skip' : 'Post story'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{ flex: 2, paddingVertical: 15, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
@@ -2467,7 +2500,7 @@ const styles = StyleSheet.create({
   postInfo: { paddingHorizontal: 14, paddingBottom: 14 },
   likesText: { fontSize: 13, fontWeight: 'bold' },
   captionText: { fontSize: 13, lineHeight: 18, marginBottom: 4, marginTop: 2 },
-  taggedText: { fontSize: 11, color: '#818cf8', marginBottom: 3 },
+  taggedText: { fontSize: 11, color: '#6366f1', marginBottom: 3 },
   timeText: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
   carouselIndicator: {
     position: 'absolute', top: 12, right: 12,

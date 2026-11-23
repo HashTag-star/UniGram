@@ -1,11 +1,17 @@
 import { supabase } from '../lib/supabase';
 import { SocialSync } from './social_sync';
-import { uploadFile } from './upload';
+import { uploadFile, assertVideoWithinLimits } from './upload';
+import { PROFILE_MINI_COLUMNS } from './profiles';
 import { randomId } from '../lib/uuid';
 import { createNotification } from './notifications';
 import { sendPushToUser } from './pushNotifications';
 import { Cache, TTL } from '../lib/cache';
 import { assertUuid, cleanUserText, requireText } from '../lib/contentSafety';
+
+// Explicit post columns (no select('*')) + the compact profile embed.
+export const POST_COLUMNS = 'id, user_id, type, caption, media_url, media_urls, location, song, likes_count, comments_count, reposts_count, saves_count, repost_of, quote_of, created_at, tagged_users, aspect_ratio';
+const POST_WITH_PROFILE = `${POST_COLUMNS}, profiles!posts_user_id_fkey(${PROFILE_MINI_COLUMNS})`;
+const COMMENT_PROFILE_EMBED = (fk: string) => `profiles!${fk}(${PROFILE_MINI_COLUMNS})`;
 
 const POST_SELECT = `
   id, user_id, type, caption, media_url, media_urls, location, song, 
@@ -15,46 +21,39 @@ const POST_SELECT = `
 `;
 
 export async function getFeedPosts(limit = 20, offset = 0) {
-  // [Ama Mensah - Lead Dev] SWR: return cached result instantly, then refresh in background
-  const key = `feed:${limit}:${offset}`;
-  const hit = Cache.getSync<any[]>(key, TTL.feed);
-  if (hit) {
-    // Refresh in background so next render gets fresh data
-    (async () => {
-      try {
-        const { data } = await supabase
-          .from('posts').select(POST_SELECT)
-          .order('created_at', { ascending: false })
-          .range(offset, offset + limit - 1);
-        if (data) Cache.set(key, data);
-      } catch (_) {}
-    })();
-    return hit;
-  }
-  const { data, error } = await supabase
-    .from('posts')
-    .select(POST_SELECT)
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-  if (error) throw error;
-  const result = data ?? [];
-  Cache.set(key, result);
-  return result;
+  // Cache key is user-scoped so accounts on one device never share a feed.
+  const { data: { user } } = await supabase.auth.getUser();
+  const key = `feed:${user?.id ?? 'anon'}:global:${limit}:${offset}`;
+  const rows = await Cache.getOrFetch<any[]>(key, TTL.feed, async () => {
+    const { data, error } = await supabase
+      .from('posts')
+      .select(POST_SELECT)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+    return data ?? [];
+  });
+  return rows ?? [];
 }
 
-export async function getUserPosts(userId: string) {
-  // [Ama Mensah - Lead Dev] Profile grid hits this on every visit — cache for TTL.profile
-  const key = `userposts:${userId}`;
-  const hit = await Cache.get<any[]>(key, TTL.profile);
+export const USER_POSTS_PAGE = 60;
+
+/** Paged: returns up to `limit` posts starting at `offset` (newest first). */
+export async function getUserPosts(userId: string, limit = USER_POSTS_PAGE, offset = 0) {
+  // Profile grid hits this on every visit — memory-cache only (never write the whole
+  // array to AsyncStorage: a large grid blows the 6MB Android cap).
+  const key = `userposts:${userId}:${limit}:${offset}`;
+  const hit = Cache.getSync<any[]>(key, TTL.profile);
   if (hit) return hit;
   const { data, error } = await supabase
     .from('posts')
     .select(POST_SELECT)
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
   if (error) throw error;
   const result = data ?? [];
-  Cache.set(key, result);
+  Cache.set(key, result, { persist: false });
   return result;
 }
 
@@ -79,7 +78,9 @@ export async function createPost(
 
   const uploadedUrls: string[] = [];
   if (mediaUris && mediaUris.length > 0) {
-    const uploadPromises = mediaUris.map(async (uri) => {
+    // Sequential (a carousel of 10 photos in parallel = 10 simultaneous uploads / OOM risk and
+    // 10 competing sockets on a weak connection). Failure of any item aborts the post.
+    for (const uri of mediaUris) {
       const isVideo = type === 'video';
       let ext = uri.split('.').pop()?.toLowerCase();
       if (!ext || ext.length > 5 || ext === uri.toLowerCase()) {
@@ -88,11 +89,9 @@ export async function createPost(
       const bucket = isVideo ? 'videos' : 'post-media';
       const path = `${userId}/${Date.now()}-${randomId(8)}.${ext}`;
       const fallbackMime = isVideo ? 'video/mp4' : 'image/jpeg';
-      return uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime);
-    });
-
-    const results = await Promise.all(uploadPromises);
-    uploadedUrls.push(...results);
+      if (isVideo) await assertVideoWithinLimits(uri);
+      uploadedUrls.push(await uploadFile(bucket, path, uri, extras?.mimeType ?? fallbackMime));
+    }
   }
 
   const { data, error } = await supabase
@@ -108,13 +107,13 @@ export async function createPost(
       tagged_users: extras?.taggedUsers,
       aspect_ratio: extras?.aspectRatio ?? 1.0,
     })
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_WITH_PROFILE)
     .single();
 
   if (error) throw error;
 
   // Notification logic for tags/mentions
-  const actor = data.profiles;
+  const actor: any = (data as any).profiles;
   const notifyUserIds = new Set<string>();
 
   // 1. Explicitly tagged users
@@ -154,53 +153,86 @@ export async function createPost(
 
   // [Ama Mensah - Lead Dev] New post busts feed cache for all offsets and the author's own post list
   Cache.invalidatePattern('feed:');
-  Cache.invalidate(`userposts:${userId}`);
+  Cache.invalidatePattern(`userposts:${userId}`);
 
-  // Notify followers that someone they follow posted (fire-and-forget, capped at 500)
-  (async () => {
-    try {
-      const { data: followers } = await supabase
-        .from('follows')
-        .select('follower_id')
-        .eq('following_id', userId)
-        .limit(500);
-
-      if (!followers?.length) return;
-
-      const username = actor?.username || 'Someone';
-      const pushBody = caption.trim()
-        ? `📸 posted: "${caption.substring(0, 60)}${caption.length > 60 ? '…' : ''}"`
-        : '📸 shared a new post';
-
-      const notifRows = followers.map((f: any) => ({
-        user_id: f.follower_id,
-        actor_id: userId,
-        type: 'new_post',
-        post_id: data.id,
-        text: pushBody,
-        is_read: false,
-      }));
-
-      // Batch insert in-app notifications
-      for (let i = 0; i < notifRows.length; i += 500) {
-        await supabase.from('notifications').insert(notifRows.slice(i, i + 500));
-      }
-
-      // Push devices — fire-and-forget per follower
-      followers.forEach((f: any) => {
-        sendPushToUser(
-          f.follower_id,
-          'New post',
-          pushBody,
-          { type: 'new_post', postId: data.id, userId, channelId: 'social' },
-          uploadedUrls[0] ?? undefined,
-          actor?.avatar_url ?? undefined,
-        ).catch(() => {});
-      });
-    } catch (_) {}
-  })();
+  // Notify followers (fire-and-forget; server-side RPC first, small batched fallback)
+  const pushBody = caption.trim()
+    ? `📸 posted: "${caption.substring(0, 60)}${caption.length > 60 ? '…' : ''}"`
+    : '📸 shared a new post';
+  notifyFollowers({
+    actorId: userId,
+    type: 'new_post',
+    postId: data.id,
+    title: 'New post',
+    body: pushBody,
+    imageUrl: uploadedUrls[0] ?? undefined,
+    avatarUrl: actor?.avatar_url ?? undefined,
+  }).catch(() => {});
 
   return data;
+}
+
+/**
+ * Fan-out "someone you follow posted / added a story" to followers WITHOUT hammering the
+ * poster's phone.
+ *  1. Preferred: RPC `notify_followers` inserts all notification rows server-side and returns
+ *     (optionally) an array of follower ids to push to.
+ *  2. Fallback (RPC missing): one batched insert per 100 rows and pushes to at most 50
+ *     recipients, a few at a time. Never awaited by the caller.
+ */
+export async function notifyFollowers(a: {
+  actorId: string;
+  type: 'new_post' | 'new_story';
+  postId?: string;
+  storyId?: string;
+  title: string;
+  body: string;
+  imageUrl?: string;
+  avatarUrl?: string;
+}): Promise<void> {
+  const data: Record<string, any> = a.postId
+    ? { type: 'new_post', postId: a.postId, userId: a.actorId, channelId: 'social' }
+    : { type: 'new_story', storyId: a.storyId, userId: a.actorId, channelId: 'social' };
+  const MAX_PUSH = 50;
+  const push = async (ids: string[]) => {
+    const targets = ids.slice(0, MAX_PUSH);
+    for (let i = 0; i < targets.length; i += 5) {
+      await Promise.allSettled(targets.slice(i, i + 5).map(id =>
+        sendPushToUser(id, a.title, a.body, data, a.imageUrl, a.avatarUrl)));
+    }
+  };
+
+  try {
+    const args: Record<string, any> = { p_type: a.type, p_title: a.title, p_body: a.body };
+    if (a.postId) args.p_post_id = a.postId;
+    if (a.storyId) args.p_story_id = a.storyId;
+    const { data: rpcData, error } = await supabase.rpc('notify_followers', args);
+    if (!error) {
+      if (Array.isArray(rpcData)) {
+        push(rpcData.map((r: any) => (typeof r === 'string' ? r : r?.user_id ?? r?.follower_id)).filter(Boolean)).catch(() => {});
+      }
+      return;
+    }
+  } catch { /* fall through to the client path */ }
+
+  const { data: followers } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('following_id', a.actorId)
+    .limit(500);
+  if (!followers?.length) return;
+  const rows = followers.map((f: any) => ({
+    user_id: f.follower_id,
+    actor_id: a.actorId,
+    type: a.type,
+    post_id: a.postId ?? null,
+    text: a.body,
+    is_read: false,
+  }));
+  for (let i = 0; i < rows.length; i += 100) {
+    await supabase.from('notifications').insert(rows.slice(i, i + 100));
+  }
+  push(followers.map((f: any) => f.follower_id)).catch(() => {});
 }
 
 export async function updatePost(postId: string, userId: string, updates: { caption?: string; location?: string; tagged_users?: string[] }) {
@@ -222,7 +254,7 @@ export async function updatePost(postId: string, userId: string, updates: { capt
   if (error) throw error;
   // [Ama Mensah - Lead Dev] Caption/location edits invalidate feed + profile grid
   Cache.invalidatePattern('feed:');
-  Cache.invalidate(`userposts:${userId}`);
+  Cache.invalidatePattern(`userposts:${userId}`);
   return data;
 }
 
@@ -265,7 +297,7 @@ export async function deletePost(postId: string, userId: string) {
   if (error) throw error;
   // [Ama Mensah - Lead Dev] Deleted post must not appear in stale feed or profile grid
   Cache.invalidatePattern('feed:');
-  Cache.invalidate(`userposts:${userId}`);
+  Cache.invalidatePattern(`userposts:${userId}`);
 }
 
 export async function likePost(postId: string, userId: string) {
@@ -274,26 +306,41 @@ export async function likePost(postId: string, userId: string) {
   const { error } = await supabase.from('post_likes').upsert({ post_id: postId, user_id: userId }, { onConflict: 'post_id,user_id' });
   if (error) throw error;
   SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: true });
-  
-  // Notify author
-  try {
-    const { data: post } = await supabase.from('posts').select('user_id, caption, media_urls').eq('id', postId).single();
-    if (post && post.user_id !== userId) {
-      const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
-      const hasMedia = !!(post.media_urls?.[0]);
-      const text = hasMedia ? '❤️ liked your photo' : '❤️ liked your post';
-      await createNotification({
-        user_id: post.user_id,
-        actor_id: userId,
-        type: 'like',
-        post_id: postId,
-        text
-      });
-      sendPushToUser(post.user_id, 'New like', text, {
-        type: 'like', postId, userId, channelId: 'social',
-      }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined, 'post_like').catch(() => {});
-    }
-  } catch (e) {}
+  emitPostLikeCount(postId, true);
+
+  // Notify author (never block the like on notification work)
+  (async () => {
+    try {
+      const { data: post } = await supabase.from('posts').select('user_id, caption, media_urls').eq('id', postId).single();
+      if (post && post.user_id !== userId) {
+        const { data: actor } = await supabase.from('profiles').select('username, avatar_url').eq('id', userId).single();
+        const hasMedia = !!(post.media_urls?.[0]);
+        const text = hasMedia ? '❤️ liked your photo' : '❤️ liked your post';
+        await createNotification({
+          user_id: post.user_id,
+          actor_id: userId,
+          type: 'like',
+          post_id: postId,
+          text
+        });
+        sendPushToUser(post.user_id, 'New like', text, {
+          type: 'like', postId, userId, channelId: 'social',
+        }, post.media_urls?.[0] ?? undefined, actor?.avatar_url ?? undefined, 'post_like').catch(() => {});
+      }
+    } catch (e) {}
+  })();
+}
+
+/** Re-emits POST_LIKE_CHANGE with the authoritative likes_count so every screen shows the same number. */
+function emitPostLikeCount(postId: string, isActive: boolean) {
+  (async () => {
+    try {
+      const { data } = await supabase.from('posts').select('likes_count').eq('id', postId).maybeSingle();
+      if (data && typeof data.likes_count === 'number') {
+        SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive, newCount: data.likes_count });
+      }
+    } catch {}
+  })();
 }
 
 export async function unlikePost(postId: string, userId: string) {
@@ -306,6 +353,7 @@ export async function unlikePost(postId: string, userId: string) {
     .eq('user_id', userId);
   if (error) throw error;
   SocialSync.emit('POST_LIKE_CHANGE', { targetId: postId, isActive: false });
+  emitPostLikeCount(postId, false);
 }
 
 export async function savePost(postId: string, userId: string) {
@@ -396,7 +444,7 @@ export async function quotePost(postId: string, userId: string, caption: string)
       caption: safeCaption,
       media_urls: [],
     })
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_WITH_PROFILE)
     .single();
   if (error) throw error;
 
@@ -431,7 +479,7 @@ export async function enrichWithOriginalPosts(posts: any[]): Promise<any[]> {
 
   const { data: originals } = await supabase
     .from('posts')
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_WITH_PROFILE)
     .in('id', Array.from(ids));
 
   const map = new Map((originals ?? []).map((p: any) => [p.id, p]));
@@ -446,7 +494,7 @@ export async function enrichWithOriginalPosts(posts: any[]): Promise<any[]> {
 export async function getPostLikers(postId: string): Promise<any[]> {
   const { data, error } = await supabase
     .from('post_likes')
-    .select('profiles!post_likes_user_id_fkey(*)')
+    .select(`profiles!post_likes_user_id_fkey(${PROFILE_MINI_COLUMNS})`)
     .eq('post_id', postId)
     .order('created_at', { ascending: false })
     .limit(200);
@@ -459,14 +507,15 @@ export async function getSavedPostIds(userId: string): Promise<string[]> {
   return data?.map((r: any) => r.post_id) ?? [];
 }
 
-export async function getSavedPosts(userId: string) {
+export async function getSavedPosts(userId: string, limit = 60, offset = 0) {
   const { data, error } = await supabase
     .from('post_saves')
-    .select('post_id, posts(*, profiles!posts_user_id_fkey(*))')
+    .select(`post_id, posts(${POST_WITH_PROFILE})`)
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
   if (error) throw error;
-  return data?.map((r: any) => r.posts) ?? [];
+  return data?.map((r: any) => r.posts).filter(Boolean) ?? [];
 }
 
 // Comments
@@ -484,7 +533,7 @@ export async function getPostComments(
   // 1. Page of root-level comments + total count in one query
   const { data: roots, count, error } = await supabase
     .from('post_comments')
-    .select(`*, profiles!post_comments_user_id_fkey(*)`, { count: 'exact' })
+    .select(`*, ${COMMENT_PROFILE_EMBED('post_comments_user_id_fkey')}`, { count: 'exact' })
     .eq('post_id', postId)
     .is('parent_id', null)
     .order('created_at', { ascending: true })
@@ -502,7 +551,7 @@ export async function getPostComments(
   const [repliesResult, rootLikedResult] = await Promise.all([
     supabase
       .from('post_comments')
-      .select(`*, profiles!post_comments_user_id_fkey(*)`)
+      .select(`*, ${COMMENT_PROFILE_EMBED('post_comments_user_id_fkey')}`)
       .eq('post_id', postId)
       .in('parent_id', rootIds)
       .order('created_at', { ascending: true }),
@@ -551,7 +600,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
   const { data, error } = await supabase
     .from('post_comments')
     .insert({ post_id: postId, user_id: userId, text: safeText, parent_id: parentId })
-    .select(`*, profiles!post_comments_user_id_fkey(*)`)
+    .select(`*, ${COMMENT_PROFILE_EMBED('post_comments_user_id_fkey')}`)
     .single();
   
   if (error) {
@@ -564,7 +613,7 @@ export async function addPostComment(postId: string, userId: string, text: strin
       const { data: d2, error: e2 } = await supabase
         .from('post_comments')
         .insert({ post_id: postId, user_id: userId, text: safeText })
-        .select(`*, profiles!post_comments_user_id_fkey(*)`)
+        .select(`*, ${COMMENT_PROFILE_EMBED('post_comments_user_id_fkey')}`)
         .single();
       if (e2) throw e2;
       res = d2;
@@ -652,7 +701,7 @@ export async function searchPosts(query: string, limit = 20) {
   const safe = query.replace(/[%_\\]/g, '\\$&').slice(0, 100);
   const { data, error } = await supabase
     .from('posts')
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_WITH_PROFILE)
     .ilike('caption', `%${safe}%`)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -665,7 +714,7 @@ export async function getPostsByHashtag(hashtag: string, limit = 30) {
   const safe = tag.replace(/[%_\\]/g, '\\$&').slice(0, 50);
   const { data, error } = await supabase
     .from('posts')
-    .select(`*, profiles!posts_user_id_fkey(*)`)
+    .select(POST_WITH_PROFILE)
     .ilike('caption', `%${safe}%`)
     .not('media_url', 'is', null)
     .order('created_at', { ascending: false })
@@ -676,7 +725,7 @@ export async function getPostsByHashtag(hashtag: string, limit = 30) {
 
 export async function reportContent(
   reporterId: string,
-  targetType: 'post' | 'user' | 'reel' | 'market_item',
+  targetType: 'post' | 'user' | 'member' | 'reel' | 'market_item',
   targetId: string,
   reason: string,
 ) {
@@ -687,7 +736,8 @@ export async function reportContent(
   const safeReason = requireText(cleanUserText(reason, 'reportReason'), 'Report reason');
   const { error } = await supabase.from('reports').insert({
     reporter_id: reporterId,
-    target_type: targetType,
+    // The reports table / admin UI use 'member' for people ('user' was a historic mismatch)
+    target_type: targetType === 'user' ? 'member' : targetType,
     target_id: targetId,
     reason: safeReason,
   });

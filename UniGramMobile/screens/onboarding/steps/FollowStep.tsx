@@ -6,7 +6,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getSuggestedUsers } from '../../../services/onboarding';
-import { followUser } from '../../../services/profiles';
+import { followUser, unfollowUser } from '../../../services/profiles';
+import { friendlyError } from '../../../lib/friendlyError';
 import { VerifiedBadge } from '../../../components/VerifiedBadge';
 import { CachedImage } from '../../../components/CachedImage';
 import { useHaptics } from '../../../hooks/useHaptics';
@@ -21,15 +22,30 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [followed, setFollowed] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const { selection, success } = useHaptics();
 
-  useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+  const loadSuggestions = () => {
+    setLoading(true); setLoadError(false);
     getSuggestedUsers(userId, 15)
       .then(setSuggestions)
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
+  };
+
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3500);
+  };
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+    loadSuggestions();
+    return () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); };
   }, [userId]);
 
   const toggleFollow = async (targetId: string) => {
@@ -40,8 +56,17 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
       if (alreadyFollowing) next.delete(targetId); else next.add(targetId);
       return next;
     });
-    if (!alreadyFollowing) {
-      followUser(userId, targetId).catch(() => {});
+    try {
+      if (alreadyFollowing) await unfollowUser(userId, targetId);
+      else await followUser(userId, targetId);
+    } catch (e) {
+      // Revert the optimistic change so the button never claims a follow that did not happen.
+      setFollowed(prev => {
+        const next = new Set(prev);
+        if (alreadyFollowing) next.add(targetId); else next.delete(targetId);
+        return next;
+      });
+      showNotice(friendlyError(e, "Couldn't update that follow. Please try again."));
     }
   };
 
@@ -109,10 +134,24 @@ export function FollowStep({ userId, onNext, onBack }: Props) {
         Based on your interests, here are some people you might enjoy. You can always find more in Explore.
       </Text>
 
+      {!!notice && (
+        <View style={{ marginHorizontal: 28, marginBottom: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.15)' }} accessibilityLiveRegion="polite">
+          <Text style={{ color: '#fca5a5', fontSize: 13 }}>{notice}</Text>
+        </View>
+      )}
+
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator color="#8b5cf6" size="large" />
           <Text style={styles.loadingText}>Finding people for you...</Text>
+        </View>
+      ) : loadError ? (
+        <View style={styles.loadingWrap}>
+          <Ionicons name="cloud-offline-outline" size={52} color="#555" />
+          <Text style={styles.loadingText}>Couldn't load suggestions. Check your connection and try again.</Text>
+          <TouchableOpacity onPress={loadSuggestions} accessibilityRole="button" accessibilityLabel="Try again" style={{ marginTop: 12, minHeight: 44, paddingHorizontal: 24, borderRadius: 22, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+          </TouchableOpacity>
         </View>
       ) : suggestions.length === 0 ? (
         <View style={styles.loadingWrap}>

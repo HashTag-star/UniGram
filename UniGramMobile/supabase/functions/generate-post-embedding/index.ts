@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { UUID_RE, withinQuota } from '../_shared/guard.ts'
 
 // Edge Function natively supports Supabase.ai sessions
 // @ts-ignore - Supabase.ai is injected globally in the Edge Runtime
@@ -6,75 +7,66 @@ const model = new Supabase.ai.Session('gte-small')
 
 const CORS = {
   'Access-Control-Allow-Origin': 'unigram://',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-webhook-secret',
 }
+
+const j = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
-  // Verify webhook secret or JWT auth
-  const authHeader = req.headers.get('Authorization')
-  const webhookSecret = Deno.env.get('EDGE_FUNCTION_SECRET')
+  const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
 
-  if (webhookSecret) {
-    // Webhook mode: verify shared secret
-    const providedSecret = req.headers.get('x-webhook-secret')
-    if (providedSecret !== webhookSecret) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
-    }
-  } else if (authHeader?.startsWith('Bearer ')) {
-    // JWT mode: verify user token
-    const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
-    const token = authHeader.slice(7)
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
-    if (authErr || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
-    }
-  } else {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
+  // Auth is fail-closed: either a valid webhook secret (DB webhook) or a user JWT that owns the post.
+  const webhookSecret = Deno.env.get('EDGE_FUNCTION_SECRET')
+  const providedSecret = req.headers.get('x-webhook-secret')
+  const isWebhook = !!webhookSecret && !!providedSecret && providedSecret === webhookSecret
+
+  let callerId: string | null = null
+  if (!isWebhook) {
+    const authHeader = req.headers.get('Authorization') ?? ''
+    if (!authHeader.startsWith('Bearer ')) return j({ error: 'Unauthorized' }, 401)
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(authHeader.slice(7))
+    if (authErr || !user) return j({ error: 'Unauthorized' }, 401)
+    callerId = user.id
   }
 
   try {
     const payload = await req.json()
+    const id = payload?.record?.id
 
-    // payload.record for row inserts/updates
-    const { caption, hashtags, id } = payload.record
+    if (!id || typeof id !== 'string' || !UUID_RE.test(id)) return j({ error: 'Invalid post ID' }, 400)
 
-    if (!id || typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
-      return new Response(JSON.stringify({ error: 'Invalid post ID' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    // Load the post server-side; never embed client-supplied text.
+    const { data: post, error: postErr } = await supabase
+      .from('posts').select('id, user_id, caption, hashtags').eq('id', id).single()
+    if (postErr || !post) return j({ error: 'Post not found' }, 404)
+    if (!isWebhook && post.user_id !== callerId) return j({ error: 'Forbidden' }, 403)
+
+    if (!isWebhook && !(await withinQuota(supabase, callerId!, 'generate-post-embedding', 100))) {
+      return j({ error: 'Too many requests' }, 429)
     }
 
-    // Combine caption and hashtags for a better embedding representation
-    const contentToEmbed = `${caption || ''} ${(hashtags || []).join(' ')}`.trim()
+    const tags = Array.isArray(post.hashtags) ? post.hashtags.slice(0, 30).join(' ') : ''
+    const contentToEmbed = `${post.caption || ''} ${tags}`.trim().slice(0, 2000)
 
-    if (!contentToEmbed) {
-      return new Response('No text content to embed', { status: 200 })
-    }
+    if (!contentToEmbed) return j({ ok: true, message: 'No text content to embed' })
 
-    // Generate embedding using local Edge equivalent of Transformers.js
-    const embedding = await model.run(contentToEmbed, {
-      mean_pool: true,
-      normalize: true,
-    })
+    const embedding = await model.run(contentToEmbed, { mean_pool: true, normalize: true })
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    const { error } = await supabaseClient
+    const { error } = await supabase
       .from('posts')
       .update({ embedding: JSON.parse(JSON.stringify(embedding)) }) // ensure array format
       .eq('id', id)
 
     if (error) {
       console.error('Failed to update post with embedding:', error.message)
-      return new Response(`Error: ${error.message}`, { status: 500 })
+      return j({ error: 'Failed to store embedding' }, 500)
     }
-
-    return new Response('Embedding generated successfully', { status: 200 })
+    return j({ ok: true })
   } catch (err: any) {
     console.error('Generation error:', err)
-    return new Response(`Error: ${err.message}`, { status: 500 })
+    return j({ error: 'Embedding failed' }, 500)
   }
 })

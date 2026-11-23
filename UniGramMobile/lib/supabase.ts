@@ -80,6 +80,8 @@ const SecureStoreAdapter = {
 // trigger in the wild is a paused Supabase project (free tier cold-boot can
 // take 60s+); without context the bare AbortError told the operator nothing.
 const FETCH_TIMEOUT_MS = 20_000;
+// Storage uploads/downloads move megabytes — give them a much longer budget.
+const STORAGE_TIMEOUT_MS = 120_000;
 let _wasOffline = false;
 let _offlineTimer: any = null;
 let _onlineTimer: any = null;
@@ -110,7 +112,7 @@ const PROBE_URLS = [
 ];
 let _probing = false;
 
-async function probeOnline(): Promise<boolean> {
+export async function probeOnline(): Promise<boolean> {
   for (const url of PROBE_URLS) {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 6000);
@@ -148,7 +150,8 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
   if (options.signal) return fetch(url, options);
   const controller = new AbortController();
   const targetUrl = typeof url === 'string' ? url : (url?.url ?? String(url));
-  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeoutMs = targetUrl.includes('/storage/v1/') ? STORAGE_TIMEOUT_MS : FETCH_TIMEOUT_MS;
+  const id = setTimeout(() => controller.abort(), timeoutMs);
 
   // Acquire global rate limiter token before issuing network request
   const allowedP = GlobalRateLimiter.acquire(10000);
@@ -156,7 +159,7 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
     if (!allowed) {
       // Rate limiter timed out — fail fast with a descriptive error
       clearTimeout(id);
-      throw new SupabaseTimeoutError(targetUrl, FETCH_TIMEOUT_MS);
+      throw new SupabaseTimeoutError(targetUrl, timeoutMs);
     }
     return fetch(url, { ...options, signal: controller.signal })
     .then((res) => {
@@ -173,7 +176,7 @@ const fetchWithTimeout = (url: any, options: RequestInit = {}): Promise<Response
     })
     .catch((err: any) => {
       if (err?.name === 'AbortError') {
-        throw new SupabaseTimeoutError(targetUrl, FETCH_TIMEOUT_MS);
+        throw new SupabaseTimeoutError(targetUrl, timeoutMs);
       }
       // fetch() rejects with a TypeError when the request never reached a server.
       if (err instanceof TypeError) reportNetworkFailure();

@@ -1,48 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
-
-async function applyPro(supabase: any, payment: any) {
-  if (payment.product_type !== 'pro_sub') return;
-  const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  const { error } = await supabase
-    .from('profiles')
-    .update({ is_pro: true, pro_expires_at: expiresAt })
-    .eq('id', payment.user_id);
-  if (error) throw new Error(`applyPro failed: ${error.message}`);
-}
-
-async function applyBoost(supabase: any, payment: any) {
-  if (payment.product_type !== 'market_boost' || !payment.product_id) return;
-  const boostType: string = payment.metadata?.boost_type;
-  if (!boostType) return;
-
-  let boost_expires_at: string | null = null;
-  if (boostType === 'spotlight') boost_expires_at = new Date(Date.now() + 3 * 86_400_000).toISOString();
-  if (boostType === 'featured')  boost_expires_at = new Date(Date.now() + 7 * 86_400_000).toISOString();
-
-  await supabase
-    .from('market_items')
-    .update({ boost_type: boostType, boost_expires_at })
-    .eq('id', payment.product_id);
-}
-
-// [Kofi Asante - Backend] Webhook was missing ad_payment handling — if Paystack
-// fires the webhook before the user comes back to call verify, the ad stays
-// stuck in 'pending' indefinitely. Mirror the activation logic from
-// paystack-verify here so either entrypoint flips the campaign live.
-async function applyAdPayment(supabase: any, payment: any) {
-  if (payment.product_type !== 'ad_payment' || !payment.product_id) return;
-  const durationDays: number = payment.metadata?.duration_days ?? 7;
-  // Money goes ON the campaign (idempotent per payment reference). The DB flips the
-  // campaign live only once it is fully funded (migration 062).
-  const { error } = await supabase.rpc('fund_campus_ad', {
-    p_campaign_id: payment.product_id,
-    p_reference: payment.reference,
-    p_pesewas: payment.amount,
-    p_days: durationDays,
-  });
-  if (error) throw new Error(`fund_campus_ad failed: ${error.message}`);
-}
+import { settleSuccessfulPayment } from "../_shared/payments.ts";
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
@@ -52,7 +10,8 @@ Deno.serve(async (req) => {
   try {
     const body = await req.text();
     const signature = req.headers.get('x-paystack-signature') ?? '';
-    const secretKey = Deno.env.get('PAYSTACK_SECRET_KEY')!;
+    const secretKey = Deno.env.get('PAYSTACK_SECRET_KEY');
+    if (!secretKey) return new Response('Server misconfigured', { status: 500 });
 
     // Verify HMAC-SHA512 signature from Paystack
     const encoder = new TextEncoder();
@@ -63,20 +22,20 @@ Deno.serve(async (req) => {
       false,
       ['sign'],
     );
-    const sigBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
-    const expectedSig = Array.from(new Uint8Array(sigBytes))
+    const macBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
+    const expectedSig = Array.from(new Uint8Array(macBytes))
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
     // Constant-time comparison to prevent timing attacks
-    const sigBytes = new TextEncoder().encode(expectedSig);
-    const providedBytes = new TextEncoder().encode(signature);
-    if (sigBytes.length !== providedBytes.length) {
+    const expectedBytes = encoder.encode(expectedSig);
+    const providedBytes = encoder.encode(signature);
+    if (expectedBytes.length !== providedBytes.length) {
       return new Response('Invalid signature', { status: 401 });
     }
     let mismatch = 0;
-    for (let i = 0; i < sigBytes.length; i++) {
-      mismatch |= sigBytes[i] ^ providedBytes[i];
+    for (let i = 0; i < expectedBytes.length; i++) {
+      mismatch |= expectedBytes[i] ^ providedBytes[i];
     }
     if (mismatch !== 0) {
       return new Response('Invalid signature', { status: 401 });
@@ -105,14 +64,15 @@ Deno.serve(async (req) => {
       return new Response('ok', { status: 200 }); // idempotent
     }
 
-    await supabase
-      .from('payments')
-      .update({ status: 'success', verified_at: new Date().toISOString() })
-      .eq('reference', reference);
-
-    await applyBoost(supabase, payment);
-    await applyPro(supabase, payment);
-    await applyAdPayment(supabase, payment);
+    // Amount + currency are checked against OUR payment row inside settleSuccessfulPayment.
+    // A failure (including a mismatch) returns 500 so Paystack retries / we notice, and the
+    // payment stays 'pending'.
+    await settleSuccessfulPayment(
+      supabase,
+      payment,
+      Number(event.data?.amount ?? 0),
+      String(event.data?.currency ?? ''),
+    );
 
     return new Response('ok', { status: 200 });
   } catch (e) {

@@ -35,6 +35,7 @@ import { fx } from '../lib/feedback';
 import { brand, radius, status } from '../constants/design';
 
 import { friendlyError } from '../lib/friendlyError';
+import { ReportSheet } from '../components/ReportSheet';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '👍', '🔥'];
 const GROUP_MS = 5 * 60 * 1000;
@@ -481,11 +482,14 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
     } catch (e: any) { showToast(friendlyError(e, 'Could not start the call.'), 'error'); }
   };
 
+  const [showReportUser, setShowReportUser] = useState(false);
+
   const openProfileMenu = () => {
     if (isGroup || !profile) return;
     showPopup({
       title: profile.username, message: 'Manage this chat', icon: 'person-circle-outline',
       buttons: [
+        { text: 'Report user', style: 'destructive', onPress: () => setShowReportUser(true) },
         { text: 'Block user', style: 'destructive', onPress: () => { blockUser(profile.id).then(() => { showToast('User blocked.', 'success'); onBack(); }).catch(() => showToast('Could not block user.', 'error')); } },
         { text: 'Close', style: 'cancel', onPress: () => {} },
       ],
@@ -511,6 +515,7 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
 
   return (
     <KeyboardAvoidingView style={[ms.container, { backgroundColor: colors.bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ReportSheet visible={showReportUser} onClose={() => setShowReportUser(false)} targetType="user" targetId={profile?.id} label="user" showToast={showToast} />
       {/* Header */}
       <View style={[ms.chatHeader, { paddingTop: insets.top + 6, borderBottomColor: colors.border, backgroundColor: colors.bg }]}>
         <TouchableOpacity onPress={onBack} style={ms.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back">

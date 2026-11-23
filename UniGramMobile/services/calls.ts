@@ -36,6 +36,22 @@ export async function initiateCall(
   return data as CallRecord;
 }
 
+/** Caller publishes its real SDP offer once the peer connection has created it. */
+export async function updateCallOffer(callId: string, offer: RTCSessionDescriptionInit): Promise<void> {
+  const { error } = await supabase.from('calls').update({ offer }).eq('id', callId);
+  if (error) throw error;
+}
+
+/** Latest copy of a call row (the offer may have been filled in after the INSERT). */
+export async function getCall(callId: string): Promise<CallRecord | null> {
+  const { data } = await supabase
+    .from('calls')
+    .select('*, caller_profile:profiles!calls_caller_id_fkey(id, username, full_name, avatar_url)')
+    .eq('id', callId)
+    .maybeSingle();
+  return (data as CallRecord) ?? null;
+}
+
 export async function answerCall(callId: string, answer: RTCSessionDescriptionInit): Promise<void> {
   const { error } = await supabase
     .from('calls')
@@ -71,12 +87,35 @@ export async function sendIceCandidate(
     .then(({ error }) => { if (error) console.warn('ICE insert error:', error.message); });
 }
 
+/** A ringing call older than this is considered missed / stale. */
+export const RING_WINDOW_MS = 60_000;
+
+/** True when the call is still ringing and was created within the ring window. */
+export function isFreshRingingCall(call: Pick<CallRecord, 'status' | 'created_at'> | null | undefined): boolean {
+  if (!call || call.status !== 'ringing') return false;
+  const age = Date.now() - new Date(call.created_at).getTime();
+  return age >= -5_000 && age < RING_WINDOW_MS;
+}
+
+/** ICE candidates the other side already sent (needed when subscribing late). */
+export async function getExistingIceCandidates(callId: string, myUserId: string): Promise<RTCIceCandidateInit[]> {
+  const { data } = await supabase
+    .from('call_ice_candidates')
+    .select('candidate, sender_id')
+    .eq('call_id', callId)
+    .neq('sender_id', myUserId)
+    .order('created_at', { ascending: true });
+  return (data ?? []).map((r: any) => r.candidate as RTCIceCandidateInit);
+}
+
 export async function getActiveCallForUser(userId: string): Promise<CallRecord | null> {
   const { data } = await supabase
     .from('calls')
     .select('*, caller_profile:profiles!calls_caller_id_fkey(id, username, full_name, avatar_url)')
     .eq('callee_id', userId)
     .eq('status', 'ringing')
+    // A call nobody answered stays 'ringing' forever; only recent ones are real.
+    .gte('created_at', new Date(Date.now() - RING_WINDOW_MS).toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -127,7 +166,7 @@ export function subscribeToIncomingCalls(
           .select('*, caller_profile:profiles!calls_caller_id_fkey(id, username, full_name, avatar_url)')
           .eq('id', payload.new.id)
           .single();
-        if (data) onIncoming(data as CallRecord);
+        if (data && isFreshRingingCall(data as CallRecord)) onIncoming(data as CallRecord);
       },
     )
     .subscribe();

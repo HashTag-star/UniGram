@@ -1,8 +1,9 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { Cache } from '../lib/cache';
-import { resetAdDeliveryState } from './adDelivery';
+import { resetSessionState } from '../lib/sessionCleanup';
+import { unregisterPushTokens } from './pushNotifications';
 
 // Dynamic require to prevent crashes in Expo Go (Non-native environments)
 // [Ama Mensah - Lead Dev] webClientId now sourced from env; fall back to the
@@ -115,7 +116,17 @@ async function signInWithGoogleBrowser(): Promise<'success' | 'cancelled'> {
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
 
   if (result.type === 'success' && result.url) {
-    const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
+    // exchangeCodeForSession expects the auth code, not the whole redirect URL.
+    const params = parseAuthUrl(result.url);
+    if (!params.code && params.access_token && params.refresh_token) {
+      const { error: setErr } = await supabase.auth.setSession({
+        access_token: params.access_token, refresh_token: params.refresh_token,
+      });
+      if (setErr) throw setErr;
+      return 'success';
+    }
+    if (!params.code) throw new Error('Browser sign-in did not return a code.');
+    const { error: sessionError } = await supabase.auth.exchangeCodeForSession(params.code);
     if (sessionError) throw sessionError;
     return 'success';
   }
@@ -123,18 +134,62 @@ async function signInWithGoogleBrowser(): Promise<'success' | 'cancelled'> {
   return 'cancelled';
 }
 
+const RECOVERY_PENDING_KEY = 'ug_recovery_pending';
+const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export async function sendPasswordReset(email: string) {
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
     redirectTo: 'unigram://auth-callback',
   });
   if (error) throw error;
+  // PKCE recovery links carry only `?code=` (no type=recovery), so remember we asked for one.
+  try { await AsyncStorage.setItem(RECOVERY_PENDING_KEY, String(Date.now())); } catch {}
+}
+
+/** True if this device recently requested a password-reset email. */
+export async function isRecoveryPending(): Promise<boolean> {
+  try {
+    const raw = await AsyncStorage.getItem(RECOVERY_PENDING_KEY);
+    return !!raw && Date.now() - Number(raw) < RECOVERY_WINDOW_MS;
+  } catch { return false; }
+}
+
+export async function clearRecoveryPending() {
+  try { await AsyncStorage.removeItem(RECOVERY_PENDING_KEY); } catch {}
+}
+
+/** Parses query + fragment params from an auth deep link (fragment wins on conflicts). */
+export function parseAuthUrl(url: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const read = (s: string) => {
+    s.split('&').forEach(pair => {
+      if (!pair) return;
+      const i = pair.indexOf('=');
+      const k = decodeURIComponent(i === -1 ? pair : pair.slice(0, i));
+      const v = i === -1 ? '' : decodeURIComponent(pair.slice(i + 1).replace(/\+/g, ' '));
+      out[k] = v;
+    });
+  };
+  try {
+    const hashIdx = url.indexOf('#');
+    const beforeHash = hashIdx === -1 ? url : url.slice(0, hashIdx);
+    const qIdx = beforeHash.indexOf('?');
+    if (qIdx !== -1) read(beforeHash.slice(qIdx + 1));
+    if (hashIdx !== -1) read(url.slice(hashIdx + 1));
+  } catch {}
+  return out;
 }
 
 export async function signOut() {
-  // Never let the next account on this device see this account's cached data.
-  try { await Cache.clearAll(); } catch {}
-  try { resetAdDeliveryState(); } catch {}
+  // Stop this device receiving the signed-out user's pushes (needs the live session).
+  try {
+    const { data } = await supabase.auth.getSession();
+    const uid = data.session?.user?.id;
+    if (uid) await unregisterPushTokens(uid);
+  } catch {}
   const { error } = await supabase.auth.signOut();
+  // Never let the next account on this device see this account's cached data.
+  await resetSessionState();
   if (error) throw error;
 }
 

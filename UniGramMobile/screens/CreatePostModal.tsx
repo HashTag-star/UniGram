@@ -29,6 +29,8 @@ import { getTrendingHashtags } from '../services/algorithm';
 import { MediaEditScreen } from './MediaEditScreen';
 
 import { SafeBlur } from '../components/SafeBlur';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fx } from '../lib/feedback';
 
 import { friendlyError } from '../lib/friendlyError';
 const { width } = Dimensions.get('window');
@@ -215,7 +217,64 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
     setShowCaptionPanel(false);
   };
 
-  const handleClose = () => { reset(); onClose(); };
+  // ── Draft persistence ────────────────────────────────────────────────────────
+  const draftKey = `ug_post_draft:${userId}`;
+  const hasContent = !!(caption.trim() || mediaAssets.length > 0 || location.trim() || song.trim());
+  const draftChecked = useRef(false);
+
+  const saveDraft = async () => {
+    try {
+      await AsyncStorage.setItem(draftKey, JSON.stringify({
+        caption, postType, hashtags, location, song,
+        media: mediaAssets.map(a => ({ uri: a.uri, type: a.type === 'video' ? 'video' : 'image' })),
+      }));
+    } catch {}
+  };
+  const clearDraft = async () => { try { await AsyncStorage.removeItem(draftKey); } catch {} };
+
+  // Autosave (debounced) while composing so a crash or swipe-away never loses work.
+  useEffect(() => {
+    if (!visible || !userId || step === 'type' || !hasContent) return;
+    const t = setTimeout(() => { saveDraft(); }, 800);
+    return () => clearTimeout(t);
+  }, [visible, userId, step, caption, hashtags, location, song, mediaAssets, postType]);
+
+  // Offer to restore a saved draft when the modal opens fresh.
+  useEffect(() => {
+    if (!visible) { draftChecked.current = false; return; }
+    if (!userId || draftChecked.current || (preCapturedMedia && preCapturedMedia.length > 0)) return;
+    draftChecked.current = true;
+    AsyncStorage.getItem(draftKey).then(raw => {
+      if (!raw) return;
+      let d: any;
+      try { d = JSON.parse(raw); } catch { return; }
+      if (!d || (!d.caption?.trim() && !(d.media?.length))) return;
+      Alert.alert('Continue your draft?', 'You have an unfinished post.', [
+        { text: 'Start new', style: 'destructive', onPress: () => { clearDraft(); } },
+        { text: 'Continue your draft', onPress: () => {
+          fx.select();
+          setPostType(d.postType ?? 'post');
+          setCaption(d.caption ?? '');
+          setHashtags(d.hashtags ?? '');
+          setLocation(d.location ?? '');
+          setSong(d.song ?? '');
+          setMediaAssets((d.media ?? []).map((m: any) => ({ uri: m.uri, type: m.type } as any)));
+          setStep('compose');
+        } },
+      ]);
+    }).catch(() => {});
+  }, [visible, userId]);
+
+  const handleClose = () => {
+    if (uploading) return;
+    if (!hasContent) { reset(); onClose(); return; }
+    fx.tap();
+    Alert.alert('Discard post?', 'You will lose your caption and media unless you save a draft.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Save draft', onPress: async () => { await saveDraft(); fx.success(); reset(); onClose(); } },
+      { text: 'Discard', style: 'destructive', onPress: async () => { await clearDraft(); reset(); onClose(); } },
+    ]);
+  };
 
   const suggestCaption = async () => {
     setLoadingCaptions(true);
@@ -330,6 +389,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
 
   const handlePost = async () => {
     if (uploading) return;
+    fx.press();
     if (postType === 'thread' && !caption.trim()) {
       showPopup({
         title: 'Empty post',
@@ -485,6 +545,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         if (uploadCancelled.current) return;
         
         emitStatus('success', { progress: 1 });
+        fx.success();
+        clearDraft();
         onPosted?.();
       } catch (e: any) {
         if (e.message === 'CANCELLED') {
@@ -532,7 +594,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
       <KeyboardAvoidingView
-        style={[styles.container, { paddingTop: insets.top || 16 }]}
+        style={[styles.container, { paddingTop: Platform.OS === 'android' ? insets.top : 0 }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {step === 'edit' && mediaAssets.length > 0 ? (
@@ -552,6 +614,9 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           <TouchableOpacity
             onPress={step === 'compose' && postType !== 'thread' ? () => { setStep('type'); setMediaAssets([]); } : handleClose}
             style={styles.headerSide}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={step === 'compose' && postType !== 'thread' ? 'Back' : 'Close'}
           >
             <Ionicons name={step === 'compose' && postType !== 'thread' ? 'arrow-back' : 'close'} size={24} color="#fff" />
           </TouchableOpacity>
@@ -567,6 +632,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
               style={styles.shareBtnWrap}
               onPress={handlePost}
               disabled={uploading}
+              accessibilityRole="button"
+              accessibilityLabel="Share"
             >
               <LinearGradient
                 colors={['#4f46e5', '#7e22ce']}
@@ -607,7 +674,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
         {!isBanned && !isSuspended && step === 'type' && (
           <ScrollView contentContainerStyle={styles.typeList} showsVerticalScrollIndicator={false}>
             {typeOptions.map(({ type, icon, label, sub, color }) => (
-              <TouchableOpacity key={type} style={styles.typeCard} onPress={() => pickMedia(type)} activeOpacity={0.75}>
+              <TouchableOpacity key={type} style={styles.typeCard} onPress={() => { fx.select(); pickMedia(type); }} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel={`Create ${label}`}>
                 <View style={[styles.typeIcon, { backgroundColor: color + '1a' }]}>
                   <Ionicons name={icon as any} size={26} color={color} />
                 </View>
@@ -647,7 +714,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                       <Text style={styles.countBadgeText}>{selectedMediaIdx + 1}/{mediaAssets.length}</Text>
                     </View>
                   )}
-                  <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(selectedMediaIdx)}>
+                  <TouchableOpacity style={styles.removeBtn} onPress={() => { fx.tap(); removeMedia(selectedMediaIdx); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel="Remove this media">
                     <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.9)" />
                   </TouchableOpacity>
                 </View>
@@ -660,7 +727,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                       </TouchableOpacity>
                     ))}
                     {mediaAssets.length < 10 && postType === 'post' && (
-                      <TouchableOpacity style={styles.addMoreBtn} onPress={addMoreMedia}>
+                      <TouchableOpacity style={styles.addMoreBtn} onPress={addMoreMedia} accessibilityRole="button" accessibilityLabel="Add more media">
                         <Ionicons name="add" size={22} color="rgba(255,255,255,0.5)" />
                       </TouchableOpacity>
                     )}
@@ -690,8 +757,10 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
               {postType !== 'story' && (
                 <TouchableOpacity
                   style={styles.aiSuggestBtn}
-                  onPress={suggestCaption}
+                  onPress={() => { fx.tap(); suggestCaption(); }}
                   disabled={loadingCaptions}
+                  accessibilityRole="button"
+                  accessibilityLabel="Suggest captions with AI"
                 >
                   {loadingCaptions
                     ? <ActivityIndicator size="small" color={colors.accentLight} />
@@ -706,7 +775,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
               <View style={styles.captionPanel}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <Text style={styles.captionPanelLabel}>✨ AI Suggested</Text>
-                  <TouchableOpacity onPress={() => setShowCaptionPanel(false)}>
+                  <TouchableOpacity onPress={() => setShowCaptionPanel(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Close suggestions">
                     <Ionicons name="close" size={16} color="rgba(255,255,255,0.4)" />
                   </TouchableOpacity>
                 </View>
@@ -773,7 +842,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
               {taggedUsers.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingTop: 6 }}>
                   {taggedUsers.map(u => (
-                    <TouchableOpacity key={u} style={styles.tagChip} onPress={() => removeTag(u)}>
+                    <TouchableOpacity key={u} style={styles.tagChip} onPress={() => removeTag(u)} accessibilityRole="button" accessibilityLabel={`Remove tag ${u}`}>
                       <Text style={styles.tagChipText}>@{u}</Text>
                       <Ionicons name="close" size={12} color="rgba(255,255,255,0.5)" />
                     </TouchableOpacity>
@@ -799,7 +868,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             <View style={styles.divider} />
 
             {/* Location */}
-            <TouchableOpacity style={styles.composeField} onPress={detectLocation} disabled={locationLoading}>
+            <TouchableOpacity style={styles.composeField} onPress={detectLocation} disabled={locationLoading} accessibilityRole="button" accessibilityLabel="Add location">
               <Ionicons name="location-outline" size={20} color={location ? '#10b981' : 'rgba(255,255,255,0.4)'} />
               {locationLoading
                 ? <ActivityIndicator size="small" color="#10b981" style={{ marginLeft: 8 }} />
@@ -807,7 +876,7 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
                   ? (
                     <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <Text style={[styles.composeInput, { color: '#10b981' }]} numberOfLines={1}>{location}</Text>
-                      <TouchableOpacity onPress={() => setLocation('')}>
+                      <TouchableOpacity onPress={() => setLocation('')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Remove location">
                         <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.3)" />
                       </TouchableOpacity>
                     </View>
@@ -822,13 +891,13 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
             <View style={styles.divider} />
 
             {/* Music */}
-            <TouchableOpacity style={styles.composeField} onPress={openMusicPicker}>
+            <TouchableOpacity style={styles.composeField} onPress={openMusicPicker} accessibilityRole="button" accessibilityLabel="Add music">
               <Ionicons name="musical-notes-outline" size={20} color={song ? '#f43f5e' : 'rgba(255,255,255,0.4)'} />
               {song
                 ? (
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Text style={[styles.composeInput, { color: '#f43f5e' }]} numberOfLines={1}>{song}</Text>
-                    <TouchableOpacity onPress={() => setSong('')}>
+                    <TouchableOpacity onPress={() => setSong('')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Remove music">
                       <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.3)" />
                     </TouchableOpacity>
                   </View>

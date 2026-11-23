@@ -163,7 +163,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
   if (!permission?.granted) return (
     <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
        <Text style={{ color: '#fff' }}>No Camera Permission</Text>
-       <TouchableOpacity onPress={requestPermission} style={{ marginTop: 20, padding: 10, backgroundColor: '#4f46e5', borderRadius: 8 }}>
+       <TouchableOpacity onPress={requestPermission} style={{ marginTop: 20, padding: 10, minHeight: 44, justifyContent: 'center', backgroundColor: '#4f46e5', borderRadius: 8 }} accessibilityRole="button" accessibilityLabel="Allow camera access">
          <Text style={{ color: '#fff' }}>Grant Access</Text>
        </TouchableOpacity>
     </View>
@@ -187,7 +187,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
       {/* Transparent overlay for controls */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         <View style={[styles.topControls, { top: insets.top + 10 }]}>
-          <TouchableOpacity onPress={onClose} style={styles.iconBtn}>
+          <TouchableOpacity onPress={onClose} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Close camera">
             <Ionicons name="close" size={28} color="#fff" />
           </TouchableOpacity>
           
@@ -201,6 +201,9 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
           <TouchableOpacity 
             onPress={() => setFlash(f => f === 'off' ? 'on' : f === 'on' ? 'auto' : 'off')} 
             style={styles.iconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Flash ${flash}`}
           >
             <Ionicons 
               name={flash === 'off' ? 'flash-off' : flash === 'on' ? 'flash' : 'flash-outline'} 
@@ -220,6 +223,9 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
                   setMode(m);
                 }}
                 style={styles.modeBtn}
+                accessibilityRole="button"
+                accessibilityLabel={`${m} mode`}
+                accessibilityState={{ selected: mode === m }}
               >
                 <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m}</Text>
                 {mode === m && <View style={styles.modeIndicator} />}
@@ -228,7 +234,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
           </View>
 
           <View style={styles.shutterRow}>
-            <TouchableOpacity onPress={pickGallery} style={styles.sideBtn}>
+            <TouchableOpacity onPress={pickGallery} style={styles.sideBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Choose from gallery">
                <Ionicons name="images-outline" size={28} color="#fff" />
             </TouchableOpacity>
 
@@ -349,7 +355,7 @@ export const QuickCaptureScreen: React.FC<QuickCaptureScreenProps> = ({ isVisibl
               </View>
             </View>
 
-            <TouchableOpacity onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')} style={styles.sideBtn}>
+            <TouchableOpacity onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')} style={styles.sideBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Flip camera">
               <Ionicons name="camera-reverse-outline" size={30} color="#fff" />
             </TouchableOpacity>
           </View>

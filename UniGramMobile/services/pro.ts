@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
+import { callEdgeFunction, verifyPaymentWithPolling } from '../lib/edgeFetch';
 import { withSimulatedPro, isSimulatedProActive, setSimulatedAutoRenew } from './simulatedPro';
 
 export const PRO_PRICE_GHS = 20;
@@ -36,30 +37,6 @@ export interface ProfileAnalytics {
 export interface AIInsightsResult {
   insights: string[];
   outlook: 'positive' | 'neutral' | 'needs_work';
-}
-
-async function callEdgeFunction(name: string, body: object) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated');
-  const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${name}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  let json: any;
-  try {
-    json = await res.json();
-  } catch {
-    throw new Error(`Function unreachable (HTTP ${res.status}) — is it deployed?`);
-  }
-  if (!res.ok || json.error) {
-    throw new Error(json.error ?? json.message ?? `HTTP ${res.status}`);
-  }
-  return json;
 }
 
 export function isProActive(
@@ -125,8 +102,9 @@ export async function openProCheckout(): Promise<boolean> {
   const { authorization_url, reference } = await initProPayment();
   await WebBrowser.openAuthSessionAsync(authorization_url, 'unigram://payment-callback');
   try {
-    const data = await verifyPayment(reference);
-    return data.status === 'success';
+    // The webhook can land a few seconds after the browser closes — poll instead of racing it.
+    const data = await verifyPaymentWithPolling<{ status: string }>(reference);
+    return data?.status === 'success';
   } catch {
     return false;
   }

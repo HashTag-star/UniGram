@@ -25,12 +25,20 @@ export const PopupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Track visibility via ref so showPopup doesn't need `visible` as a dep
   const visibleRef = useRef(false);
 
+  // Pending "show next" timer (the 300ms gap while the previous popup animates out).
+  const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const hidePopup = useCallback(() => {
+    // Already hidden (e.g. a button handler queued a follow-up popup and then the
+    // popup's own onClose fired): nothing more to do, and never double-schedule.
+    if (!visibleRef.current) return;
     visibleRef.current = false;
     setVisible(false);
-    if (queue.current.length > 0) {
-      const next = queue.current.shift()!;
-      setTimeout(() => {
+    if (queue.current.length > 0 && pendingRef.current === null) {
+      pendingRef.current = setTimeout(() => {
+        pendingRef.current = null;
+        const next = queue.current.shift();
+        if (!next) return;
         visibleRef.current = true;
         setConfig(next);
         setVisible(true);
@@ -39,9 +47,11 @@ export const PopupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const showPopup = useCallback((newConfig: PopupConfig) => {
-    if (visibleRef.current) {
+    // During the gap (hidden, but a queued popup is about to appear) a new popup
+    // must wait its turn, not be overwritten by — or overwrite — the queued one.
+    if (visibleRef.current || pendingRef.current !== null) {
       queue.current.push(newConfig);
-      hidePopup();
+      if (visibleRef.current) hidePopup();
       return;
     }
     visibleRef.current = true;

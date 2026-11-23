@@ -38,6 +38,10 @@ const COMMENT_BAR_HEIGHT = 50;
 import { fmtCount, timeAgo } from '../lib/formatUtils';
 
 import { friendlyError } from '../lib/friendlyError';
+import { EmptyState } from '../components/EmptyState';
+import { BlockSheet } from '../components/BlockSheet';
+let useDataSaverHook: () => { reduce: boolean } = () => ({ reduce: false });
+try { const ds = require('../lib/dataSaver'); if (ds?.useDataSaver) useDataSaverHook = ds.useDataSaver; } catch {}
 // ─── Video sub-component ──────────────────────────────────────────────────────
 
 const ReelVideo: React.FC<{
@@ -288,6 +292,7 @@ const ReelItem: React.FC<{
   onMuteToggle: () => void;
   itemHeight: number;
   onBack?: () => void;
+  onSearch?: () => void;
   /** Only the playing reel and its immediate neighbours hold a video decoder. */
   preload?: boolean;
   /** Mid-roll ad scheduled for THIS reel (null = none). */
@@ -297,7 +302,7 @@ const ReelItem: React.FC<{
   onMidRollEnd?: (ad: any) => void;
   onAdImpression?: (adId: string) => void;
   onAdHide?: (adId: string) => void;
-}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, preload = true, midRollAd = null, midRollDwellMs = 2000, onMidRollStart, onMidRollEnd, onAdImpression, onAdHide }) => {
+}> = React.memo(({ reel, currentUserId, isLiked: initLiked, isFollowingUser: initFollowing, isActive, muted, onMuteToggle, itemHeight, onBack, onSearch, preload = true, midRollAd = null, midRollDwellMs = 2000, onMidRollStart, onMidRollEnd, onAdImpression, onAdHide }) => {
   const { liked, setLiked, count: likes, setCount: setLikes } = useSocialLike(reel.id, 'REEL', reel._isPost ? (reel._initiallyLiked ?? initLiked) : initLiked, reel.likes_count ?? 0);
   const { colors } = useTheme();
   const [captionOpen, setCaptionOpen] = useState(false);
@@ -310,6 +315,11 @@ const ReelItem: React.FC<{
   const [showShare, setShowShare] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const { reduce: reduceData } = useDataSaverHook();
+  const [dataSaverStarted, setDataSaverStarted] = useState(false);
+  const [showBlock, setShowBlock] = useState(false);
+  useEffect(() => { if (!isActive) setDataSaverStarted(false); }, [isActive]);
+  const holdForDataSaver = reduceData && !dataSaverStarted;
 
   // ── Mid-roll: "Ad in 5s" notice → ad takes over → reel resumes ─────────────
   const [preCount, setPreCount] = useState<number | null>(null);
@@ -601,6 +611,7 @@ const ReelItem: React.FC<{
       buttons: [
         ...(!isMe ? [{ text: 'Not interested', onPress: handleNotInterested }] : []),
         { text: 'Report', onPress: handleReport },
+        ...(!isMe ? [{ text: 'Block', style: 'destructive', onPress: () => setShowBlock(true) } as const] : []),
         ...(isMe ? [{ text: 'Delete', style: 'destructive', onPress: handleDelete } as const] : []),
         { text: 'Cancel', style: 'cancel', onPress: () => {} }
       ]
@@ -764,7 +775,7 @@ const ReelItem: React.FC<{
           <ReelVideo
             videoUrl={reel.video_url}
             isActive={isActive}
-            isPaused={isPaused}
+            isPaused={isPaused || holdForDataSaver}
             muted={muted}
             playbackRate={isFastForwarding ? 2.0 : 1.0}
             onProgress={(p) => { if (!isSeekingRef.current) setProgress(p); }}
@@ -772,6 +783,19 @@ const ReelItem: React.FC<{
           />
         )}
       </Pressable>
+      {isActive && holdForDataSaver && (
+        <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', zIndex: 15 }]} pointerEvents="box-none">
+          <TouchableOpacity
+            onPress={() => { fx.tap(); setDataSaverStarted(true); }}
+            accessibilityRole="button"
+            accessibilityLabel="Data saver is on. Tap to play this reel"
+            style={{ alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 20, paddingHorizontal: 22, paddingVertical: 16 }}
+          >
+            <Ionicons name="play-circle" size={52} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Data saver - tap to play</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <LinearGradient
         colors={['rgba(0,0,0,0.45)', 'transparent']}
@@ -786,6 +810,8 @@ const ReelItem: React.FC<{
         pointerEvents="none"
       />
 
+      <BlockSheet visible={showBlock} onClose={() => setShowBlock(false)} userId={reel.profiles?.id ?? reel.user_id} username={reel.profiles?.username} mode="block" />
+
       {/* Top bar — back, search, options */}
       <View style={[styles.topBar, { top: insets.top + 4 }]}>
         <TouchableOpacity
@@ -799,9 +825,11 @@ const ReelItem: React.FC<{
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.topBarRight}>
-          <TouchableOpacity style={styles.topBarBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search" accessibilityRole="button">
-            <Ionicons name="search-outline" size={22} color="#fff" />
-          </TouchableOpacity>
+          {!!onSearch && (
+            <TouchableOpacity style={styles.topBarBtn} onPress={() => { fx.tap(); onSearch(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search" accessibilityRole="button">
+              <Ionicons name="search-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.topBarBtn} onPress={showOptions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Options" accessibilityRole="button">
             <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
           </TouchableOpacity>
@@ -883,6 +911,7 @@ const ReelItem: React.FC<{
             <TouchableOpacity
               onPress={toggleFollow}
               style={[styles.followBtn, following && styles.followingBtn]}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
               accessibilityLabel={following ? 'Unfollow' : 'Follow'}
               accessibilityRole="button"
             >
@@ -1102,11 +1131,14 @@ const ReelSkeleton: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
 export const ReelsScreen: React.FC<{
   onBack?: () => void;
+  /** Opens Explore search. When omitted the search button is hidden. */
+  onSearch?: () => void;
   isMuted: boolean;
   setIsMuted: React.Dispatch<React.SetStateAction<boolean>>;
   initialReelId?: string;
   initialReels?: any[];
-}> = ({ onBack, isMuted, setIsMuted, initialReelId, initialReels }) => {
+}> = ({ onBack, onSearch, isMuted, setIsMuted, initialReelId, initialReels }) => {
+  const { reduce: dataSaverReduce } = useDataSaverHook();
   // Pre-populate with the tapped reel at index 0 for instant display — full list
   // loads in the background and is merged in without disrupting playback.
   const [isAppActive, setIsAppActive] = useState(true);
@@ -1469,11 +1501,12 @@ export const ReelsScreen: React.FC<{
         isLiked={item._isPost ? likedPostIds.has(item.id) : likedIds.has(item.id)}
         isFollowingUser={followingIds.has(item.profiles?.id)}
         isActive={index === activeIndex && isAppActive}
-        preload={Math.abs(index - activeIndex) <= 1}
+        preload={Math.abs(index - activeIndex) <= 1 && !dataSaverReduce}
         muted={isMuted}
         onMuteToggle={handleToggleMute}
         itemHeight={containerHeight}
         onBack={onBack}
+        onSearch={onSearch}
         midRollAd={midRoll && midRoll.reelId === item.id ? midRoll.ad : null}
         midRollDwellMs={reelPolicy.dwellMs}
         onMidRollStart={handleMidRollStart}
@@ -1485,7 +1518,7 @@ export const ReelsScreen: React.FC<{
   }, [
     containerHeight, activeIndex, isAppActive, currentUserId,
     likedPostIds, likedIds, followingIds, isMuted,
-    handleLivePress, handleAdImpression, handleAdHide, handleToggleMute, onBack, reelPolicy.dwellMs,
+    handleLivePress, handleAdImpression, handleAdHide, handleToggleMute, onBack, onSearch, dataSaverReduce, reelPolicy.dwellMs,
     midRoll, handleMidRollStart, handleMidRollEnd
   ]);
 
@@ -1503,26 +1536,22 @@ export const ReelsScreen: React.FC<{
         <StatusBar hidden={false} />
         {onBack && (
           <TouchableOpacity
-            style={{ position: 'absolute', top: 52, left: 16, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 }}
+            style={{ position: 'absolute', top: 52, left: 16, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
             onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
         )}
-        <Ionicons name={loadError ? 'cloud-offline-outline' : 'film-outline'} size={64} color={colors.textMuted} />
-        <Text style={{ color: colors.text, marginTop: 16, fontSize: 17, fontWeight: '700' }}>{loadError ? 'Couldn\'t load reels' : 'No reels yet'}</Text>
-        <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 14, textAlign: 'center', paddingHorizontal: 40 }}>
-          {loadError ? 'Check your connection and try again.' : 'Post a reel using the + button!'}
-        </Text>
-        {loadError && (
-          <TouchableOpacity
-            onPress={() => { setLoadError(false); setLoading(true); load(); }}
-            style={{ backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 12, marginTop: 20 }}
-            activeOpacity={0.85}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Try again</Text>
-          </TouchableOpacity>
-        )}
+        <EmptyState
+          onDarkSurface
+          icon={loadError ? 'cloud-offline-outline' : 'film-outline'}
+          title={loadError ? "Couldn't load reels" : 'No reels yet'}
+          subtitle={loadError ? 'Check your connection and try again.' : 'Post a reel using the + button!'}
+          actionLabel={loadError ? 'Try again' : undefined}
+          onAction={loadError ? () => { setLoadError(false); setLoading(true); load(); } : undefined}
+        />
       </View>
     );
   }
@@ -1671,7 +1700,7 @@ const styles = StyleSheet.create({
   },
   adNotice: { position: 'absolute', top: 64, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#facc15', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 7, zIndex: 40 },
   adNoticeText: { color: '#111', fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  followBtn: { backgroundColor: 'transparent', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.85)' },
+  followBtn: { backgroundColor: 'transparent', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 5, minHeight: 32, justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.85)' },
   followingBtn: { borderColor: 'rgba(255,255,255,0.35)' },
   followBtnText: { color: '#fff', fontSize: 12.5, fontWeight: '700' },
   followingBtnText: { color: 'rgba(255,255,255,0.65)' },

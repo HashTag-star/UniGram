@@ -74,10 +74,19 @@ const STORAGE_KEY = 'unigram_theme';
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>('dark');
 
+  // Hold rendering until the saved theme is read, so light-mode users never see a
+  // dark flash. The native splash stays up meanwhile (preventAutoHideAsync in App.tsx).
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; setLoaded(true); } };
+    // Safety net: never block the app on a slow/failed storage read.
+    const safety = setTimeout(finish, 1500);
     AsyncStorage.getItem(STORAGE_KEY).then(val => {
       if (val === 'light' || val === 'dark') setTheme(val);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { clearTimeout(safety); finish(); });
+    return () => { clearTimeout(safety); };
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -94,6 +103,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     colors: theme === 'dark' ? DARK : LIGHT,
     toggleTheme,
   }), [theme, toggleTheme]);
+
+  if (!loaded) return null;
 
   return (
     <ThemeContext.Provider value={value}>

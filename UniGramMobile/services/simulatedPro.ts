@@ -68,25 +68,38 @@ export function isSimulatedProActive(): boolean {
 /** Load the stored entitlement for this user (call on sign-in / app start). */
 export async function hydrateSimulatedPro(userId: string | null): Promise<void> {
   if (userId === currentUserId && (entitlement || !userId)) return;
+  const prevEntitlement = entitlement;
+  const prevTrialUsed = trialUsed;
+  const prevUserId = currentUserId;
   currentUserId = userId;
   entitlement = null;
   trialUsed = false;
+  let nextEntitlement: SimulatedEntitlement | null = null;
+  let nextTrialUsed = false;
   if (userId) {
     try {
       const [raw, trial] = await Promise.all([
         AsyncStorage.getItem(KEY_PREFIX + userId),
         AsyncStorage.getItem(TRIAL_PREFIX + userId),
       ]);
-      trialUsed = trial === '1';
+      nextTrialUsed = trial === '1';
       if (raw) {
         const parsed = JSON.parse(raw) as SimulatedEntitlement;
-        entitlement = renewIfDue(parsed);
+        nextEntitlement = renewIfDue(parsed);
       }
     } catch {
       // Corrupt / unavailable storage → behave as "not subscribed".
     }
   }
-  emit();
+  // The user changed while we were reading storage: a newer hydrate owns the state.
+  if (currentUserId !== userId) return;
+  entitlement = nextEntitlement;
+  trialUsed = nextTrialUsed;
+  const changed =
+    prevUserId !== userId ||
+    JSON.stringify(prevEntitlement) !== JSON.stringify(entitlement) ||
+    prevTrialUsed !== trialUsed;
+  if (changed) emit();
 }
 
 /** Simulated auto-renew: roll the period forward while auto-renew is on. */

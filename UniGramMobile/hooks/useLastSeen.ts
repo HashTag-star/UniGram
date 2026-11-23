@@ -11,6 +11,9 @@ export function useLastSeen(userId: string | null) {
     if (!userId) return;
     await supabase
       .from('profiles')
+      // `last_seen` is the real column (migration 020_active_users.sql); there is no
+      // `last_seen_at` in any migration, so services/profiles.ts updateActiveStatus
+      // writes to a non-existent column (reported to lead).
       .update({ last_seen: new Date().toISOString() })
       .eq('id', userId);
   };

@@ -44,15 +44,21 @@ export function useSocialLike(
   const [liked, setLiked] = useState(initialLiked);
   const [count, setCount] = useState(initialCount);
   const isMounted = useRef(true);
+  const likedRef = useRef(initialLiked);
   const eventType: SocialEventType = type === 'POST' ? 'POST_LIKE_CHANGE' : 'REEL_LIKE_CHANGE';
 
   useEffect(() => {
     isMounted.current = true;
     const sub = SocialSync.on(eventType, (data: SocialEventData) => {
       if (data.targetId === targetId && isMounted.current && data.isActive !== undefined) {
+        const changed = likedRef.current !== data.isActive;
+        likedRef.current = data.isActive;
         setLiked(data.isActive);
         if (data.newCount !== undefined) {
           setCount(data.newCount);
+        } else if (changed) {
+          // Another screen toggled this like without an authoritative count — apply the delta
+          setCount(c => Math.max(0, c + (data.isActive ? 1 : -1)));
         }
       }
     });
@@ -66,6 +72,7 @@ export function useSocialLike(
   useEffect(() => {
     if (lastInitialRef.current !== initialLiked) {
       setLiked(initialLiked);
+      likedRef.current = initialLiked;
       lastInitialRef.current = initialLiked;
     }
   }, [initialLiked]);
@@ -77,5 +84,13 @@ export function useSocialLike(
     });
   }, [initialCount]);
 
-  return { liked, setLiked, count, setCount };
+  const setLikedSynced = (v: boolean | ((p: boolean) => boolean)) => {
+    setLiked(prev => {
+      const next = typeof v === 'function' ? (v as (p: boolean) => boolean)(prev) : v;
+      likedRef.current = next;
+      return next;
+    });
+  };
+
+  return { liked, setLiked: setLikedSynced as typeof setLiked, count, setCount };
 }

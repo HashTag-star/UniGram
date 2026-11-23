@@ -2,6 +2,9 @@ import { supabase } from '../lib/supabase';
 import { cleanUserText } from '../lib/contentSafety';
 
 const activeReactionChannels = new Map<string, ReturnType<typeof supabase.channel>>();
+// Commenter profiles seen during live sessions — one lookup per user, not one per comment.
+const commenterProfiles = new Map<string, { username: string; avatar_url?: string } | null>();
+const LIVE_COMMENTS_PAGE = 100;
 
 export interface LiveSession {
   id: string;
@@ -59,27 +62,36 @@ export const LiveService = {
 
   // Increment viewer count
   async joinLive(sessionId: string): Promise<void> {
-    await supabase.rpc('increment_viewer_count', { p_session_id: sessionId });
+    const { error } = await supabase.rpc('increment_viewer_count', { p_session_id: sessionId });
+    if (error) console.warn('[live] joinLive failed:', error.message);
   },
 
   // Decrement viewer count
   async leaveLive(sessionId: string): Promise<void> {
-    await supabase.rpc('decrement_viewer_count', { p_session_id: sessionId });
+    const { error } = await supabase.rpc('decrement_viewer_count', { p_session_id: sessionId });
+    if (error) console.warn('[live] leaveLive failed:', error.message);
   },
 
   // Fetch initial comments for a session
   async getComments(sessionId: string): Promise<LiveComment[]> {
+    // Latest N comments (a long stream must not download thousands of rows), oldest-first for display.
     const { data, error } = await supabase
       .from('live_comments')
       .select(`
-        *,
+        id, session_id, user_id, text, created_at,
         profiles (username, avatar_url)
       `)
       .eq('session_id', sessionId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .limit(LIVE_COMMENTS_PAGE);
 
     if (error) throw error;
-    return data as LiveComment[];
+    const rows = ((data ?? []) as any[]).reverse();
+    rows.forEach(r => {
+      const p = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
+      if (p && r.user_id) commenterProfiles.set(r.user_id, p);
+    });
+    return rows as LiveComment[];
   },
 
   // Subscribe to real-time comments and session changes
@@ -89,6 +101,8 @@ export const LiveService = {
     onUpdate: (session: Partial<LiveSession>) => void,
     onReaction: (emoji: string) => void
   ) {
+    let active = true; // unmounted guard: no callbacks after the returned cleanup ran
+
     // 1 Postgres Change for Comments
     const commentSub = supabase
       .channel(`live-comments-${sessionId}`)
@@ -96,16 +110,25 @@ export const LiveService = {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'live_comments', filter: `session_id=eq.${sessionId}` },
         async (payload: any) => {
-          // Fetch the user's details for the comment (can be optimized but safe for now)
-          const { data: userData } = await supabase
-            .from('profiles')
-            .select('username, avatar_url')
-            .eq('id', payload.new.user_id)
-            .single();
+          if (!active) return;
+          const uid = payload.new.user_id;
+          let userData = commenterProfiles.get(uid);
+          if (userData === undefined) {
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('username, avatar_url')
+                .eq('id', uid)
+                .maybeSingle();
+              userData = data ?? null;
+              commenterProfiles.set(uid, userData);
+            } catch { userData = null; }
+          }
+          if (!active) return;
 
           onComment({
             ...payload.new,
-            profiles: userData
+            profiles: userData ?? undefined
           });
         }
       )
@@ -115,7 +138,7 @@ export const LiveService = {
     const reactionChannel = supabase
       .channel(`live-reactions-${sessionId}`)
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
-        onReaction(payload.emoji);
+        if (active) onReaction(payload.emoji);
       })
       .subscribe();
     activeReactionChannels.set(sessionId, reactionChannel);
@@ -127,12 +150,13 @@ export const LiveService = {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'live_sessions', filter: `id=eq.${sessionId}` },
         (payload: any) => {
-          onUpdate(payload.new);
+          if (active) onUpdate(payload.new);
         }
       )
       .subscribe();
 
     return () => {
+      active = false;
       activeReactionChannels.delete(sessionId);
       supabase.removeChannel(commentSub);
       supabase.removeChannel(reactionChannel);

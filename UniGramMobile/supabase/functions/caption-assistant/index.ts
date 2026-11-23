@@ -1,40 +1,32 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireUser, withinQuota, json } from '../_shared/guard.ts'
 import { callAiWithFallback, repairJson, sanitizeError, CORS } from '../_shared/groq.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
-  // verify_jwt=false is set so the SDK can call this during post-creation flow,
-  // but we still require a valid bearer token to prevent unauthenticated abuse.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  if (!authHeader.startsWith('Bearer ')) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...CORS, 'Content-Type': 'application/json' },
-    })
-  }
+  // verify_jwt is enabled in config.toml; we also validate the user here for the id + quota.
+  const auth = await requireUser(req)
+  if ('error' in auth) return auth.error
+  const { user, supabase } = auth
 
   try {
-    const { userId, postType, university, trendingHashtags = [], mediaBase64, mediaType } = await req.json()
-
-    // Validate the bearer token is a real Supabase session (not just any string)
-    const anonClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    )
-    const { data: { user }, error: authError } = await anonClient.auth.getUser()
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
+    const raw = await req.json()
+    const userId = user.id // never trust a body-supplied id
+    const postType = String(raw.postType ?? 'post').replace(/[^\w \-]/g, '').slice(0, 20)
+    const university = String(raw.university ?? '').replace(/[\r\n"]/g, ' ').slice(0, 80)
+    const trendingHashtags: string[] = Array.isArray(raw.trendingHashtags)
+      ? raw.trendingHashtags.slice(0, 8).map((h: unknown) => String(h).replace(/[^\w#]/g, '').slice(0, 40))
+      : []
+    const mediaType = raw.mediaType === 'video' ? 'video' : 'image'
+    const mediaBase64: string | undefined =
+      typeof raw.mediaBase64 === 'string' && /^[A-Za-z0-9+/=]+$/.test(raw.mediaBase64) ? raw.mediaBase64 : undefined
+    if (typeof raw.mediaBase64 === 'string' && raw.mediaBase64.length > 1_500_000) {
+      return json({ error: 'Image too large' }, 413)
     }
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    if (!(await withinQuota(supabase, userId, 'caption-assistant', 40))) {
+      return json({ error: 'Daily AI limit reached. Try again tomorrow.' }, 429)
+    }
 
     let interestContext = ''
     if (userId) {

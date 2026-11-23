@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   Modal, TextInput, KeyboardAvoidingView, Platform, Image,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,8 @@ import {
 import { searchUniversities } from '../constants/universities';
 
 import { friendlyError } from '../lib/friendlyError';
+import { fx } from '../lib/feedback';
+import { EmptyState } from '../components/EmptyState';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AdStatus    = 'active' | 'paused' | 'ended' | 'pending';
@@ -243,7 +245,7 @@ const CampaignCard: React.FC<{
         ]} />
       </View>
       <Text style={[styles.progressLabel, { color: colors.textMuted }]}>
-        GHS {c.spent} spent of GHS {c.budget}
+        GHS {Number(c.spent ?? 0).toFixed(2)} spent of GHS {Number(c.budget ?? 0).toFixed(2)}
       </Text>
 
       <View style={styles.cardStats}>
@@ -402,6 +404,22 @@ const CreateCampaignSheet: React.FC<{
     return placements.length > 0 && budget !== null && duration !== null;
   }, [step, objective, format, name, headline, mediaUri, cards, placements, budget, duration]);
 
+  // Tells the user exactly what is still missing instead of a vague disabled button.
+  const missingHint = useMemo(() => {
+    if (step === 0) return objective === null ? 'Choose an objective' : format === null ? 'Choose an ad format' : null;
+    if (step === 1) {
+      if (!name.trim()) return 'Add a campaign name';
+      if (!headline.trim()) return 'Add a headline';
+      if (format === 'carousel' && !cards.every(c => c.title.trim())) return 'Add a title to every card';
+      if ((format === 'image' || format === 'video') && !mediaUri) return format === 'video' ? 'Add a video' : 'Add an image';
+      return null;
+    }
+    if (placements.length === 0) return 'Choose a placement';
+    if (budget === null) return 'Choose a budget';
+    if (duration === null) return 'Choose a duration';
+    return null;
+  }, [step, objective, format, name, headline, mediaUri, cards, placements, budget, duration]);
+
   const reset = () => {
     setStep(0); setObjective(null); setFormat(null);
     setName(''); setMediaUri(''); setHeadline(''); setBody(''); setCta('Learn More'); setLink(''); setWhatsappNumber('');
@@ -423,6 +441,7 @@ const CreateCampaignSheet: React.FC<{
 
   const handlePay = async () => {
     if (!canGoNext || !budget || !duration || !format || !objective) return;
+    fx.press();
     setSubmitting(true);
     try {
       // Upload main media (image/video)
@@ -505,6 +524,7 @@ const CreateCampaignSheet: React.FC<{
 
       if (remainingGhs === 0) {
         // Credit covered the whole campaign — the database activates it (fully funded).
+        fx.success();
         showToast(`Campaign is live. GHS ${(consumedPesewas / 100).toFixed(2)} credit applied.`, 'success');
       } else {
         let success = false;
@@ -558,8 +578,8 @@ const CreateCampaignSheet: React.FC<{
         <View style={[styles.sheetContainer, { backgroundColor: colors.bg }]}>
 
           {/* Header */}
-          <View style={[styles.sheetHeader, { borderBottomColor: colors.border, paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity onPress={step === 0 ? handleClose : () => setStep(s => s - 1)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <View style={[styles.sheetHeader, { borderBottomColor: colors.border, paddingTop: (Platform.OS === 'android' ? insets.top : 0) + 12 }]}>
+            <TouchableOpacity onPress={step === 0 ? handleClose : () => setStep(s => s - 1)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={step === 0 ? 'Close' : 'Back'}>
               <Ionicons name={step === 0 ? 'close' : 'arrow-back'} size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={{ alignItems: 'center', gap: 2 }}>
@@ -1161,7 +1181,7 @@ const CreateCampaignSheet: React.FC<{
                   <Ionicons name="card-outline" size={18} color="#fff" />
                 )}
                 <Text style={styles.payBtnText}>
-                  {submitting ? 'Processing…' : canGoNext ? `${getBillingProvider().isSimulated ? 'Launch' : 'Pay'} GHS ${budget}${getBillingProvider().isSimulated ? ' · test mode' : ' via Paystack'}` : 'Complete all fields'}
+                  {submitting ? 'Processing…' : canGoNext ? `${getBillingProvider().isSimulated ? 'Launch' : 'Pay'} GHS ${budget}${getBillingProvider().isSimulated ? ' · test mode' : ' via Paystack'}` : (missingHint ?? 'Complete all fields')}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
@@ -1172,11 +1192,13 @@ const CreateCampaignSheet: React.FC<{
             <View style={[styles.sheetFooter, { borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
               <TouchableOpacity
                 style={[styles.nextBtn, !canGoNext && { opacity: 0.38 }]}
-                onPress={() => setStep(s => s + 1)}
+                onPress={() => { fx.select(); setStep(s => s + 1); }}
                 disabled={!canGoNext}
+                accessibilityRole="button"
+                accessibilityLabel={canGoNext ? 'Continue' : (missingHint ?? 'Continue')}
                 activeOpacity={0.8}
               >
-                <Text style={styles.nextBtnText}>Continue</Text>
+                <Text style={styles.nextBtnText}>{canGoNext ? 'Continue' : (missingHint ?? 'Continue')}</Text>
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </TouchableOpacity>
             </View>
@@ -1202,16 +1224,20 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
   const [showCreate, setShowCreate] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadCampaigns = useCallback(async () => {
-    setLoading(true);
+  const loadCampaigns = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
+    setLoadError(false);
     try {
       const data = await getCampaigns();
       setCampaigns(data as unknown as Campaign[]);
     } catch {
-      // silently fail — empty state handles it
+      setLoadError(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -1223,6 +1249,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
         onPress: async () => {
           try {
             await pauseCampaign(id);
+            fx.press();
             setCampaigns(prev => prev.map(c => c.id === id ? { ...c, status: 'paused' } : c));
             showToast('Campaign paused.', 'info');
           } catch {
@@ -1241,6 +1268,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
         onPress: async () => {
           try {
             await resumeCampaign(id);
+            fx.press();
             setCampaigns(prev => prev.map(c => c.id === id ? { ...c, status: 'active' } : c));
             showToast('Campaign resumed.', 'success');
           } catch {
@@ -1260,6 +1288,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
         onPress: async () => {
           try {
             await deleteCampaign(id);
+            fx.success();
             setCampaigns(prev => prev.filter(c => c.id !== id));
             showToast('Campaign deleted.', 'info');
           } catch {
@@ -1288,7 +1317,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
     return {
       active:      campaigns.filter(c => c.status === 'active').length,
       impressions: totalImpressions,
-      spent:       campaigns.reduce((s, c) => s + c.spent, 0),
+      spent:       campaigns.reduce((s, c) => s + Number(c.spent ?? 0), 0),
       ctr:         totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(1) : '0.0',
     };
   }, [campaigns]);
@@ -1296,18 +1325,19 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top + 14 }]}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: (Platform.OS === 'android' ? insets.top : 0) + 14 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Close Ad Manager">
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Ad Manager</Text>
-          <TouchableOpacity style={styles.createBtn} onPress={() => setShowCreate(true)} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.createBtn} onPress={() => { fx.tap(); setShowCreate(true); }} activeOpacity={0.8} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel="Create campaign">
             <Ionicons name="add" size={16} color="#fff" />
             <Text style={styles.createBtnText}>Create</Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadCampaigns(true)} tintColor={colors.accent} />}>
           {creditGhs > 0 && (
             <View style={{
               flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -1327,7 +1357,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
             {([
               { label: 'Active Ads',  value: String(stats.active),      icon: 'flash-outline',       color: '#22c55e' },
               { label: 'Impressions', value: fmtNum(stats.impressions), icon: 'eye-outline',         color: '#6366f1' },
-              { label: 'Total Spend', value: `GHS ${stats.spent}`,      icon: 'card-outline',        color: '#f59e0b' },
+              { label: 'Total Spend', value: `GHS ${stats.spent.toFixed(2)}`,      icon: 'card-outline',        color: '#f59e0b' },
               { label: 'Avg CTR',     value: `${stats.ctr}%`,           icon: 'trending-up-outline', color: '#06b6d4' },
             ] as const).map(s => (
               <View key={s.label} style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -1344,6 +1374,14 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
 
           {loading ? (
             <ActivityIndicator size="small" color="#6366f1" style={{ marginVertical: 32 }} />
+          ) : loadError ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Couldn't load campaigns"
+              subtitle="Check your connection and try again."
+              actionLabel="Try again"
+              onAction={() => loadCampaigns()}
+            />
           ) : campaigns.length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="megaphone-outline" size={52} color={colors.textMuted} />
@@ -1380,7 +1418,7 @@ export const AdManagerScreen: React.FC<AdManagerProps> = ({ visible, onClose, pr
         visible={showCreate}
         onClose={() => setShowCreate(false)}
         profile={profile}
-        onCreated={loadCampaigns}
+        onCreated={() => loadCampaigns()}
       />
     </Modal>
   );
