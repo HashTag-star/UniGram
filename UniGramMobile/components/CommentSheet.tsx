@@ -44,6 +44,7 @@ import { VerificationType } from '../data/types';
 import { timeAgo } from '../lib/formatUtils';
 
 import { friendlyError } from '../lib/friendlyError';
+import { callEdgeFunction } from '../lib/edgeFetch';
 function renderMentions(text: string, colors: any): React.ReactNode {
   if (!text?.includes('@')) return text;
   return text.split(/(@\w+)/g).map((part, i) =>
@@ -741,6 +742,7 @@ export const CommentSheet: React.FC<Props> = ({
     const t = text.trim();
     if (!t) return;
     const parentId = replyingTo?.id;
+    const repliedToAi = replyingTo?.profiles?.username === 'hashtag';
     setReplyingTo(null);
 
     const tempId = 'temp-' + Date.now();
@@ -769,12 +771,30 @@ export const CommentSheet: React.FC<Props> = ({
         : await addReelComment(targetId, currentUserId, t, parentId);
       setComments(prev => prev.map(c => c.id === tempId ? { ...newComment, isLiked: false } : c));
       hapticSuccess();
+
+      // @hashtag (or a reply to one of its answers) → the AI answers in the thread.
+      if (targetType !== 'ad' && (/@hashtag\b/i.test(t) || repliedToAi)) {
+        const aiRowId = 'ai-' + Date.now();
+        const threadParent = parentId ?? newComment.id;
+        const aiRow = (text: string) => ({
+          id: aiRowId, text, user_id: 'ai', parent_id: threadParent, created_at: new Date().toISOString(),
+          likes_count: 0, isLiked: false, profiles: { username: 'hashtag', avatar_url: null },
+        });
+        setExpandedParents(prev => new Set([...prev, threadParent]));
+        setComments(prev => [...prev, aiRow('Thinking…')]);
+        callEdgeFunction('ai-mention-reply', { target: targetType, comment_id: newComment.id }, { timeoutMs: 60000 })
+          .then(() => loadComments())
+          .catch((e: any) => {
+            setComments(prev => prev.map(c => c.id === aiRowId ? { ...c, text: friendlyError(e, 'Hashtag could not answer right now. Try again.') } : c));
+            setTimeout(() => setComments(prev => prev.filter(c => c.id !== aiRowId)), 5000);
+          });
+      }
     } catch {
       setComments(prev => prev.filter(c => c.id !== tempId));
       setTotalCount(prev => Math.max(0, prev - 1));
       onCountChangeRef.current?.(-1);
     }
-  }, [replyingTo, currentUserId, targetId, targetType, hapticSuccess]); // onCountChange accessed via ref
+  }, [replyingTo, currentUserId, targetId, targetType, hapticSuccess, loadComments]); // onCountChange accessed via ref
 
   const renderBackdrop = useCallback(
     (props: any) => (

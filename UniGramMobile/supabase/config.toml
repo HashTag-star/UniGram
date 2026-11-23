@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.ai-regulation-scan]
 verify_jwt = false
+
+[functions.ai-mention-reply]
+verify_jwt = true
