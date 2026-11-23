@@ -5,6 +5,7 @@ import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
   StyleSheet, ActivityIndicator, Alert,
   FlatList, Animated,
+  Platform, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -425,11 +426,23 @@ interface FooterInputProps {
   onCancelReply: () => void;
   setTextRef: (getText: () => string) => void;
   followingIds: Set<string>;
+  /** Reports the footer's real height so the list can pad itself exactly (no more guessed 130/170). */
+  onHeight?: (h: number) => void;
 }
 
 const FooterInput = React.memo(function FooterInput({
-  replyingTo, colors, bottomInset, onSend, onCancelReply, setTextRef, followingIds,
+  replyingTo, colors, bottomInset, onSend, onCancelReply, setTextRef, followingIds, onHeight,
 }: FooterInputProps) {
+  // The home-indicator inset only applies while the keyboard is closed; with the keyboard up it
+  // would leave a dead gap above the keys and make the bar jump on open/close.
+  const [kbOpen, setKbOpen] = useState(false);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const a = Keyboard.addListener(showEvt, () => setKbOpen(true));
+    const b = Keyboard.addListener(hideEvt, () => setKbOpen(false));
+    return () => { a.remove(); b.remove(); };
+  }, []);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [media, setMedia] = useState<{ uri: string; mime: string; type: 'image' | 'gif' } | null>(null);
@@ -446,9 +459,9 @@ const FooterInput = React.memo(function FooterInput({
   // Prepopulate @mention when reply target changes
   useEffect(() => {
     if (replyingTo) {
-      setText(`@${replyingTo.profiles?.username} `);
+      setText(prev => (prev.trim().length === 0 || /^@\w+\s$/.test(prev) ? `@${replyingTo.profiles?.username} ` : prev));
     } else {
-      setText('');
+      setText(prev => (/^@\w+\s$/.test(prev) ? '' : prev));
     }
     setSuggestions([]);
     setMentionQuery(null);
@@ -536,7 +549,10 @@ const FooterInput = React.memo(function FooterInput({
   };
 
   return (
-    <View style={[styles.footerContainer, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+    <View
+      style={[styles.footerContainer, { backgroundColor: colors.bg, borderTopColor: colors.border }]}
+      onLayout={(e) => onHeight?.(Math.round(e.nativeEvent.layout.height))}
+    >
       {replyingTo && (
         <View style={[styles.replyBanner, { backgroundColor: colors.accent + '18', borderBottomColor: colors.border }]}>
           <Ionicons name="return-down-forward-outline" size={14} color={colors.accent} />
@@ -568,10 +584,10 @@ const FooterInput = React.memo(function FooterInput({
         </View>
       )}
 
-      <View style={[styles.inputRow, { paddingBottom: Math.max(bottomInset, 8) }]}>
+      <View style={[styles.inputRow, { paddingBottom: kbOpen ? 8 : Math.max(bottomInset, 10) }]}>
         <TouchableOpacity
           onPress={pickMedia}
-          style={{ justifyContent: 'center', paddingRight: 8, paddingLeft: 2 }}
+          style={styles.attachBtn}
           hitSlop={{ top: 10, bottom: 10, left: 8, right: 4 }}
           accessibilityLabel="Attach a picture, meme or GIF" accessibilityRole="button"
         >
@@ -1023,6 +1039,11 @@ export const CommentSheet: React.FC<Props> = ({
     handleLike, handleReply, handleLongPress, toggleExpand, highlightedCommentId]);
 
   // renderFooter ONLY depends on stable values — never re-creates on keystrokes
+  const [footerH, setFooterH] = useState(72);
+  const handleFooterHeight = useCallback((h: number) => {
+    setFooterH(prev => (Math.abs(prev - h) > 1 ? h : prev));
+  }, []);
+
   const renderFooter = useCallback(
     (props: BottomSheetFooterProps) => (
       <BottomSheetFooter {...props} bottomInset={0}>
@@ -1034,11 +1055,12 @@ export const CommentSheet: React.FC<Props> = ({
           onCancelReply={handleCancelReply}
           setTextRef={setTextRef}
           followingIds={followingIds}
+          onHeight={handleFooterHeight}
         />
       </BottomSheetFooter>
     ),
     // text/sending live inside FooterInput — NOT listed here
-    [replyingTo, colors, insets.bottom, handleSend, handleCancelReply, setTextRef, followingIds]
+    [replyingTo, colors, insets.bottom, handleSend, handleCancelReply, setTextRef, followingIds, handleFooterHeight]
   );
 
   return (
@@ -1053,7 +1075,7 @@ export const CommentSheet: React.FC<Props> = ({
       backgroundStyle={{ backgroundColor: colors.bg }}
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustPan"
+      android_keyboardInputMode="adjustResize"
     >
       <View style={{ flex: 1 }}>
         <View style={[styles.sheetHeader, { borderBottomColor: colors.border, justifyContent: 'space-between' }]}>
@@ -1077,8 +1099,9 @@ export const CommentSheet: React.FC<Props> = ({
           renderItem={renderItem}
           contentContainerStyle={[
             styles.listContent,
-            // Extra padding when reply banner is visible to keep last comment above it
-            replyingTo ? { paddingBottom: 170 } : { paddingBottom: 130 },
+            // Exactly the footer's measured height (+ breathing room) — banner, preview and
+            // mention panel all change it, so a fixed number always jumped or hid comments.
+            { paddingBottom: footerH + 16 },
           ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -1183,16 +1206,20 @@ const styles = StyleSheet.create({
   replyBannerText: { flex: 1, fontSize: 13 },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 12, paddingTop: 10, gap: 10,
+    paddingHorizontal: 12, paddingTop: 10, gap: 8,
   },
+  attachBtn: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
   input: {
-    flex: 1, minHeight: 40, maxHeight: 120,
+    flex: 1, minHeight: 44, maxHeight: 120,
     borderRadius: 22, borderWidth: 1,
-    paddingHorizontal: 16, paddingVertical: 9,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 12 : 10,
+    paddingBottom: Platform.OS === 'ios' ? 12 : 10,
     fontSize: 15, lineHeight: 20,
+    textAlignVertical: 'center',
   },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 44, height: 44, borderRadius: 22,
     backgroundColor: '#6366f1',
     alignItems: 'center', justifyContent: 'center',
   },

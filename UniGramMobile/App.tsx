@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet,
   StatusBar, Animated, ActivityIndicator, DeviceEventEmitter, Modal,
-  BackHandler, Platform, ToastAndroid, Easing, AppState
+  BackHandler, Platform, ToastAndroid, Easing, AppState,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -415,6 +415,17 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
   const onboardingDoneRef = useRef<boolean | null>(null);
   onboardingDoneRef.current = onboardingDone;
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Warm the remaining tabs in the background a moment after launch, one at a time, so the
+  // first tap on Explore / Market / Profile / Messages is instant instead of cold-loading.
+  useEffect(() => {
+    if (!session || !onboardingDone) return;
+    const order: Tab[] = ['explore', 'profile', 'market', 'messages'];
+    const timers = order.map((tab, i) => setTimeout(() => {
+      setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
+    }, 1200 + i * 700));
+    return () => timers.forEach(clearTimeout);
+  }, [!!session, onboardingDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A tab mounts on its first visit (whatever caused it) and then stays alive.
   useEffect(() => {

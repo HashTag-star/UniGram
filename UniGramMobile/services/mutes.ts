@@ -19,7 +19,22 @@ async function me(): Promise<string | null> {
   return user?.id ?? null;
 }
 
+let _mutedMem: { uid: string; ids: string[]; at: number } | null = null;
+let _mutedInflight: Promise<string[]> | null = null;
+const MUTED_TTL = 60_000;
+
+/** Cached (60s) + de-duplicated: feeds call this on every load, it must never add a round trip. */
 export async function getMutedIds(): Promise<string[]> {
+  const uid = await me();
+  if (!uid) return [];
+  if (_mutedMem && _mutedMem.uid === uid && Date.now() - _mutedMem.at < MUTED_TTL) return _mutedMem.ids;
+  if (_mutedInflight) return _mutedInflight;
+  _mutedInflight = fetchMutedIds().then(ids => { _mutedMem = { uid, ids, at: Date.now() }; return ids; })
+    .finally(() => { _mutedInflight = null; });
+  return _mutedInflight;
+}
+
+async function fetchMutedIds(): Promise<string[]> {
   const uid = await me();
   if (!uid) return [];
   const local = await readLocal(uid);
@@ -38,6 +53,7 @@ export async function isMuted(mutedId: string): Promise<boolean> {
 export async function muteUser(mutedId: string): Promise<void> {
   const uid = await me();
   if (!uid) throw new Error('Unauthorized');
+  _mutedMem = null;
   await writeLocal(uid, [...(await readLocal(uid)), mutedId]);
   try {
     await supabase.from('muted_users').upsert({ user_id: uid, muted_id: mutedId }, { onConflict: 'user_id,muted_id' });
@@ -48,6 +64,7 @@ export async function muteUser(mutedId: string): Promise<void> {
 export async function unmuteUser(mutedId: string): Promise<void> {
   const uid = await me();
   if (!uid) throw new Error('Unauthorized');
+  _mutedMem = null;
   await writeLocal(uid, (await readLocal(uid)).filter(i => i !== mutedId));
   try { await supabase.from('muted_users').delete().eq('user_id', uid).eq('muted_id', mutedId); } catch {}
 }
