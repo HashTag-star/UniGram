@@ -12,6 +12,7 @@ import { updateProfile } from '../services/profiles';
 import { searchMajors } from '../constants/majors';
 import { searchUniversities } from '../constants/universities';
 
+import { friendlyError } from '../lib/friendlyError';
 interface Props {
   visible: boolean;
   profile: any;
@@ -193,7 +194,7 @@ export const EditProfileModal: React.FC<Props> = ({ visible, profile, onClose, o
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Could not save changes.',
+        message: friendlyError(e, 'Could not save changes.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }],
       });

@@ -13,6 +13,7 @@ import {
 } from '../services/billing';
 import { PRO_FEATURE_LIST, PAYWALL_COPY, type PaywallFeature } from '../services/paywallFeatures';
 
+import { friendlyError } from '../lib/friendlyError';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const BRAND = ['#6366f1', '#8b5cf6', '#d946ef'] as const;
 
@@ -134,7 +135,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
       }
     } catch (e: any) {
       setPhase('choose');
-      setErrorMsg(e?.message ?? 'Something went wrong. Try again.');
+      setErrorMsg(friendlyError(e, 'Something went wrong. Try again.'));
     }
   };
 
@@ -153,7 +154,7 @@ export const PaywallSheet: React.FC<PaywallSheetProps> = ({ visible, feature, us
         setInfoMsg(res.message ?? 'Nothing to restore.');
       }
     } catch (e: any) {
-      setErrorMsg(e?.message ?? 'Could not restore purchases.');
+      setErrorMsg(friendlyError(e, 'Could not restore purchases.'));
     } finally {
       setRestoring(false);
     }

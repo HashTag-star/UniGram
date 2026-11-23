@@ -66,6 +66,7 @@ import { useTheme } from '../context/ThemeContext';
 import { PopupButton } from '../components/PremiumPopup';
 import { timeAgo as _timeAgo, fmtCount as _fmtCount } from '../lib/formatUtils';
 
+import { friendlyError } from '../lib/friendlyError';
 export const timeAgo = _timeAgo;
 export const fmtCount = _fmtCount;
 
@@ -1158,7 +1159,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message,
+        message: friendlyError(e),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1189,7 +1190,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message,
+                message: friendlyError(e),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -1227,7 +1228,7 @@ export const FeedPost: React.FC<FeedPostProps> = React.memo(({ post, currentUser
       await success();
       showToast('Quote post published!', 'success');
     } catch (e: any) {
-      showToast(e?.message || 'Could not publish quote', 'error');
+      showToast(friendlyError(e, 'Could not publish quote'), 'error');
     }
   };
 

@@ -34,6 +34,7 @@ import { useHaptics } from '../hooks/useHaptics';
 import { fx } from '../lib/feedback';
 import { brand, radius, status } from '../constants/design';
 
+import { friendlyError } from '../lib/friendlyError';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '👍', '🔥'];
 const GROUP_MS = 5 * 60 * 1000;
@@ -477,7 +478,7 @@ const ChatView: React.FC<ChatProps> = ({ convId, otherProfile, currentUserId, on
     try {
       const offer = { type: 'offer', sdp: '' } as RTCSessionDescriptionInit;
       setCall(await initiateCall(currentUserId, profile.id, convId, type, offer));
-    } catch (e: any) { showToast(e?.message ?? 'Could not start the call.', 'error'); }
+    } catch (e: any) { showToast(friendlyError(e, 'Could not start the call.'), 'error'); }
   };
 
   const openProfileMenu = () => {

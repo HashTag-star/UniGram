@@ -21,6 +21,7 @@ import { PRO_FEATURE_LIST } from '../services/paywallFeatures';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
 
+import { friendlyError } from '../lib/friendlyError';
 interface Props {
   visible: boolean;
   profile: any;
@@ -132,7 +133,7 @@ const PasswordModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
     } catch (e: any) {
       showPopup({
         title: 'Update Failed',
-        message: e.message ?? 'Could not update password. Please try again.',
+        message: friendlyError(e, 'Could not update password. Please try again.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -264,7 +265,7 @@ const PrivacyModal: React.FC<{
       setIsPrivate(!val);
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Could not register biometric authentication.',
+        message: friendlyError(e, 'Could not register biometric authentication.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -403,7 +404,7 @@ const BlockedModal: React.FC<{ visible: boolean; profile: any; onClose: () => vo
             } catch (e: any) {
               showPopup({
                 title: 'Operation Failed',
-                message: e.message ?? 'Could not unblock user.',
+                message: friendlyError(e, 'Could not unblock user.'),
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
             }
@@ -533,7 +534,7 @@ export const SettingsScreen: React.FC<Props> = ({
       onProfileUpdated({ ...profile, pro_disabled: prevDisabled });
       showPopup({
         title: 'Could not update Pro status',
-        message: e?.message ?? 'Please try again.',
+        message: friendlyError(e, 'Please try again.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }],
       });
@@ -564,7 +565,7 @@ export const SettingsScreen: React.FC<Props> = ({
       onProfileUpdated({ ...profile, pro_auto_renew: prevAutoRenew });
       showPopup({
         title: 'Could not update billing',
-        message: e?.message ?? 'Please try again.',
+        message: friendlyError(e, 'Please try again.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }],
       });
@@ -599,7 +600,7 @@ export const SettingsScreen: React.FC<Props> = ({
             } catch (e: any) {
               showPopup({
                 title: 'Error cancelling',
-                message: e?.message ?? 'Please try again.',
+                message: friendlyError(e, 'Please try again.'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }],
               });
@@ -663,7 +664,7 @@ export const SettingsScreen: React.FC<Props> = ({
                         setIsDeleting(false);
                         showPopup({
                           title: 'Could Not Delete Account',
-                          message: e.message || 'Please try again or contact support.',
+                          message: friendlyError(e, 'Please try again or contact support.'),
                           icon: 'warning-outline',
                           buttons: [{ text: 'OK', onPress: () => {} }],
                         });

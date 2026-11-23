@@ -12,6 +12,7 @@ import { searchMajors } from '../../../constants/majors';
 import { searchUniversities } from '../../../constants/universities';
 import { usePopup } from '../../../context/PopupContext';
 
+import { friendlyError } from '../../../lib/friendlyError';
 const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'PhD', 'Faculty'];
 
 const PRONOUN_OPTIONS = [
@@ -195,7 +196,7 @@ export function ProfileSetupStep({ userId, onNext, onBack }: Props) {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to update profile',
+        message: friendlyError(e, 'Failed to update profile'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });

@@ -21,6 +21,7 @@ import {
 } from '../services/campusAds';
 import { searchUniversities } from '../constants/universities';
 
+import { friendlyError } from '../lib/friendlyError';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AdStatus    = 'active' | 'paused' | 'ended' | 'pending';
@@ -532,7 +533,7 @@ const CreateCampaignSheet: React.FC<{
       handleClose();
       onCreated?.();
     } catch (err: any) {
-      Alert.alert('Something went wrong', err?.message ?? 'Please try again.');
+      Alert.alert('Something went wrong', friendlyError(err, 'Please try again.'));
     } finally {
       setSubmitting(false);
     }

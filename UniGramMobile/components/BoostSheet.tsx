@@ -13,6 +13,7 @@ import {
 import { getBillingProvider } from '../services/billing';
 import { fx } from '../lib/feedback';
 
+import { friendlyError } from '../lib/friendlyError';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface BoostSheetProps {
@@ -74,7 +75,7 @@ export const BoostSheet: React.FC<BoostSheetProps> = ({
         setErrorMsg('Payment was not completed. Please try again.');
       }
     } catch (e: any) {
-      setErrorMsg(e.message ?? 'Payment failed. Please try again.');
+      setErrorMsg(friendlyError(e, 'Payment failed. Please try again.'));
     } finally {
       setLoading(false);
     }

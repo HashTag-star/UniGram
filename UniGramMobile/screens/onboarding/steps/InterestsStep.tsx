@@ -9,6 +9,7 @@ import { saveUserInterests } from '../../../services/onboarding';
 import { useHaptics } from '../../../hooks/useHaptics';
 import { usePopup } from '../../../context/PopupContext';
 
+import { friendlyError } from '../../../lib/friendlyError';
 const MIN_INTERESTS = 3;
 
 interface Props {
@@ -64,7 +65,7 @@ export function InterestsStep({ userId, onNext, onBack }: Props) {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to save interests',
+        message: friendlyError(e, 'Failed to save interests'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });

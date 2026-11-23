@@ -11,6 +11,7 @@ import { useHaptics } from '../../hooks/useHaptics';
 import { AuthBackground, AuthField, PasswordToggle, AuthButton, type AuthInputRef } from '../../components/ui/AuthKit';
 import { authPalette as P, brand, status, shadow } from '../../constants/design';
 
+import { friendlyError } from '../../lib/friendlyError';
 interface Props {
   onDone: () => void;
 }
@@ -57,7 +58,7 @@ export default function ResetPasswordScreen({ onDone }: Props) {
       });
     } catch (err: any) {
       hapticError();
-      setFormError(err?.message ?? 'Could not update password.');
+      setFormError(friendlyError(err, 'Could not update password.'));
     } finally {
       setLoading(false);
     }

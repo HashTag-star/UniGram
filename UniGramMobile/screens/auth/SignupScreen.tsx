@@ -15,6 +15,7 @@ import {
 } from '../../components/ui/AuthKit';
 import { authPalette as P, brand, status } from '../../constants/design';
 
+import { friendlyError } from '../../lib/friendlyError';
 interface Props {
   onNavigateLogin: () => void;
   onShowPrivacy: () => void;
@@ -191,7 +192,7 @@ export default function SignupScreen({ onNavigateLogin, onShowPrivacy, onShowTer
       });
     } catch (err: any) {
       hapticError();
-      setFormError(err?.message ?? 'Something went wrong. Please try again.');
+      setFormError(friendlyError(err, 'Something went wrong. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -204,7 +205,7 @@ export default function SignupScreen({ onNavigateLogin, onShowPrivacy, onShowTer
       const result = await signInWithGoogle();
       if (result === 'cancelled') return;
     } catch (err: any) {
-      setFormError(err?.message ?? 'Could not sign in with Google.');
+      setFormError(friendlyError(err, 'Could not sign in with Google.'));
     } finally {
       setGoogleLoading(false);
     }

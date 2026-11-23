@@ -37,6 +37,7 @@ const COMMENT_BAR_HEIGHT = 50;
 
 import { fmtCount, timeAgo } from '../lib/formatUtils';
 
+import { friendlyError } from '../lib/friendlyError';
 // ─── Video sub-component ──────────────────────────────────────────────────────
 
 const ReelVideo: React.FC<{
@@ -547,7 +548,7 @@ const ReelItem: React.FC<{
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message ?? 'Could not delete reel',
+                message: friendlyError(e, 'Could not delete reel'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -586,7 +587,7 @@ const ReelItem: React.FC<{
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message,
+        message: friendlyError(e),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });

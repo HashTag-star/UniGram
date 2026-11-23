@@ -74,6 +74,7 @@ import { LiveScreen } from './LiveScreen';
 import { TrendingScreen } from './TrendingScreen';
 import { PopupButton } from '../components/PremiumPopup';
 import { FeedPost, ReelPreview, timeAgo, fmtCount, type PostProfile, type Post, type FeedPostProps } from '../components/FeedPost';
+import { friendlyError } from '../lib/friendlyError';
 // Note: we previously used Shopify's FlashList here for raw throughput, but its
 // cell-recycling caused brief blank rows on fast flicks even with drawDistance
 // turned up. Animated.FlatList trades a little memory for zero blank cells,
@@ -458,7 +459,7 @@ const StoryViewer: React.FC<{
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Could not send reply.',
+        message: friendlyError(e, 'Could not send reply.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1519,7 +1520,7 @@ export const FeedScreen = React.memo(({
         showToast('Couldn’t refresh — showing saved posts.', 'error');
       } else {
         setFeedError(true);
-        showToast(e?.message || 'Failed to load feed. Pull to refresh.', 'error');
+        showToast(friendlyError(e, 'Failed to load feed. Pull to refresh.'), 'error');
       }
     }
   }, []);
@@ -1914,7 +1915,7 @@ export const FeedScreen = React.memo(({
         setStoryGroups(prev => prev.filter(g => !g.stories?.some((s: any) => s.id === tempId)));
         showPopup({
           title: 'Error',
-          message: e.message ?? 'Could not post story.',
+          message: friendlyError(e, 'Could not post story.'),
           icon: 'alert-circle-outline',
           buttons: [{ text: 'OK', onPress: () => {} }]
         });

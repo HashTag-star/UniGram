@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../context/ToastContext';
 
+import { friendlyError } from '../../lib/friendlyError';
 type Tier = 'fast' | 'smart' | 'vision';
 
 const TIERS: Array<{ key: Tier; setting: string; title: string; blurb: string; icon: string; color: string; models: string[] }> = [
@@ -77,7 +78,7 @@ export const AIModelsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
       if (data?.ok) setTests(p => ({ ...p, [tier]: { status: 'ok', msg: `Works · ${data.ms} ms` } }));
       else setTests(p => ({ ...p, [tier]: { status: 'fail', msg: data?.error ?? 'Model did not respond' } }));
     } catch (e: any) {
-      setTests(p => ({ ...p, [tier]: { status: 'fail', msg: e?.message ?? 'Test failed' } }));
+      setTests(p => ({ ...p, [tier]: { status: 'fail', msg: friendlyError(e, 'Test failed') } }));
     }
   };
 
@@ -87,7 +88,7 @@ export const AIModelsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
     setKeyBusy(true);
     const { error } = await supabase.rpc('admin_set_ai_key', { p_key: k });
     setKeyBusy(false);
-    if (error) { showToast(error.message || 'Could not save the key', 'error'); return; }
+    if (error) { showToast(friendlyError(error, 'Could not save the key'), 'error'); return; }
     setKeyInput('');
     setShowKey(false);
     showToast('API key saved. Use “Test model” to verify it.', 'success');
@@ -97,7 +98,7 @@ export const AIModelsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
     setKeyBusy(true);
     const { error } = await supabase.rpc('admin_clear_ai_key');
     setKeyBusy(false);
-    if (error) { showToast(error.message || 'Could not remove the key', 'error'); return; }
+    if (error) { showToast(friendlyError(error, 'Could not remove the key'), 'error'); return; }
     showToast('API key removed.', 'success');
     loadKeyStatus();
   };
@@ -107,7 +108,7 @@ export const AIModelsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
     setSaving(true);
     const { error } = await supabase.from('ai_settings').upsert(rows, { onConflict: 'key' });
     setSaving(false);
-    if (error) { showToast(error.message || 'Could not save', 'error'); return; }
+    if (error) { showToast(friendlyError(error, 'Could not save'), 'error'); return; }
     showToast('AI models updated. Live within a minute.', 'success');
     setSaved({ ...draft });
   };

@@ -30,6 +30,7 @@ import { MediaEditScreen } from './MediaEditScreen';
 
 import { SafeBlur } from '../components/SafeBlur';
 
+import { friendlyError } from '../lib/friendlyError';
 const { width } = Dimensions.get('window');
 type PostType = 'post' | 'thread' | 'story' | 'reel';
 
@@ -490,8 +491,8 @@ export const CreatePostModal: React.FC<Props> = ({ visible, userId, onClose, onP
           console.log('User cancelled upload');
           return;
         }
-        showToast(e.message || 'Failed to post. Please try again.', 'error');
-        emitStatus('error', { message: e.message });
+        showToast(friendlyError(e, 'Failed to post. Please try again.'), 'error');
+        emitStatus('error', { message: friendlyError(e) });
       } finally {
         setUploading(false);
       }

@@ -43,6 +43,7 @@ import { VerificationType } from '../data/types';
 
 import { timeAgo } from '../lib/formatUtils';
 
+import { friendlyError } from '../lib/friendlyError';
 function renderMentions(text: string, colors: any): React.ReactNode {
   if (!text?.includes('@')) return text;
   return text.split(/(@\w+)/g).map((part, i) =>
@@ -703,7 +704,7 @@ export const CommentSheet: React.FC<Props> = ({
           hapticError(); 
           showPopup({
             title: 'Error',
-            message: e.message ?? 'Could not report.',
+            message: friendlyError(e, 'Could not report.'),
             icon: 'alert-circle-outline',
             buttons: [{ text: 'OK', onPress: () => {} }]
           });

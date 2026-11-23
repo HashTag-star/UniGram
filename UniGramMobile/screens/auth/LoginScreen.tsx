@@ -15,6 +15,7 @@ import {
 } from '../../components/ui/AuthKit';
 import { authPalette as P, status } from '../../constants/design';
 
+import { friendlyError } from '../../lib/friendlyError';
 interface Props {
   onNavigateSignup: () => void;
 }
@@ -79,7 +80,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
       hapticSuccess();
     } catch (err: any) {
       hapticError();
-      const msg: string = err?.message ?? 'Something went wrong.';
+      const msg: string = friendlyError(err, 'Something went wrong.');
       setFormError(/invalid login/i.test(msg) ? 'Incorrect email or password. Try again.' : msg);
     } finally {
       setLoading(false);
@@ -93,7 +94,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
       const result = await signInWithGoogle();
       if (result === 'cancelled') return;
     } catch (err: any) {
-      setFormError(err?.message ?? 'Could not sign in with Google.');
+      setFormError(friendlyError(err, 'Could not sign in with Google.'));
     } finally {
       setGoogleLoading(false);
     }
@@ -118,7 +119,7 @@ export default function LoginScreen({ onNavigateSignup }: Props) {
               await sendPasswordReset(email.trim());
               setResetSent(true);
             } catch (err: any) {
-              setFormError(err?.message ?? 'Could not send reset email.');
+              setFormError(friendlyError(err, 'Could not send reset email.'));
             }
           },
         },

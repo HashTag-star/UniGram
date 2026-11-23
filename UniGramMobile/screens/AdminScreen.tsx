@@ -16,6 +16,7 @@ import { useTheme } from '../context/ThemeContext';
 import { AIModelsTab } from '../components/admin/AIModelsTab';
 import { getAllAds, createAd, toggleAd, deleteAd, type SponsoredPost } from '../services/ads';
 
+import { friendlyError } from '../lib/friendlyError';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface AdminStats {
@@ -196,7 +197,7 @@ const AgentTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Agent Error',
-        message: e.message ?? 'Failed to communicate with agent.',
+        message: friendlyError(e, 'Failed to communicate with agent.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -555,7 +556,7 @@ const UsersTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to load users',
+        message: friendlyError(e, 'Failed to load users'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -589,7 +590,7 @@ const UsersTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to verify user',
+        message: friendlyError(e, 'Failed to verify user'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -628,7 +629,7 @@ const UsersTab: React.FC = () => {
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message ?? 'Action failed',
+                message: friendlyError(e, 'Action failed'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -668,7 +669,7 @@ const UsersTab: React.FC = () => {
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message ?? 'Action failed',
+                message: friendlyError(e, 'Action failed'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -835,7 +836,7 @@ const PostsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to load posts',
+        message: friendlyError(e, 'Failed to load posts'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -866,7 +867,7 @@ const PostsTab: React.FC = () => {
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message ?? 'Delete failed',
+                message: friendlyError(e, 'Delete failed'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -989,7 +990,7 @@ const MarketTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to load market items',
+        message: friendlyError(e, 'Failed to load market items'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1020,7 +1021,7 @@ const MarketTab: React.FC = () => {
             } catch (e: any) {
               showPopup({
                 title: 'Error',
-                message: e.message ?? 'Delete failed',
+                message: friendlyError(e, 'Delete failed'),
                 icon: 'alert-circle-outline',
                 buttons: [{ text: 'OK', onPress: () => {} }]
               });
@@ -1045,7 +1046,7 @@ const MarketTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Action failed',
+        message: friendlyError(e, 'Action failed'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1150,7 +1151,7 @@ const ReportsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to load reports',
+        message: friendlyError(e, 'Failed to load reports'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1217,7 +1218,7 @@ const ReportsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Action failed',
+        message: friendlyError(e, 'Action failed'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1358,7 +1359,7 @@ const VerificationsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to load requests',
+        message: friendlyError(e, 'Failed to load requests'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1410,7 +1411,7 @@ const VerificationsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Action failed',
+        message: friendlyError(e, 'Action failed'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1458,7 +1459,7 @@ const VerificationsTab: React.FC = () => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Action failed',
+        message: friendlyError(e, 'Action failed'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1774,7 +1775,7 @@ const AnnouncementsTab: React.FC<{ adminId: string }> = ({ adminId }) => {
     } catch (e: any) {
       showPopup({
         title: 'Error',
-        message: e.message ?? 'Failed to send.',
+        message: friendlyError(e, 'Failed to send.'),
         icon: 'alert-circle-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -1998,7 +1999,7 @@ const AdsTab: React.FC = () => {
       const data = await getAllAds();
       setAds(data);
     } catch (e: any) {
-      showPopup({ title: 'Error', message: e.message ?? 'Could not load ads.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Error', message: friendlyError(e, 'Could not load ads.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } finally {
       setLoading(false);
     }
@@ -2032,7 +2033,7 @@ const AdsTab: React.FC = () => {
       await load();
       showPopup({ title: 'Ad created!', message: 'It will appear in the feed immediately.', icon: 'checkmark-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } catch (e: any) {
-      showPopup({ title: 'Error', message: e.message ?? 'Could not create ad.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Error', message: friendlyError(e, 'Could not create ad.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } finally {
       setSaving(false);
     }
@@ -2043,7 +2044,7 @@ const AdsTab: React.FC = () => {
       await toggleAd(ad.id, !ad.is_active);
       setAds(prev => prev.map(a => a.id === ad.id ? { ...a, is_active: !a.is_active } : a));
     } catch (e: any) {
-      showPopup({ title: 'Error', message: e.message ?? 'Failed.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Error', message: friendlyError(e, 'Failed.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     }
   };
 
@@ -2059,7 +2060,7 @@ const AdsTab: React.FC = () => {
             await deleteAd(ad.id);
             setAds(prev => prev.filter(a => a.id !== ad.id));
           } catch (e: any) {
-            showPopup({ title: 'Error', message: e.message ?? 'Failed.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+            showPopup({ title: 'Error', message: friendlyError(e, 'Failed.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
           }
         }},
       ],

@@ -54,6 +54,7 @@ import { useToast } from '../context/ToastContext';
 import { getActiveAdsForPlacement, adFrequencyInterval, recordCampusAdImpression } from '../services/campusAds';
 import { SponsoredAdCard } from '../components/SponsoredAdCard';
 
+import { friendlyError } from '../lib/friendlyError';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const { width } = Dimensions.get('window');
@@ -333,7 +334,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
       await markItemSold(item.id, currentUserId);
       onSold(item.id);
     } catch (e: any) {
-      showPopup({ title: 'Error', message: e.message ?? 'Failed to mark as sold.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Error', message: friendlyError(e, 'Failed to mark as sold.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } finally { setMarking(false); }
   }, [item.id, currentUserId, onSold]);
 
@@ -354,7 +355,7 @@ const ItemDetailModal: React.FC<DetailModalProps> = ({
               await deleteMarketItem(item.id, currentUserId);
               onDelete(item.id);
             } catch (e: any) {
-              showPopup({ title: 'Error', message: e.message ?? 'Failed to delete.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+              showPopup({ title: 'Error', message: friendlyError(e, 'Failed to delete.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
               setDeleting(false);
             }
           },
@@ -692,7 +693,7 @@ const SellModal: React.FC<SellModalProps> = ({
         onPosted(item);
       }
     } catch (e: any) {
-      showPopup({ title: 'Error', message: e.message ?? 'Something went wrong.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Error', message: friendlyError(e, 'Something went wrong.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     } finally { setSubmitting(false); }
   }, [title, price, description, category, condition, imageUri, isEdit, editItem, currentUserId, onPosted, onUpdated]);
 
@@ -953,7 +954,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
       }
       getActiveAdsForPlacement('market', profData?.university ?? null, currentUserId).then(setMarketAds).catch(() => {});
     } catch (e: any) {
-      showToast(e?.message || 'Failed to load market.', 'error');
+      showToast(friendlyError(e, 'Failed to load market.'), 'error');
     } finally {
       setBrowseLoading(false);
       setRefreshing(false);
@@ -1045,7 +1046,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
 
       onMessagePress?.(convId, profile);
     } catch (e: any) {
-      showPopup({ title: 'Connection Failed', message: e.message ?? 'Could not start a conversation.', icon: 'chatbubble-ellipses-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Connection Failed', message: friendlyError(e, 'Could not start a conversation.'), icon: 'chatbubble-ellipses-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     }
   }, [currentUserId, onMessagePress, browseItems, savedItems, myItems]);
 
@@ -1066,7 +1067,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
       await markItemSold(itemId, currentUserId);
       handleSoldFromDetail(itemId);
     } catch (e: any) {
-      showPopup({ title: 'Update Failed', message: e.message ?? 'Could not mark as sold.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+      showPopup({ title: 'Update Failed', message: friendlyError(e, 'Could not mark as sold.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
     }
   }, [currentUserId, handleSoldFromDetail, showPopup]);
 
@@ -1089,7 +1090,7 @@ export const MarketScreen = React.memo(({ onMessagePress, isVisible, isSuspended
             await deleteMarketItem(itemId, currentUserId);
             handleDeleteFromDetail(itemId);
           } catch (e: any) {
-            showPopup({ title: 'Error', message: e.message ?? 'Failed.', icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
+            showPopup({ title: 'Error', message: friendlyError(e, 'Failed.'), icon: 'alert-circle-outline', buttons: [{ text: 'OK', onPress: () => {} }] });
           }
         }},
       ],

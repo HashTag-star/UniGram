@@ -36,6 +36,7 @@ import { useToast } from '../context/ToastContext';
 import { UsersListSheet } from '../components/UsersListSheet';
 import { ProfilePicViewer } from '../components/ProfilePicViewer';
 
+import { friendlyError } from '../lib/friendlyError';
 const { width, height } = Dimensions.get('window');
 const COL = (width - 2) / 3;
 
@@ -159,7 +160,7 @@ export const ProfileScreen = React.memo<Props>(({
       }
     } catch (e: any) {
       setLoadError(true);
-      showToast(e?.message || 'Failed to load profile.', 'error');
+      showToast(friendlyError(e, 'Failed to load profile.'), 'error');
     } finally {
       setLoading(false);
     }
@@ -198,7 +199,7 @@ export const ProfileScreen = React.memo<Props>(({
     setAnalyticsError(null);
     Promise.all([getProfileAnalytics(currentUserId), getPostAnalytics(currentUserId, 30)])
       .then(([pa, pa2]) => { setProAnalytics(pa); setPostAnalytics(pa2); })
-      .catch((e: any) => setAnalyticsError(e?.message ?? 'Could not load analytics.'))
+      .catch((e: any) => setAnalyticsError(friendlyError(e, 'Could not load analytics.')))
       .finally(() => setAnalyticsLoading(false));
   }, [activeTab, isOwn, isPro, currentUserId]);
 
@@ -212,7 +213,7 @@ export const ProfileScreen = React.memo<Props>(({
       setAiOutlook(result.outlook);
       aiLoadedRef.current = true;
     } catch (e: any) {
-      setAiInsightsError(e?.message ?? 'AI insights unavailable.');
+      setAiInsightsError(friendlyError(e, 'AI insights unavailable.'));
     } finally {
       setAiInsightsLoading(false);
     }
@@ -269,7 +270,7 @@ export const ProfileScreen = React.memo<Props>(({
     } catch (e: any) {
       showPopup({
         title: 'Upload Failed',
-        message: e.message,
+        message: friendlyError(e),
         icon: 'cloud-offline-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
@@ -307,7 +308,7 @@ export const ProfileScreen = React.memo<Props>(({
       setShowEditPost(false);
       showToast('Caption updated', 'success');
     } catch (e: any) {
-      showToast(e.message || 'Failed to update post', 'error');
+      showToast(friendlyError(e, 'Failed to update post'), 'error');
     } finally {
       setSaving(false);
     }
@@ -707,7 +708,7 @@ export const ProfileScreen = React.memo<Props>(({
           } catch (e: any) {
             showPopup({
               title: 'Switch Failed',
-              message: e.message,
+              message: friendlyError(e),
               icon: 'lock-closed-outline',
               buttons: [{ text: 'OK', onPress: () => {} }]
             });

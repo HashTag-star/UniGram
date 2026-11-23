@@ -15,6 +15,7 @@ import { usePopup } from '../context/PopupContext';
 import { CachedImage } from '../components/CachedImage';
 import { getIceServers } from '../lib/iceServers';
 
+import { friendlyError } from '../lib/friendlyError';
 // Lazy-load WebRTC — static import crashes in Expo Go where native module is absent
 let RTCPeerConnection: any;
 let RTCIceCandidate: any;
@@ -577,7 +578,7 @@ export const LiveScreen: React.FC<{
     } catch (err: any) {
       showPopup({
         title: 'Streaming Error',
-        message: err.message || 'Could not start live session.',
+        message: friendlyError(err, 'Could not start live session.'),
         icon: 'videocam-off-outline',
         buttons: [{ text: 'OK', onPress: () => {} }],
       });

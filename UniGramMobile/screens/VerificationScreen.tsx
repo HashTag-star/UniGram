@@ -14,6 +14,7 @@ import { submitVerificationRequest } from '../services/verification';
 import { supabase, getPublicMediaUrl } from '../lib/supabase';
 import { randomId } from '../lib/uuid';
 import { usePopup } from '../context/PopupContext';
+import { friendlyError } from '../lib/friendlyError';
 type VerificationType = 'student' | 'professor' | 'club' | 'influencer' | 'staff' | 'alumni';
 
 interface Props {
@@ -272,7 +273,7 @@ export const VerificationScreen: React.FC<Props> = ({ visible, onClose }) => {
     } catch (e: any) {
       showPopup({
         title: 'Submission Failed',
-        message: e.message ?? 'There was a problem submitting your request. Please check your connection.',
+        message: friendlyError(e, 'There was a problem submitting your request. Please check your connection.'),
         icon: 'cloud-offline-outline',
         buttons: [{ text: 'OK', onPress: () => {} }]
       });
