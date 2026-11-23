@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleProp, ImageStyle, View, ViewStyle, Image } from 'react-native';
 
 let ExpoImage: any = null;
@@ -22,6 +22,18 @@ export const CachedImage: React.FC<Props> = React.memo(({
   uri, style, resizeMode = 'cover', placeholder, containerStyle,
   priority = 'normal', recyclingKey, blurhash, onLoad
 }) => {
+  // A failed load (flaky mobile data, timeout, DNS hiccup) used to leave a permanent blank box.
+  // Retry quietly with a growing delay and a fresh request each time.
+  const [attempt, setAttempt] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { setAttempt(0); }, [uri]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const handleError = useCallback(() => {
+    if (attempt >= 3) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setAttempt(a => a + 1), 1200 * (attempt + 1));
+  }, [attempt]);
+
   if (!uri) {
     return <View style={[style as ViewStyle, containerStyle]} />;
   }
@@ -34,6 +46,7 @@ export const CachedImage: React.FC<Props> = React.memo(({
 
     return (
       <ExpoImage
+        key={attempt}
         source={{ uri }}
         style={style}
         contentFit={contentFit}
@@ -44,6 +57,7 @@ export const CachedImage: React.FC<Props> = React.memo(({
         recyclingKey={recyclingKey ?? uri}
         allowDownscaling
         onLoad={onLoad}
+        onError={handleError}
       />
     );
   }

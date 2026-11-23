@@ -423,7 +423,7 @@ function AppShellInner({ onReady }: { onReady: (ready: boolean) => void }) {
     const order: Tab[] = ['explore', 'profile', 'market', 'messages'];
     const timers = order.map((tab, i) => setTimeout(() => {
       setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
-    }, 1200 + i * 700));
+    }, 3500 + i * 2500));
     return () => timers.forEach(clearTimeout);
   }, [!!session, onboardingDone]); // eslint-disable-line react-hooks/exhaustive-deps
 

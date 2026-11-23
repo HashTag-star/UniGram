@@ -162,6 +162,7 @@ const CommentRow = React.memo(function CommentRow({
           {profile?.avatar_url ? (
             <CachedImage
               uri={profile.avatar_url}
+              priority="high"
               style={[styles.commentAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}
             />
           ) : (
@@ -216,6 +217,7 @@ const CommentRow = React.memo(function CommentRow({
                 {!!item.media_url && (
                   <CachedImage
                     uri={item.media_url}
+                    priority="high"
                     style={{ width: isTop ? 220 : 190, height: isTop ? 220 : 190, borderRadius: 14, marginTop: item.text ? 8 : 2, backgroundColor: colors.bg2 }}
                     resizeMode="cover"
                   />
