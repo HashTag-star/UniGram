@@ -45,6 +45,8 @@ import { timeAgo } from '../lib/formatUtils';
 
 import { friendlyError } from '../lib/friendlyError';
 import { callEdgeFunction } from '../lib/edgeFetch';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadFile } from '../services/upload';
 function renderMentions(text: string, colors: any): React.ReactNode {
   if (!text?.includes('@')) return text;
   return text.split(/(@\w+)/g).map((part, i) =>
@@ -205,9 +207,18 @@ const CommentRow = React.memo(function CommentRow({
               </View>
             ) : (
               <>
-                <Text style={[styles.commentText, { color: colors.textSub, fontSize: isTop ? 14 : 13 }]}>
-                  {renderMentions(item.text, colors)}
-                </Text>
+                {!!item.text && (
+                  <Text style={[styles.commentText, { color: colors.textSub, fontSize: isTop ? 14 : 13 }]}>
+                    {renderMentions(item.text, colors)}
+                  </Text>
+                )}
+                {!!item.media_url && (
+                  <CachedImage
+                    uri={item.media_url}
+                    style={{ width: isTop ? 220 : 190, height: isTop ? 220 : 190, borderRadius: 14, marginTop: item.text ? 8 : 2, backgroundColor: colors.bg2 }}
+                    resizeMode="cover"
+                  />
+                )}
 
                 <View style={styles.commentActions}>
               <TouchableOpacity
@@ -410,7 +421,7 @@ interface FooterInputProps {
   replyingTo: any;
   colors: any;
   bottomInset: number;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, media?: { uri: string; mime: string; type: 'image' | 'gif' } | null) => Promise<void>;
   onCancelReply: () => void;
   setTextRef: (getText: () => string) => void;
   followingIds: Set<string>;
@@ -421,6 +432,7 @@ const FooterInput = React.memo(function FooterInput({
 }: FooterInputProps) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [media, setMedia] = useState<{ uri: string; mime: string; type: 'image' | 'gif' } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<MentionUser[]>([]);
   const [mentionStart, setMentionStart] = useState(-1);
@@ -497,19 +509,31 @@ const FooterInput = React.memo(function FooterInput({
 
   const handleSend = async () => {
     const t = text.trim();
-    if (!t || sending) return;
+    if ((!t && !media) || sending) return;
+    const attached = media;
     setText('');
+    setMedia(null);
     setSuggestions([]);
     setMentionQuery(null);
     setSending(true);
     try {
-      await onSend(t);
+      await onSend(t, attached);
     } finally {
       setSending(false);
     }
   };
 
-  const canSend = text.trim().length > 0 && !sending;
+  const canSend = (text.trim().length > 0 || !!media) && !sending;
+
+  const pickMedia = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, allowsEditing: false });
+      if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      const mime = a.mimeType ?? (a.uri.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+      setMedia({ uri: a.uri, mime, type: mime === 'image/gif' ? 'gif' : 'image' });
+    } catch {}
+  };
 
   return (
     <View style={[styles.footerContainer, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
@@ -528,7 +552,31 @@ const FooterInput = React.memo(function FooterInput({
       {/* Mention suggestion panel — floats above the input row */}
       <MentionSuggestions suggestions={suggestions} colors={colors} onSelect={handleSelect} />
 
+      {media && (
+        <View style={{ paddingHorizontal: 14, paddingTop: 8, flexDirection: 'row' }}>
+          <View>
+            <CachedImage uri={media.uri} style={{ width: 84, height: 84, borderRadius: 12 }} />
+            <TouchableOpacity
+              onPress={() => setMedia(null)}
+              style={{ position: 'absolute', top: -6, right: -6, backgroundColor: colors.bg, borderRadius: 11 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Remove attachment" accessibilityRole="button"
+            >
+              <Ionicons name="close-circle" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <View style={[styles.inputRow, { paddingBottom: Math.max(bottomInset, 8) }]}>
+        <TouchableOpacity
+          onPress={pickMedia}
+          style={{ justifyContent: 'center', paddingRight: 8, paddingLeft: 2 }}
+          hitSlop={{ top: 10, bottom: 10, left: 8, right: 4 }}
+          accessibilityLabel="Attach a picture, meme or GIF" accessibilityRole="button"
+        >
+          <Ionicons name="image-outline" size={24} color={colors.accent} />
+        </TouchableOpacity>
         <BottomSheetTextInput
           style={[
             styles.input,
@@ -811,9 +859,9 @@ export const CommentSheet: React.FC<Props> = ({
   }, [currentUserId, targetType, hapticLight, hapticSuccess, hapticError, loadComments]); // onCountChange accessed via ref
 
   // Stable send callback — reads text from ref so it's not a dep of renderFooter
-  const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string, attached?: { uri: string; mime: string; type: 'image' | 'gif' } | null) => {
     const t = text.trim();
-    if (!t) return;
+    if (!t && !attached) return;
     const parentId = replyingTo?.id;
     const repliedToAi = replyingTo?.profiles?.username === 'hashtag';
     setReplyingTo(null);
@@ -824,6 +872,7 @@ export const CommentSheet: React.FC<Props> = ({
       parent_id: parentId,
       created_at: new Date().toISOString(),
       likes_count: 0, isLiked: false,
+      media_url: attached?.uri ?? null, media_type: attached?.type ?? null,
       profiles: { username: 'You', avatar_url: null },
     };
 
@@ -837,11 +886,17 @@ export const CommentSheet: React.FC<Props> = ({
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
 
     try {
+      let media: { url: string; type: 'image' | 'gif' } | undefined;
+      if (attached && targetType !== 'ad') {
+        const ext = attached.mime === 'image/gif' ? 'gif' : (attached.mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+        const url = await uploadFile('post-media', `${currentUserId}/comments/${Date.now()}.${ext}`, attached.uri, attached.mime);
+        media = { url, type: attached.type };
+      }
       const newComment = targetType === 'post'
-        ? await addPostComment(targetId, currentUserId, t, parentId)
+        ? await addPostComment(targetId, currentUserId, t, parentId, media)
         : targetType === 'ad'
         ? await addAdComment(targetId, currentUserId, t)
-        : await addReelComment(targetId, currentUserId, t, parentId);
+        : await addReelComment(targetId, currentUserId, t, parentId, media);
       setComments(prev => prev.map(c => c.id === tempId ? { ...newComment, isLiked: false } : c));
       hapticSuccess();
 
@@ -855,17 +910,18 @@ export const CommentSheet: React.FC<Props> = ({
         });
         setExpandedParents(prev => new Set([...prev, threadParent]));
         setComments(prev => [...prev, aiRow('Thinking…')]);
-        callEdgeFunction('ai-mention-reply', { target: targetType, comment_id: newComment.id }, { timeoutMs: 60000 })
+        callEdgeFunction('ai-mention-reply', { target: targetType, comment_id: newComment.id }, { timeoutMs: 120000 })
           .then(() => loadComments())
           .catch((e: any) => {
             setComments(prev => prev.map(c => c.id === aiRowId ? { ...c, text: friendlyError(e, 'Hashtag could not answer right now. Try again.') } : c));
             setTimeout(() => setComments(prev => prev.filter(c => c.id !== aiRowId)), 5000);
           });
       }
-    } catch {
+    } catch (e: any) {
       setComments(prev => prev.filter(c => c.id !== tempId));
       setTotalCount(prev => Math.max(0, prev - 1));
       onCountChangeRef.current?.(-1);
+      if (attached) { try { require('react-native').Alert.alert('Could not send', friendlyError(e, 'Your picture could not be sent. Try again.')); } catch {} }
     }
   }, [replyingTo, currentUserId, targetId, targetType, hapticSuccess, loadComments]); // onCountChange accessed via ref
 

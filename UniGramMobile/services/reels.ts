@@ -218,7 +218,7 @@ export async function getReelComments(
   };
 }
 
-export async function addReelComment(reelId: string, userId: string, text: string, parentId?: string) {
+export async function addReelComment(reelId: string, userId: string, text: string, parentId?: string, media?: { url: string; type: 'image' | 'gif' | 'sticker' }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
 
@@ -228,7 +228,7 @@ export async function addReelComment(reelId: string, userId: string, text: strin
   let res: any;
   const { data, error } = await supabase
     .from('reel_comments')
-    .insert({ reel_id: reelId, user_id: userId, text: sanitized, parent_id: parentId })
+    .insert({ reel_id: reelId, user_id: userId, text: sanitized, parent_id: parentId, ...(media ? { media_url: media.url, media_type: media.type } : {}) })
     .select(`*, profiles!reel_comments_user_id_fkey(${REEL_PROFILE})`)
     .single();
   

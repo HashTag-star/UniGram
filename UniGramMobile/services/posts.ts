@@ -588,18 +588,18 @@ export async function getPostComments(
   };
 }
 
-export async function addPostComment(postId: string, userId: string, text: string, parentId?: string) {
+export async function addPostComment(postId: string, userId: string, text: string, parentId?: string, media?: { url: string; type: 'image' | 'gif' | 'sticker' }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.id !== userId) throw new Error('Unauthorized');
   assertUuid(postId, 'Post ID');
   if (parentId) assertUuid(parentId, 'Parent comment ID');
-  const safeText = requireText(cleanUserText(text, 'comment'), 'Comment');
+  const safeText = media ? cleanUserText(text, 'comment') : requireText(cleanUserText(text, 'comment'), 'Comment');
   
   // Try inserting with parent_id, fallback if column doesn't exist
   let res: any;
   const { data, error } = await supabase
     .from('post_comments')
-    .insert({ post_id: postId, user_id: userId, text: safeText, parent_id: parentId })
+    .insert({ post_id: postId, user_id: userId, text: safeText, parent_id: parentId, ...(media ? { media_url: media.url, media_type: media.type } : {}) })
     .select(`*, ${COMMENT_PROFILE_EMBED('post_comments_user_id_fkey')}`)
     .single();
   
