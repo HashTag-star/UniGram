@@ -1,4 +1,5 @@
 import { onSessionReset } from '../lib/sessionCleanup';
+import { getMutedIds } from './mutes';
 import { supabase, SupabaseTimeoutError } from '../lib/supabase';
 import { getUserInterests } from './onboarding';
 import { INTERESTS } from '../data/interests';
@@ -53,16 +54,19 @@ export function clearBlockedCache() {
 }
 
 async function getCachedBlockedIds(userId: string): Promise<string[]> {
+  // Muted accounts are hidden from feeds exactly like blocked ones (but nothing else changes).
+  const muted = await getMutedIds().catch(() => [] as string[]);
+  const withMuted = (ids: string[]) => (muted.length ? Array.from(new Set([...ids, ...muted])) : ids);
   const c = _blockedCache.get(userId);
-  if (c && Date.now() - c.at < BLOCKED_TTL) return c.ids;
+  if (c && Date.now() - c.at < BLOCKED_TTL) return withMuted(c.ids);
   // Fail closed: if the lookup fails we throw (callers must not cache a result built
   // without the block list) instead of silently treating it as "nobody blocked".
   try {
     const ids = await getBlockedUserIds();
     _blockedCache.set(userId, { ids, at: Date.now() });
-    return ids;
+    return withMuted(ids);
   } catch (e) {
-    if (c) return c.ids; // last known list beats an unfiltered feed
+    if (c) return withMuted(c.ids); // last known list beats an unfiltered feed
     throw e;
   }
 }

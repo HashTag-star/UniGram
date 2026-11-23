@@ -19,6 +19,7 @@ export async function getReels(limit = 20, offset = 0) {
     if (userId) {
       const { getBlockedUserIds } = require('./profiles');
       blockedIds = await getBlockedUserIds();
+      try { blockedIds = Array.from(new Set([...blockedIds, ...(await require('./mutes').getMutedIds())])); } catch {}
     }
 
     const { data, error } = await supabase

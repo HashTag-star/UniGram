@@ -70,7 +70,11 @@ export async function getActiveStories() {
     }
     return Object.values(grouped);
   });
-  return rows ?? [];
+  // Hide muted accounts (applied after the cache so muting takes effect immediately).
+  let muted: string[] = [];
+  try { muted = await require('./mutes').getMutedIds(); } catch {}
+  const out = muted.length ? (rows ?? []).filter((g: any) => !muted.includes(g?.profile?.id)) : (rows ?? []);
+  return out;
 }
 
 export async function getUserStories(userId: string) {

@@ -17,6 +17,7 @@ import { withSimulatedPro } from '../services/simulatedPro';
 import { usePaywall } from '../context/PaywallContext';
 import { getAdPolicy } from '../services/adDelivery';
 import { feedbackPrefs, fx } from '../lib/feedback';
+import { useDataSaver } from '../lib/dataSaver';
 import { PRO_FEATURE_LIST } from '../services/paywallFeatures';
 import { usePopup } from '../context/PopupContext';
 import { useTheme } from '../context/ThemeContext';
@@ -230,6 +231,7 @@ const PrivacyModal: React.FC<{
   onProfileUpdated: (p: any) => void;
 }> = ({ visible, profile, onClose, onProfileUpdated }) => {
   const { colors } = useTheme();
+  const dataSaver = useDataSaver();
   const insets = useSafeAreaInsets();
   const { showPopup } = usePopup();
 
@@ -322,6 +324,17 @@ const PrivacyModal: React.FC<{
               </View>
               <Switch accessibilityLabel="Show activity status" value={showActivityStatus} onValueChange={handleActivityToggle} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#fff" />
             </View>
+          </View>
+
+          {/* Data saver */}
+          <View style={[styles.privacyRow, { borderBottomWidth: 0, marginTop: 12 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.privacyRowLabel, { color: colors.text }]}>Data saver</Text>
+              <Text style={[styles.privacyRowSub, { color: colors.textMuted }]}>
+                Tap to play videos and skip preloading — saves mobile data. Turns on automatically on mobile data.
+              </Text>
+            </View>
+            <Switch accessibilityLabel="Data saver" value={dataSaver.dataSaver} onValueChange={(v) => dataSaver.setDataSaver(v)} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#fff" />
           </View>
 
           {/* Messaging */}

@@ -26,23 +26,15 @@ export function moderateConfession(text: string): string | null {
 }
 
 export async function getConfessions(university?: string | null): Promise<ConfessionsResult> {
-  const { data: { user } } = await supabase.auth.getUser();
-  let q = supabase.from('confessions').select('id, body, university, created_at, author_id').order('created_at', { ascending: false }).limit(60);
-  if (university) q = q.or(`university.eq.${university.replace(/[,()]/g, ' ')},university.is.null`);
-  const { data, error } = await q;
+  // Server function returns `mine` + like counts WITHOUT exposing author ids to anyone.
+  const { data, error } = await supabase.rpc('get_confessions', { p_university: university ?? null, p_limit: 60 });
   if (error) return { items: [], unavailable: true };
-  const rows = data ?? [];
-  if (!rows.length) return { items: [], unavailable: false };
-  const { data: likes } = await supabase.from('confession_likes').select('confession_id, user_id').in('confession_id', rows.map((r: any) => r.id));
   return {
     unavailable: false,
-    items: rows.map((r: any) => {
-      const ls = (likes ?? []).filter((l: any) => l.confession_id === r.id);
-      return {
-        id: r.id, body: r.body, university: r.university, created_at: r.created_at,
-        like_count: ls.length, liked_by_me: ls.some((l: any) => l.user_id === user?.id), mine: r.author_id === user?.id,
-      };
-    }),
+    items: (data ?? []).map((r: any) => ({
+      id: r.id, body: r.body, university: r.university, created_at: r.created_at,
+      like_count: Number(r.like_count ?? 0), liked_by_me: !!r.liked_by_me, mine: !!r.mine,
+    })),
   };
 }
 

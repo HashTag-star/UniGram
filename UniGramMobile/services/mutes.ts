@@ -42,6 +42,7 @@ export async function muteUser(mutedId: string): Promise<void> {
   try {
     await supabase.from('muted_users').upsert({ user_id: uid, muted_id: mutedId }, { onConflict: 'user_id,muted_id' });
   } catch {}
+  try { const { Cache } = require('../lib/cache'); ['feed:', 'reels:', 'explore'].forEach((p: string) => Cache.invalidatePattern(p)); } catch {}
 }
 
 export async function unmuteUser(mutedId: string): Promise<void> {
